@@ -340,14 +340,16 @@ export const exportStockPDFReport = (params: StockReportParams) => {
   doc.rect(0, 25, pageWidth, 1.5, 'F');
 
   // Logo attempt
+  const logoH = 14;
+  const logoW = Math.round(logoH * 2.314);
   try {
-    doc.addImage(logoImg, 'PNG', margin, 4, 18, 18);
+    doc.addImage(logoImg, 'PNG', margin, 5, logoW, logoH);
   } catch (_err) {
     // ignore
   }
 
   // Store & Report Title (Left block)
-  const textLeft = margin + 22;
+  const textLeft = margin + logoW + 4;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.setTextColor(255, 255, 255);

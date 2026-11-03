@@ -137,11 +137,11 @@ const Navbar: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => showNavigation && setShowSidebar(!showSidebar)}
-                className={`w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 ${showNavigation ? 'cursor-pointer hover:opacity-80' : 'cursor-default opacity-100'} transition-opacity duration-200`}
+                className={`h-8 sm:h-9 md:h-10 w-auto max-w-[120px] flex items-center justify-center ${showNavigation ? 'cursor-pointer hover:opacity-80' : 'cursor-default opacity-100'} transition-opacity duration-200`}
                 title={showNavigation ? "Open Navigation Menu" : "Check in to enable navigation"}
                 disabled={!showNavigation}
               >
-                <img src={logo} alt="Logo" className="w-full h-full object-contain rounded-lg" />
+                <img src={logo} alt="Logo" className="h-full w-auto max-w-[110px] object-contain rounded-lg" />
               </button>
               <div>
                 <h1 className="m-0 text-sm sm:text-base md:text-xl font-bold text-gray-900 leading-tight">{currentHub?.name || 'Digital Zone'}</h1>
@@ -246,8 +246,8 @@ const Navbar: React.FC = () => {
       >
         <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10">
-              <img src={logo} alt="Logo" className="w-full h-full object-contain rounded-lg" />
+            <div className="h-10 w-auto max-w-[120px] flex items-center">
+              <img src={logo} alt="Logo" className="h-full w-auto max-w-[110px] object-contain rounded-lg" />
             </div>
             <div>
               <h2 className="m-0 text-lg font-bold text-gray-900">Digital Zone</h2>

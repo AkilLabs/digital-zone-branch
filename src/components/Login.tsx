@@ -48,7 +48,7 @@ const Login: React.FC = () => {
           <img
             src={logo}
             alt="Digital Zone Logo"
-            className="w-24 h-24 mb-4 object-contain"
+            className="h-20 sm:h-24 w-auto max-w-[280px] mb-4 object-contain"
           />
           <h1 className="text-center text-gray-900 mb-1 text-3xl font-bold">Digital Zone</h1>
           <p className="text-center text-gray-600 text-sm font-medium mb-4">Sales | Service | Accessory</p>

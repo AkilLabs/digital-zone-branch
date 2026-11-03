@@ -502,7 +502,7 @@ const Settings: React.FC = () => {
 
                 {/* Logo Section */}
                 <div className="flex items-center gap-6 pb-6 border-b border-slate-100">
-                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border border-slate-200 bg-white p-3 flex items-center justify-center shadow-xs">
+                  <div className="h-20 sm:h-24 w-36 sm:w-44 rounded-2xl border border-slate-200 bg-white p-3 flex items-center justify-center shadow-xs">
                     <img
                       src={shopLogo}
                       alt="Shop Logo"

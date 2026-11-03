@@ -78,12 +78,13 @@ export const generateInvoice = async (item: BillingItem, shopDetails: ShopDetail
 
   // ── Background Watermark ──────────────────────────────────────────────────
   try {
-    const wmSize = 80;
-    const wmX = (pageWidth - wmSize) / 2;
-    const wmY = (pageHeight - wmSize) / 2;
+    const wmW = 100;
+    const wmH = Math.round(wmW / 2.314);
+    const wmX = (pageWidth - wmW) / 2;
+    const wmY = (pageHeight - wmH) / 2;
     doc.saveGraphicsState();
-    doc.setGState(new (doc as any).GState({ opacity: 0.3 }));
-    doc.addImage(logoImg, 'PNG', wmX, wmY, wmSize, wmSize);
+    doc.setGState(new (doc as any).GState({ opacity: 0.12 }));
+    doc.addImage(logoImg, 'PNG', wmX, wmY, wmW, wmH);
     doc.restoreGraphicsState();
   } catch (_e) { /* ignore watermark error */ }
 
@@ -99,8 +100,8 @@ export const generateInvoice = async (item: BillingItem, shopDetails: ShopDetail
   const invoiceNo = invoiceNumber || (item as any).transactionId || (item as any).id || String(Date.now());
 
   // ── Logo ──────────────────────────────────────────────────────────────────
-  const logoW = 18;
-  const logoH = 18;
+  const logoH = 15;
+  const logoW = Math.round(logoH * 2.314 * 10) / 10; // ~34.7mm (proportional aspect ratio)
   const logoX = marginLeft;
   const logoY = yPos + 1;
   try {
@@ -735,8 +736,9 @@ export const generateInvoiceForWhatsApp = async (item: BillingItem, shopDetails:
 
   // Add Logo (Left aligned)
   try {
-    const logoSize = 20;
-    doc.addImage(logoImg, 'PNG', 15, yPos, logoSize, logoSize);
+    const logoH = 14;
+    const logoW = Math.round(logoH * 2.314);
+    doc.addImage(logoImg, 'PNG', 15, yPos, logoW, logoH);
   } catch (error) {
     console.log('Logo not available');
   }
@@ -1252,8 +1254,9 @@ export const generateSalesReportPDF = (reportData: any, shopDetails: ShopDetails
 
   // Add Logo (if available)
   try {
-    const logoSize = 20;
-    doc.addImage(logoImg, 'PNG', 15, yPos, logoSize, logoSize);
+    const logoH = 14;
+    const logoW = Math.round(logoH * 2.314);
+    doc.addImage(logoImg, 'PNG', 15, yPos, logoW, logoH);
   } catch (error) {
     console.log('Logo not available');
   }
@@ -1615,8 +1618,9 @@ export const generateCreditSalesPDF = (
 
   // Header: Logo (left) and shop name/details centered
   try {
-    const logoSize = 18;
-    doc.addImage(logoImg, 'PNG', 15, yPos, logoSize, logoSize);
+    const logoH = 14;
+    const logoW = Math.round(logoH * 2.314);
+    doc.addImage(logoImg, 'PNG', 15, yPos, logoW, logoH);
   } catch (error) {
     // Logo optional
   }
@@ -1796,8 +1800,9 @@ export const generateOverallSalesPDF = (
 
   // Header: Logo and shop details
   try {
-    const logoSize = 18;
-    doc.addImage(logoImg, 'PNG', 15, yPos, logoSize, logoSize);
+    const logoH = 14;
+    const logoW = Math.round(logoH * 2.314);
+    doc.addImage(logoImg, 'PNG', 15, yPos, logoW, logoH);
   } catch (error) {
     // Logo optional
   }
@@ -2194,12 +2199,13 @@ export const generateServiceJobPDF = async (job: ServiceRequest, shopDetails: Sh
 
   // ── Background Watermark ──────────────────────────────────────────────────
   try {
-    const wmSize = 75;
-    const wmX = (pageWidth - wmSize) / 2;
+    const wmW = 90;
+    const wmH = Math.round(wmW / 2.314);
+    const wmX = (pageWidth - wmW) / 2;
     const wmY = 90;
     doc.saveGraphicsState();
     doc.setGState(new (doc as any).GState({ opacity: 0.08 }));
-    doc.addImage(logoImg, 'PNG', wmX, wmY, wmSize, wmSize);
+    doc.addImage(logoImg, 'PNG', wmX, wmY, wmW, wmH);
     doc.restoreGraphicsState();
   } catch (_e) { /* ignore watermark error */ }
 
@@ -2248,8 +2254,8 @@ export const generateServiceJobPDF = async (job: ServiceRequest, shopDetails: Sh
 
   // ── 1. HEADER SECTION (Brand Left, Job Sheet Badge Right) ─────────────────
   let yPos = 8;
-  const logoW = 16;
-  const logoH = 16;
+  const logoH = 12;
+  const logoW = Math.round(logoH * 2.314); // ~28mm
   try {
     doc.addImage(logoImg, 'PNG', marginLeft, yPos + 1, logoW, logoH);
   } catch (_e) { /* no logo */ }
@@ -2828,20 +2834,21 @@ export const generateQuotationPDF = async (
 
   // ── Background Watermark ──────────────────────────────────────────────────
   try {
-    const wmSize = 80;
-    const wmX = (pageWidth - wmSize) / 2;
-    const wmY = (pageHeight - wmSize) / 2;
+    const wmW = 100;
+    const wmH = Math.round(wmW / 2.314);
+    const wmX = (pageWidth - wmW) / 2;
+    const wmY = (pageHeight - wmH) / 2;
     doc.saveGraphicsState();
-    doc.setGState(new (doc as any).GState({ opacity: 0.3 }));
-    doc.addImage(logoImg, 'PNG', wmX, wmY, wmSize, wmSize);
+    doc.setGState(new (doc as any).GState({ opacity: 0.12 }));
+    doc.addImage(logoImg, 'PNG', wmX, wmY, wmW, wmH);
     doc.restoreGraphicsState();
   } catch (_e) { /* ignore watermark error */ }
 
   let yPos = 10;
 
   // ── Logo ──────────────────────────────────────────────────────────────────
-  const logoW = 18;
-  const logoH = 18;
+  const logoH = 15;
+  const logoW = Math.round(logoH * 2.314 * 10) / 10;
   const logoX = marginLeft;
   const logoY = yPos + 1;
   try {

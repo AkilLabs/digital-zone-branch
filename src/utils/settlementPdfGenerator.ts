@@ -143,15 +143,16 @@ export const generateDailySettlementPDF = (params: GenerateDailySettlementParams
   doc.rect(0, 0, pageWidth, 4, 'F');
 
   // Shop Logo
+  const logoH = 12;
+  const logoW = Math.round(logoH * 2.314);
   try {
-    const logoSize = 16;
-    doc.addImage(logoImg, 'PNG', margin, yPos, logoSize, logoSize);
+    doc.addImage(logoImg, 'PNG', margin, yPos, logoW, logoH);
   } catch (_e) {
     // Graceful fallback if logo missing
   }
 
   // Shop Info (Left block)
-  const shopX = margin + 20;
+  const shopX = margin + logoW + 4;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.setTextColor(15, 23, 42); // Slate 900
@@ -876,15 +877,16 @@ export const generateMonthlySettlementPDF = (params: GenerateMonthlySettlementPa
   doc.rect(0, 0, pageWidth, 4, 'F');
 
   // Shop Logo
+  const logoH = 12;
+  const logoW = Math.round(logoH * 2.314);
   try {
-    const logoSize = 16;
-    doc.addImage(logoImg, 'PNG', margin, yPos, logoSize, logoSize);
+    doc.addImage(logoImg, 'PNG', margin, yPos, logoW, logoH);
   } catch (_e) {
     // Graceful fallback
   }
 
   // Shop Info
-  const shopX = margin + 20;
+  const shopX = margin + logoW + 4;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.setTextColor(15, 23, 42);
