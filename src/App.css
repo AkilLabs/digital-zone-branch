@@ -1,0 +1,91 @@
+/* Minimal styles - most styling is done with Tailwind */
+#root {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Tablet Landscape Layout Adjustments */
+@media (min-width: 768px) and (max-width: 1024px) and (orientation: landscape) {
+  /* Main app container adjustments */
+  #root {
+    padding-bottom: 100px;
+  }
+  
+  /* Content wrapper adjustments */
+  .max-w-7xl,
+  .max-w-6xl,
+  .max-w-5xl {
+    max-width: 95% !important;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  
+  /* Card and container optimizations */
+  .container {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  
+  /* Grid layouts for better landscape use */
+  .grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+  
+  /* Form layouts - side by side in landscape */
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+  }
+  
+  /* Table responsive adjustments */
+  .table-container {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+  }
+  
+  /* Modal adjustments for landscape */
+  .modal-content {
+    max-width: 85vw;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+  
+  /* Dashboard cards in landscape */
+  .dashboard-grid {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  }
+  
+  /* Chart containers */
+  .chart-container {
+    height: 350px;
+  }
+  
+  /* Product cards in landscape */
+  .product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+  
+  /* Ensure proper spacing from bottom dock */
+  main,
+  .main-content {
+    margin-bottom: 100px;
+  }
+}
+
+/* Smooth transitions for orientation changes */
+@media (prefers-reduced-motion: no-preference) {
+  #root,
+  .container,
+  .grid {
+    transition: padding 0.3s ease, margin 0.3s ease;
+  }
+}
+
+/* Prevent horizontal scroll in landscape */
+@media (orientation: landscape) {
+  body {
+    overflow-x: hidden;
+  }
+}
+

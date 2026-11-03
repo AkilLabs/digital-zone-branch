@@ -1,0 +1,285 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ─── Helper Functions ──────────────────────────────────────────────
+    
+    // Check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Get the current user's role from the users collection
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Check if user is owner
+    function isOwner() {
+      return isSignedIn() && getUserRole() == 'owner';
+    }
+    
+    // Check if user is hub-admin
+    function isHubAdmin() {
+      return isSignedIn() && getUserRole() == 'hub-admin';
+    }
+    
+    // Check if user is store-admin
+    function isStoreAdmin() {
+      return isSignedIn() && getUserRole() == 'store-admin';
+    }
+    
+    // Check if user is admin (legacy alias for store-admin)
+    function isAdmin() {
+      return isSignedIn() && getUserRole() == 'admin';
+    }
+    
+    // Check if user is employee
+    function isEmployee() {
+      return isSignedIn() && getUserRole() == 'employee';
+    }
+    
+    // Check if user has any admin-level role (owner, hub-admin, store-admin, admin)
+    function isOwnerOrAdmin() {
+      return isSignedIn() && getUserRole() in ['owner', 'hub-admin', 'store-admin', 'admin'];
+    }
+    
+    // ─── Root-Level Collections (Global/Shared Data) ───────────────────
+    
+    // Users collection
+    match /users/{userId} {
+      // Allow reading own profile, or if owner/admin
+      allow read: if isSignedIn() && (request.auth.uid == userId || isOwnerOrAdmin());
+      allow create: if isOwnerOrAdmin();
+      // Allow user to update their own allowedDeviceToken (for binding)
+      // Otherwise only Owner can update/delete
+      allow update: if isOwner() || (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedDeviceToken']));
+      allow delete: if isOwner();
+    }
+    
+    // Billing items collection (legacy root-level)
+    match /billingItems/{itemId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Settlements collection (daily and monthly transaction reconciliation)
+    match /settlements/{settlementId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Expenses collection
+    match /expenses/{expenseId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Expense Presets collection
+    match /expensePresets/{presetId} {
+      allow read, write: if isSignedIn();
+    }
+    
+    // Settings collection
+    match /settings/{settingId} {
+      allow read: if settingId == 'shopDetails' || isSignedIn();
+      allow write: if isOwnerOrAdmin();
+    }
+    
+    // Billing sequential counters (legacy root-level)
+    match /counters/{counterId} {
+      allow read, write: if isSignedIn();
+    }
+    
+    // Products collection (legacy root-level)
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isOwnerOrAdmin();
+      allow update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      allow read: if isOwnerOrAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update: if isOwnerOrAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Customers collection
+    match /customers/{customerId} {
+      allow read, write: if true;
+    }
+
+    // Credit Customers collection
+    match /creditCustomers/{creditCustomerId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Stock Requirements collection
+    match /stockRequirements/{requirementId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    // Service Requests collection
+    match /serviceRequests/{requestId} {
+      allow get: if true; // Public access for scanning QR customer tracking
+      allow list, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Suppliers collection (global/shared across stores)
+    match /suppliers/{supplierId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Purchases collection (legacy root-level)
+    match /purchases/{purchaseId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // IMEI Purchases collection
+    match /imeiPurchases/{purchaseId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Supplier Payments collection (global/shared across stores)
+    match /supplierPayments/{paymentId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Credit Clearances collection
+    match /creditClearances/{clearanceId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    // Credit Sales collection (legacy root-level)
+    match /creditSales/{saleId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow create: if isSignedIn();
+      allow read, update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Razorpay QR Codes collection
+    match /razorpayQRCodes/{qrId} {
+      allow read, create, update: if isSignedIn();
+    }
+
+    // Brands collection (global master data)
+    match /brands/{brandId} {
+      allow read: if isSignedIn();
+      allow write: if isOwnerOrAdmin();
+    }
+
+    // Categories collection (global master data)
+    match /categories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if isOwnerOrAdmin();
+    }
+    
+    // Finance Providers collection (global master data)
+    match /financeProviders/{providerId} {
+      allow read: if isSignedIn();
+      allow write: if isOwnerOrAdmin();
+    }
+
+    // Payment Requests collection
+    match /paymentRequests/{requestId} {
+      allow read, create, update: if isSignedIn();
+    }
+    
+    // Transactions collection - stores transaction summaries with discount, GST, and customer info
+    match /transactions/{transactionId} {
+      allow get: if true; // Public access for sharing links
+      allow list: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Quotations collection (root-level and fallback)
+    match /quotations/{quotationId} {
+      allow get: if true;
+      allow list, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Recharge Providers collection - owners can add/edit/delete, employees/admins can refill
+    match /rechargeProviders/{providerId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isOwner();
+      allow update: if isSignedIn(); // Allow any signed in user to update (needed for refill/recharge)
+    }
+    
+    // Recharge Transactions collection
+    match /rechargeTransactions/{transactionId} {
+        allow read, create, update: if isSignedIn();
+        allow delete: if isOwnerOrAdmin();
+    }
+
+    // Provider Transactions collection - tracks refills and payments
+    match /providerTransactions/{transactionId} {
+        allow read, create, update: if isSignedIn();
+        allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Defect Products collection - tracks defective and damaged inventory
+    match /defectProducts/{defectId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isOwnerOrAdmin();
+    }
+    
+    // ─── Multi-Store Architecture ──────────────────────────────────────
+    
+    // Hub metadata (hubs/{hubId} and subcollections)
+    match /hubs/{document=**} {
+      allow read, write: if isSignedIn();
+    }
+    
+    // Store documents (stores/{storeId})
+    match /stores/{storeId} {
+      allow read: if true;
+      allow write: if isOwnerOrAdmin();
+    }
+    
+    // Billing sequential counters
+    match /stores/{storeId}/counters/{counterId} {
+      allow read, write: if isSignedIn();
+    }
+    
+    // Store-scoped subcollections (stores/{storeId}/products, billingItems, etc.)
+    // This is the primary data path for the multi-store architecture
+    match /stores/{storeId}/{collectionName}/{docId} {
+      allow get: if collectionName == 'serviceRequests' || collectionName == 'transactions' || isSignedIn();
+      allow list, read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+    
+    // Quotations collection group rule
+    match /{path=**}/quotations/{quotationId} {
+      allow get, list: if isSignedIn();
+    }
+
+    // Transactions collection group rule for invoice sharing
+    match /{path=**}/transactions/{transactionId} {
+      allow get, list: if true;
+    }
+    
+    // Default rule - deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

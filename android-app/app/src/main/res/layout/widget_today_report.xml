@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="8dp"
+    android:background="@drawable/widget_background">
+
+    <!-- Header with Logo and Title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="8dp">
+
+        <!-- Logo -->
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@mipmap/ic_launcher"
+            android:contentDescription="MaxMobiles Logo"
+            android:layout_marginEnd="8dp" />
+
+        <!-- Title -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="MaxMobiles"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:textColor="#1F2937" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Today's Report"
+                android:textSize="9sp"
+                android:textColor="#6B7280" />
+        </LinearLayout>
+
+        <!-- Last Updated Time -->
+        <TextView
+            android:id="@+id/last_updated"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Loading..."
+            android:textSize="8sp"
+            android:textColor="#9CA3AF"
+            android:layout_marginEnd="8dp" />
+
+        <!-- Refresh Button -->
+        <ImageView
+            android:id="@+id/refresh_button"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@android:drawable/ic_popup_sync"
+            android:contentDescription="Refresh"
+            android:tint="#6B7280" />
+    </LinearLayout>
+
+    <!-- Metrics Row (Single Row Layout) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+        <!-- Revenue Card -->
+        <LinearLayout
+            android:id="@+id/revenue_card"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:gravity="center"
+            android:background="@drawable/widget_card_blue">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Revenue"
+                android:textSize="9sp"
+                android:textColor="#1E3A8A"
+                android:alpha="0.7" />
+
+            <TextView
+                android:id="@+id/revenue_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="₹0"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#1E3A8A"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Profit Card -->
+        <LinearLayout
+            android:id="@+id/profit_card"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:gravity="center"
+            android:background="@drawable/widget_card_green">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Profit"
+                android:textSize="9sp"
+                android:textColor="#065F46"
+                android:alpha="0.7" />
+
+            <TextView
+                android:id="@+id/profit_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="₹0"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#065F46"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Expense Card -->
+        <LinearLayout
+            android:id="@+id/expense_card"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:gravity="center"
+            android:background="@drawable/widget_card_red">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Expense"
+                android:textSize="9sp"
+                android:textColor="#991B1B"
+                android:alpha="0.7" />
+
+            <TextView
+                android:id="@+id/expense_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="₹0"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#991B1B"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+
+        <!-- Net Profit Card -->
+        <LinearLayout
+            android:id="@+id/net_profit_card"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:gravity="center"
+            android:background="@drawable/widget_card_purple">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Net"
+                android:textSize="9sp"
+                android:textColor="#581C87"
+                android:alpha="0.7" />
+
+            <TextView
+                android:id="@+id/net_profit_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="₹0"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="#581C87"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
