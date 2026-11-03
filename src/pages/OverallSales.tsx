@@ -431,7 +431,7 @@ const OverallSales: React.FC = () => {
 
   // Pagination & Sorting
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 20;
+  const [itemsPerPage, setItemsPerPage] = useState<number>(25);
   const [sortBy, setSortBy] = useState<'date' | 'amount' | 'quantity'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
@@ -2389,7 +2389,7 @@ const OverallSales: React.FC = () => {
   const totalSalesPages = Math.max(1, Math.ceil(groupedSalesTransactions.length / itemsPerPage));
   const paginatedSales = useMemo(
     () => groupedSalesTransactions.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage),
-    [groupedSalesTransactions, currentPage]
+    [groupedSalesTransactions, currentPage, itemsPerPage]
   );
 
   return (
@@ -2658,83 +2658,83 @@ const OverallSales: React.FC = () => {
           </div>
         </div>
 
-        {/* ═══ WORKSPACE NAVIGATION TABS (Matching Products.tsx tab styling) ═══ */}
-        <div className="flex bg-white rounded-lg p-1 border border-gray-200 mb-3 sm:mb-4 overflow-x-auto hide-scrollbar sm:w-max shadow-sm print:hidden">
-          {(
-            [
-              {
-                id: 'sales' as UnifiedTab,
-                label: 'Sales Transactions',
-                badge: groupedSalesTransactions.length,
-                icon: Receipt,
-              },
-              {
-                id: 'salespersons' as UnifiedTab,
-                label: 'Salesperson Tracker',
-                badge: salespersonAnalytics.filter((s) => s.billsCount > 0).length,
-                icon: Users,
-              },
-              {
-                id: 'expenses' as UnifiedTab,
-                label: 'Expense Tracker',
-                badge: filteredExpenses.length,
-                icon: TrendingDown,
-              },
-              {
-                id: 'settlement' as UnifiedTab,
-                label: 'Daily & Monthly Settlement',
-                badge: existingSettlement?.status === 'settled' ? '✓' : 'Open',
-                icon: CheckCircle2,
-              },
-              {
-                id: 'simple-report' as UnifiedTab,
-                label: 'Simple Day / Month Report',
-                icon: FileText,
-              },
-              {
-                id: 'analytics' as UnifiedTab,
-                label: 'Brand & Category Mix',
-                badge: brandBreakdown.length,
-                icon: Tag,
-              },
-            ]
-          ).map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => {
-                  setActiveTab(tab.id);
-                  setCurrentPage(1);
-                }}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap flex-1 sm:flex-none flex items-center justify-center gap-2 cursor-pointer ${
-                  isActive
-                    ? 'bg-blue-100 text-blue-700 shadow-sm font-semibold'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                <span>{tab.label}</span>
-                {tab.badge !== undefined && (
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                      isActive ? 'bg-blue-200 text-blue-800' : 'bg-gray-100 text-gray-600'
-                    }`}
-                  >
-                    {tab.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+        {/* ═══ TOP COMMAND ROW: WORKSPACE TABS & PERIOD RANGE PRESETS ═══ */}
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2.5 mb-3 sm:mb-4 print:hidden">
+          {/* Workspace Tabs (Left) */}
+          <div className="flex bg-white rounded-lg p-1 border border-gray-200 overflow-x-auto hide-scrollbar shadow-sm">
+            {(
+              [
+                {
+                  id: 'sales' as UnifiedTab,
+                  label: 'Sales Transactions',
+                  badge: groupedSalesTransactions.length,
+                  icon: Receipt,
+                },
+                {
+                  id: 'salespersons' as UnifiedTab,
+                  label: 'Salespersons',
+                  badge: salespersonAnalytics.filter((s) => s.billsCount > 0).length,
+                  icon: Users,
+                },
+                {
+                  id: 'expenses' as UnifiedTab,
+                  label: 'Expense Tracker',
+                  badge: filteredExpenses.length,
+                  icon: TrendingDown,
+                },
+                {
+                  id: 'settlement' as UnifiedTab,
+                  label: 'Settlement',
+                  badge: existingSettlement?.status === 'settled' ? '✓' : 'Open',
+                  icon: CheckCircle2,
+                },
+                {
+                  id: 'simple-report' as UnifiedTab,
+                  label: 'Day / Month Report',
+                  icon: FileText,
+                },
+                {
+                  id: 'analytics' as UnifiedTab,
+                  label: 'Brand & Category Mix',
+                  badge: brandBreakdown.length,
+                  icon: Tag,
+                },
+              ]
+            ).map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    setCurrentPage(1);
+                  }}
+                  className={`px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-md transition-colors whitespace-nowrap flex items-center justify-center gap-1.5 sm:gap-2 cursor-pointer ${
+                    isActive
+                      ? 'bg-blue-100 text-blue-700 shadow-sm font-semibold'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{tab.label}</span>
+                  {tab.badge !== undefined && (
+                    <span
+                      className={`px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-bold ${
+                        isActive ? 'bg-blue-200 text-blue-800' : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-        {/* ═══ COMPACT FILTERS & SEARCH (Matching Products.tsx filter pattern) ═══ */}
-        <div className="bg-white rounded-lg border border-gray-200 p-2 sm:p-3 mb-3 sm:mb-4 shadow-sm print:hidden">
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {/* Period Presets: All, Today, Yesterday, 7 Days, Monthly, Custom */}
+          {/* Period Presets & Steppers (Right) */}
+          <div className="flex items-center gap-1.5 bg-white rounded-lg p-1 border border-gray-200 shadow-sm overflow-x-auto hide-scrollbar shrink-0">
             {(
               [
                 { id: 'today', label: 'Today' },
@@ -2749,10 +2749,10 @@ const OverallSales: React.FC = () => {
                 key={p.id}
                 type="button"
                 onClick={() => handleSelectDatePreset(p.id)}
-                className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium border transition-all cursor-pointer ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all cursor-pointer ${
                   dateRangeType === p.id
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                    : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
                 {p.label}
@@ -2761,7 +2761,7 @@ const OverallSales: React.FC = () => {
 
             {/* Inline Day Stepper when in Daily mode */}
             {dateRangeType === 'today' && (
-              <div className="inline-flex items-center bg-blue-50 border border-blue-200 rounded-lg px-1.5 py-0.5">
+              <div className="inline-flex items-center bg-blue-50 border border-blue-200 rounded-md px-1.5 py-0.5 ml-1">
                 <button
                   type="button"
                   onClick={() => navigateSingleDay(-1)}
@@ -2777,7 +2777,7 @@ const OverallSales: React.FC = () => {
                     const d = new Date(e.target.value + 'T00:00:00');
                     if (!isNaN(d.getTime())) setSelectedDayDate(d);
                   }}
-                  className="text-xs font-bold text-blue-900 bg-transparent border-none px-1.5 py-0.5 focus:outline-none cursor-pointer"
+                  className="text-xs font-bold text-blue-900 bg-transparent border-none px-1 py-0.5 focus:outline-none cursor-pointer"
                 />
                 <button
                   type="button"
@@ -2793,7 +2793,7 @@ const OverallSales: React.FC = () => {
 
             {/* Inline Month Stepper when in Monthly mode */}
             {dateRangeType === 'month' && (
-              <div className="inline-flex items-center bg-indigo-50 border border-indigo-200 rounded-lg px-1.5 py-0.5">
+              <div className="inline-flex items-center bg-indigo-50 border border-indigo-200 rounded-md px-1.5 py-0.5 ml-1">
                 <button
                   type="button"
                   onClick={() => navigateSingleMonth(-1)}
@@ -2802,7 +2802,7 @@ const OverallSales: React.FC = () => {
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
-                <span className="text-xs font-bold text-indigo-900 px-2">
+                <span className="text-xs font-bold text-indigo-900 px-1.5 whitespace-nowrap">
                   {selectedMonthDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
                 </span>
                 <button
@@ -2819,25 +2819,30 @@ const OverallSales: React.FC = () => {
 
             {/* Custom Date Range Pickers */}
             {dateRangeType === 'custom' && (
-              <div className="inline-flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-2 py-1 rounded-lg">
+              <div className="inline-flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-md ml-1">
                 <input
                   type="date"
                   value={customStartDate}
                   onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="text-xs bg-white border border-gray-300 rounded px-2 py-0.5"
+                  className="text-xs bg-white border border-gray-300 rounded px-1.5 py-0.5"
                 />
                 <span className="text-xs text-gray-400">to</span>
                 <input
                   type="date"
                   value={customEndDate}
                   onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="text-xs bg-white border border-gray-300 rounded px-2 py-0.5"
+                  className="text-xs bg-white border border-gray-300 rounded px-1.5 py-0.5"
                 />
               </div>
             )}
+          </div>
+        </div>
 
+        {/* ═══ COMPACT FILTERS & SEARCH TOOLBAR (Matching Products.tsx filter pattern) ═══ */}
+        <div className="bg-white rounded-lg border border-gray-200 p-2 sm:p-2.5 mb-3 sm:mb-4 shadow-sm print:hidden">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Search Input inline matching Products.tsx */}
-            <div className="relative flex-1 min-w-[200px] sm:min-w-[260px]">
+            <div className="relative flex-1 min-w-[200px] sm:min-w-[280px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 type="text"
@@ -2924,6 +2929,25 @@ const OverallSales: React.FC = () => {
               <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
             </div>
 
+            {/* Items Per Page Selector */}
+            <div className="relative hidden md:block">
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-2.5 py-1.5 sm:py-2 border border-gray-300 rounded-lg text-xs sm:text-sm bg-white text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 pr-7 cursor-pointer appearance-none"
+                title="Items per page"
+              >
+                <option value={10}>10 / page</option>
+                <option value={25}>25 / page</option>
+                <option value={50}>50 / page</option>
+                <option value={100}>100 / page</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+            </div>
+
             {/* More Filters Modal Trigger */}
             <button
               type="button"
@@ -3005,127 +3029,95 @@ const OverallSales: React.FC = () => {
         {/* ═══ TAB 1: SALES TRANSACTIONS REGISTER ═══════════════════════════ */}
         {activeTab === 'sales' && (
           <div className="space-y-4">
-            {/* Compact Payment Mode Breakdown Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-              {[
-                { label: 'Cash Counter', val: financialStats.cashSales, color: 'text-emerald-700', bg: 'bg-emerald-50/70', border: 'border-emerald-200', mode: 'cash' },
-                { label: 'UPI / QR', val: financialStats.upiSales, color: 'text-blue-700', bg: 'bg-blue-50/70', border: 'border-blue-200', mode: 'upi' },
-                { label: 'Card POS', val: financialStats.cardSales, color: 'text-purple-700', bg: 'bg-purple-50/70', border: 'border-purple-200', mode: 'card' },
-                { label: 'Finance / EMI', val: financialStats.financeSales, color: 'text-amber-700', bg: 'bg-amber-50/70', border: 'border-amber-200', mode: 'finance' },
-                { label: 'Credit Sales', val: financialStats.creditSalesAmount, color: 'text-orange-700', bg: 'bg-orange-50/70', border: 'border-orange-200', mode: 'credit' },
-              ].map((m) => (
-                <button
-                  key={m.mode}
-                  type="button"
-                  onClick={() =>
-                    setSelectedPaymentMode((prev) => (prev === m.mode ? '' : m.mode))
-                  }
-                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex items-center justify-between ${
-                    selectedPaymentMode === m.mode
-                      ? `${m.bg} ${m.border} ring-2 ring-blue-500 shadow-sm`
-                      : 'bg-white border-gray-200 hover:bg-gray-50 shadow-sm'
-                  }`}
-                >
+            {/* Sales Transactions Table Card (Full Width) */}
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden w-full">
+                <div className="px-4 py-3.5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-50/50">
                   <div>
-                    <p className="text-[11px] font-semibold text-gray-500">{m.label}</p>
-                    <p className={`text-sm sm:text-base font-extrabold font-mono tabular-nums mt-0.5 ${m.color}`}>
-                      {fmtRs(m.val)}
+                    <h2 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
+                      <Receipt className="w-4 h-4 text-blue-600" />
+                      <span>Sales Bills & Invoice Register</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
+                        {groupedSalesTransactions.length} bills
+                      </span>
+                    </h2>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Filtered for <strong className="text-gray-700">{getRangeName()}</strong> • Expenses are isolated in separate collection
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold text-gray-400">
-                    {financialStats.totalRevenue > 0
-                      ? `${((m.val / financialStats.totalRevenue) * 100).toFixed(0)}%`
-                      : '0%'}
-                  </span>
-                </button>
-              ))}
-            </div>
 
-            {/* Salesperson Quick Filter Chips */}
-            {salespersonAnalytics.some((s) => s.billsCount > 0) && (
-              <div className="bg-white rounded-lg border border-gray-200 px-3 py-2 flex items-center gap-2 overflow-x-auto shadow-sm">
-                <span className="text-xs font-medium text-gray-500 flex items-center gap-1 whitespace-nowrap">
-                  <Users className="w-3.5 h-3.5 text-blue-600" />
-                  Staff Filter:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSalesPerson('')}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                    !selectedSalesPerson
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  All Staff ({financialStats.billCount})
-                </button>
-                {salespersonAnalytics
-                  .filter((sp) => sp.billsCount > 0)
-                  .map((sp) => {
-                    const isSelected =
-                      selectedSalesPerson.toLowerCase() === sp.name.toLowerCase();
-                    return (
-                      <button
-                        key={sp.name}
-                        type="button"
-                        onClick={() =>
-                          setSelectedSalesPerson(isSelected ? '' : sp.name)
-                        }
-                        className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
-                          isSelected
-                            ? 'bg-blue-600 text-white shadow-sm'
-                            : 'bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700'
-                        }`}
-                      >
-                        <span>{sp.name}</span>
-                        <span
-                          className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                            isSelected ? 'bg-white/20 text-white' : 'bg-white text-gray-600'
-                          }`}
-                        >
-                          {sp.billsCount} • {fmtRs(sp.revenue)}
-                        </span>
-                      </button>
-                    );
-                  })}
-              </div>
-            )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleDownloadOverallPDF}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Sales PDF</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/billing')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>New Bill</span>
+                    </button>
+                  </div>
+                </div>
 
-            {/* Sales Transactions Table Card */}
-            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-50/50">
-                <div>
-                  <h2 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
-                    <Receipt className="w-4 h-4 text-blue-600" />
-                    <span>Sales Bills & Invoice Register</span>
-                    <span className="text-xs font-normal text-gray-500">
-                      ({groupedSalesTransactions.length} bills)
+                {/* Integrated Staff Quick Filter Bar directly inside Table Card */}
+                {salespersonAnalytics.some((s) => s.billsCount > 0) && (
+                  <div className="px-3 sm:px-4 py-2 border-b border-gray-100 bg-white flex items-center gap-1.5 overflow-x-auto hide-scrollbar text-xs">
+                    <span className="text-gray-400 font-medium flex items-center gap-1 whitespace-nowrap text-[11px]">
+                      <Users className="w-3.5 h-3.5 text-blue-600" />
+                      Staff:
                     </span>
-                  </h2>
-                  <p className="text-[11px] text-gray-500">
-                    Pure sales register — store expenses are isolated in the separate Expenses collection
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDownloadOverallPDF}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-xs font-medium transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Sales PDF</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate('/billing')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>New Bill</span>
-                  </button>
-                </div>
-              </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSalesPerson('');
+                        setCurrentPage(1);
+                      }}
+                      className={`px-2 py-0.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                        !selectedSalesPerson
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      All Staff ({financialStats.billCount})
+                    </button>
+                    {salespersonAnalytics
+                      .filter((sp) => sp.billsCount > 0)
+                      .map((sp) => {
+                        const isSelected =
+                          selectedSalesPerson.toLowerCase() === sp.name.toLowerCase();
+                        return (
+                          <button
+                            key={sp.name}
+                            type="button"
+                            onClick={() => {
+                              setSelectedSalesPerson(isSelected ? '' : sp.name);
+                              setCurrentPage(1);
+                            }}
+                            className={`px-2 py-0.5 rounded-md text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1 cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                                : 'bg-gray-50 text-gray-700 hover:bg-blue-50 hover:text-blue-700 border border-gray-200'
+                            }`}
+                          >
+                            <span>{sp.name}</span>
+                            <span
+                              className={`text-[10px] px-1 rounded font-mono ${
+                                isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
+                              }`}
+                            >
+                              {sp.billsCount}
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
 
               {groupedSalesTransactions.length === 0 ? (
                 <div className="py-14 text-center px-4">
@@ -3504,12 +3496,23 @@ const OverallSales: React.FC = () => {
                   </div>
 
                   {/* Pagination Footer */}
-                  {totalSalesPages > 1 && (
-                    <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs">
-                      <span className="text-gray-500 font-medium">
-                        Showing page <strong>{currentPage}</strong> of <strong>{totalSalesPages}</strong> ({groupedSalesTransactions.length} total bills)
+                  <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <span className="text-gray-500 font-medium">
+                      Showing{' '}
+                      <strong>
+                        {groupedSalesTransactions.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1}
+                      </strong>{' '}
+                      to{' '}
+                      <strong>
+                        {Math.min(currentPage * itemsPerPage, groupedSalesTransactions.length)}
+                      </strong>{' '}
+                      of <strong>{groupedSalesTransactions.length}</strong> total bills
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400 text-[11px]">
+                        Page {currentPage} of {totalSalesPages}
                       </span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
                           onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -3528,7 +3531,7 @@ const OverallSales: React.FC = () => {
                         </button>
                       </div>
                     </div>
-                  )}
+                  </div>
                 </>
               )}
             </div>
@@ -3564,7 +3567,7 @@ const OverallSales: React.FC = () => {
             </div>
 
             {/* Salesperson Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {salespersonAnalytics.map((sp, index) => {
                 const sharePct =
                   financialStats.totalRevenue > 0
