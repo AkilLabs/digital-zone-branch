@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Navbar from '../components/Navbar';
 import CustomModal from '../components/CustomModal';
 import ShareModal from '../components/ShareModal';
@@ -75,11 +75,12 @@ import {
   Printer,
   Award,
   MessageCircle,
-  ShieldCheck,
   Database,
   ArrowRight,
   Briefcase,
   Gift,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 
 // Declare Android interface for TypeScript
@@ -447,6 +448,8 @@ const OverallSales: React.FC = () => {
   const [employeesList, setEmployeesList] = useState<AppUser[]>([]);
 
   // ── Modals & Action States ───────────────────────────────────────────────
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [selectedShareTransaction, setSelectedShareTransaction] = useState<BillingItem | null>(null);
   const [isTransactionShareModalOpen, setIsTransactionShareModalOpen] = useState(false);
@@ -565,6 +568,17 @@ const OverallSales: React.FC = () => {
     setDateRange({ start, end });
     setCurrentPage(1);
   }, [dateRangeType, selectedDayDate, selectedMonthDate, customStartDate, customEndDate]);
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Keep reportPeriodMode & settlementMode synced with dateRangeType when switching
   const handleSelectDatePreset = (preset: DateRangeType) => {
@@ -2379,269 +2393,505 @@ const OverallSales: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans print:bg-white">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans print:bg-white">
       <div className="print:hidden">
         <Navbar />
       </div>
 
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-6 py-4 pb-24 sm:pb-10 space-y-4">
-        {/* ═══ TOP COMMAND HEADER ════════════════════════════════════════════ */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 sm:p-5 print:hidden">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
-                  Sales Report & Settlement Hub
-                </h1>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  {currentStore?.name || shopDetails.shopName || 'Main Store'}
+      <div className="max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4 pb-24 sm:pb-8">
+        {/* ═══ COMPACT HEADER (Clean Project Style matching Products.tsx) ═══ */}
+        <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 print:hidden">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <Receipt className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
+              Overall Sales
+            </h1>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+              {groupedSalesTransactions.length} bills recorded • {fmtRs(financialStats.totalRevenue)} net sales
+              {currentStore?.name && (
+                <span className="text-gray-400 hidden md:inline">
+                  {' '}• Location: <strong className="text-gray-700 font-medium">{currentStore.name}</strong>
                 </span>
-                {existingSettlement?.status === 'settled' && dateRangeType === 'today' && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Day Settled
-                  </span>
-                )}
-              </div>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1">
-                Unified billing register, salesperson follow-up, separate expense ledger & daily/monthly drawer settlement
-              </p>
-            </div>
+              )}
+              {existingSettlement?.status === 'settled' && dateRangeType === 'today' && (
+                <span className="text-emerald-600 font-semibold"> • Day Settled</span>
+              )}
+            </p>
+          </div>
 
-            {/* Action Toolbar */}
-            <div className="flex items-center gap-2 flex-wrap">
+          {/* Action Toolbar matching Products.tsx */}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            {/* Secret / Cost Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowCostCode((prev) => !prev)}
+              title={!showCostCode ? 'Showing Actual Cost (₹)' : 'Showing Encoded Secret Code'}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer ${
+                !showCostCode
+                  ? 'bg-amber-50 text-amber-800 border-amber-300'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {!showCostCode ? <Unlock className="w-3.5 h-3.5 text-amber-600" /> : <Lock className="w-3.5 h-3.5 text-gray-400" />}
+              <span>{!showCostCode ? 'Cost: ₹ Actual' : 'Cost: Code'}</span>
+            </button>
+
+            {/* Refresh */}
+            <button
+              type="button"
+              onClick={handleRefreshAll}
+              disabled={loading}
+              title="Refresh sales data"
+              className="px-3 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-xs font-medium flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-600' : 'text-gray-500'}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+
+            {/* Share */}
+            <button
+              type="button"
+              onClick={handleShareOverallPDF}
+              title="Share Report"
+              className="px-3 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              <Share2 className="w-3.5 h-3.5 text-gray-500" />
+              <span className="hidden sm:inline">Share</span>
+            </button>
+
+            {/* Export Dropdown */}
+            <div className="relative" ref={exportDropdownRef}>
               <button
                 type="button"
-                onClick={() => setShowAddExpenseDrawer(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Expense</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={
-                  dateRangeType === 'month'
-                    ? handleDownloadMonthlySettlementPDF
-                    : handleDownloadDailySettlementPDF
-                }
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer"
-                title="Download Complete Daily/Monthly Settlement & Report PDF"
-              >
-                <FileDown className="w-4 h-4" />
-                <span>{dateRangeType === 'month' ? 'Monthly Report PDF' : 'Daily Report PDF'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-semibold shadow-xs transition-all cursor-pointer"
-                title="Export Multi-Sheet Excel Workbook"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="bg-green-600 text-white py-2 px-3 sm:px-4 rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center gap-1.5 text-xs sm:text-sm shadow-sm cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                <span className="hidden sm:inline">Excel</span>
+                <span className="hidden sm:inline">Export</span>
+                <ChevronDown className="w-3 h-3" />
               </button>
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-52 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50 text-xs">
+                  <button
+                    onClick={() => {
+                      handleExportExcel();
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
+                  >
+                    📊 Excel Workbook (.xlsx)
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleDownloadOverallPDF();
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
+                  >
+                    📋 Sales Register PDF
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (dateRangeType === 'month') {
+                        handleDownloadMonthlySettlementPDF();
+                      } else {
+                        handleDownloadDailySettlementPDF();
+                      }
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
+                  >
+                    📑 {dateRangeType === 'month' ? 'Monthly Settlement PDF' : 'Daily Settlement PDF'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowFilterModal(true);
+                      setShowExportMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2 border-t border-gray-100"
+                  >
+                    ⚖️ CA / GST Audit Export
+                  </button>
+                </div>
+              )}
+            </div>
 
-              <button
-                type="button"
-                onClick={handleShareOverallPDF}
-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer"
-                title="Share Report"
-              >
-                <Share2 className="w-4 h-4" />
-              </button>
+            {/* Add Expense Button */}
+            <button
+              type="button"
+              onClick={() => setShowAddExpenseDrawer(true)}
+              className="bg-rose-600 text-white py-2 px-3 sm:px-4 rounded-lg hover:bg-rose-700 transition-colors font-medium flex items-center gap-1.5 text-xs sm:text-sm shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add Expense</span>
+              <span className="sm:hidden">Expense</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => setShowCostCode((prev) => !prev)}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                  showCostCode
-                    ? 'bg-slate-100 text-slate-700 border-slate-200'
-                    : 'bg-amber-50 text-amber-800 border-amber-300'
-                }`}
-                title="Toggle Secret Code / Numeric Cost & Profit"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span className="hidden md:inline">{showCostCode ? 'Code Mode' : '₹ Numbers'}</span>
-              </button>
+            {/* New Bill Button */}
+            <button
+              type="button"
+              onClick={() => navigate('/billing')}
+              className="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-1.5 text-xs sm:text-sm shadow-sm whitespace-nowrap cursor-pointer"
+            >
+              <Receipt className="w-4 h-4" />
+              <span>New Bill</span>
+            </button>
+          </div>
+        </div>
 
-              <button
-                type="button"
-                onClick={handleRefreshAll}
-                className="p-2 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-xl transition-colors cursor-pointer"
-                title="Refresh Data"
-              >
-                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : ''}`} />
-              </button>
+        {/* ═══ COMPACT STATS (Matching Products.tsx) ═══ */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4 print:hidden">
+          {/* 1. Net Sales Revenue */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-medium">Net Sales</span>
+              <span className="p-1 rounded bg-blue-50 text-blue-600">
+                <TrendingUp className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <div className="mt-1">
+              <p className="text-lg font-bold text-gray-900 font-mono tabular-nums">
+                {fmtRs(financialStats.totalRevenue)}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                {financialStats.billCount} bills • {financialStats.totalItemsSold} items
+              </p>
             </div>
           </div>
 
-          {/* ── Smart Filter Bar (Always Accessible, Zero Clutter) ────────── */}
-          <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-            {/* Period Presets + Quick Date/Month Stepper */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {(
-                [
-                  { id: 'today', label: 'Daily / Today' },
-                  { id: 'yesterday', label: 'Yesterday' },
-                  { id: 'week', label: '7 Days' },
-                  { id: 'month', label: 'Monthly' },
-                  { id: 'custom', label: 'Custom' },
-                  { id: 'all', label: 'All Time' },
-                ] as { id: DateRangeType; label: string }[]
-              ).map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => handleSelectDatePreset(p.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    dateRangeType === p.id
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
+          {/* 2. Cash Sales */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-medium">Cash Sales</span>
+              <span className="p-1 rounded bg-emerald-50 text-emerald-600">
+                <Wallet className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <div className="mt-1">
+              <p className="text-lg font-bold text-emerald-600 font-mono tabular-nums">
+                {fmtRs(financialStats.cashSales)}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                Drawer: <strong className="text-gray-700">{fmtRs(financialStats.netCashInDrawer)}</strong>
+              </p>
+            </div>
+          </div>
 
-              {/* Inline Day Stepper when in Daily mode */}
-              {dateRangeType === 'today' && (
-                <div className="inline-flex items-center bg-blue-50/80 border border-blue-200 rounded-lg px-1.5 py-0.5 ml-1">
-                  <button
-                    type="button"
-                    onClick={() => navigateSingleDay(-1)}
-                    className="p-1 hover:bg-blue-100 rounded text-blue-700 cursor-pointer"
-                    title="Previous Day"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <input
-                    type="date"
-                    value={toYYYYMMDD(selectedDayDate)}
-                    onChange={(e) => {
-                      const d = new Date(e.target.value + 'T00:00:00');
-                      if (!isNaN(d.getTime())) setSelectedDayDate(d);
-                    }}
-                    className="text-xs font-bold text-blue-900 bg-transparent border-none px-1.5 py-0.5 focus:outline-none cursor-pointer"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => navigateSingleDay(1)}
-                    disabled={toYYYYMMDD(selectedDayDate) >= toYYYYMMDD(new Date())}
-                    className="p-1 hover:bg-blue-100 rounded text-blue-700 disabled:opacity-30 cursor-pointer"
-                    title="Next Day"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
+          {/* 3. UPI & Card */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-medium">UPI & Card</span>
+              <span className="p-1 rounded bg-indigo-50 text-indigo-600">
+                <Smartphone className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <div className="mt-1">
+              <p className="text-lg font-bold text-indigo-600 font-mono tabular-nums">
+                {fmtRs(financialStats.upiSales + financialStats.cardSales)}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                UPI {fmtRs(financialStats.upiSales)} • Card {fmtRs(financialStats.cardSales)}
+              </p>
+            </div>
+          </div>
 
-              {/* Inline Month Stepper when in Monthly mode */}
-              {dateRangeType === 'month' && (
-                <div className="inline-flex items-center bg-indigo-50/80 border border-indigo-200 rounded-lg px-1.5 py-0.5 ml-1">
-                  <button
-                    type="button"
-                    onClick={() => navigateSingleMonth(-1)}
-                    className="p-1 hover:bg-indigo-100 rounded text-indigo-700 cursor-pointer"
-                    title="Previous Month"
+          {/* 4. Expenses */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-medium">Expenses</span>
+              <span className="p-1 rounded bg-rose-50 text-rose-600">
+                <TrendingDown className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <div className="mt-1">
+              <p className="text-lg font-bold text-rose-600 font-mono tabular-nums">
+                {fmtRs(financialStats.totalExpenses)}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                {financialStats.expenseCount} vouchers
+              </p>
+            </div>
+          </div>
+
+          {/* 5. Gross Profit */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-medium">Sales Profit</span>
+              <span className="p-1 rounded bg-teal-50 text-teal-600">
+                <BarChart3 className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <div className="mt-1">
+              <p className="text-lg font-bold text-teal-600 font-mono tabular-nums">
+                {fmtSecretOrCurrency(financialStats.totalProfit)}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                Margin: {financialStats.profitMargin.toFixed(1)}%
+              </p>
+            </div>
+          </div>
+
+          {/* 6. Net Profit */}
+          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-500 font-medium">Net Profit</span>
+              <span
+                className={`p-1 rounded ${
+                  financialStats.netProfit >= 0 ? 'bg-violet-50 text-violet-600' : 'bg-orange-50 text-orange-600'
+                }`}
+              >
+                <Banknote className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <div className="mt-1">
+              <p
+                className={`text-lg font-bold font-mono tabular-nums ${
+                  financialStats.netProfit >= 0 ? 'text-violet-600' : 'text-orange-600'
+                }`}
+              >
+                {fmtSecretOrCurrency(financialStats.netProfit)}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+                After all expenses
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ═══ WORKSPACE NAVIGATION TABS (Matching Products.tsx tab styling) ═══ */}
+        <div className="flex bg-white rounded-lg p-1 border border-gray-200 mb-3 sm:mb-4 overflow-x-auto hide-scrollbar sm:w-max shadow-sm print:hidden">
+          {(
+            [
+              {
+                id: 'sales' as UnifiedTab,
+                label: 'Sales Transactions',
+                badge: groupedSalesTransactions.length,
+                icon: Receipt,
+              },
+              {
+                id: 'salespersons' as UnifiedTab,
+                label: 'Salesperson Tracker',
+                badge: salespersonAnalytics.filter((s) => s.billsCount > 0).length,
+                icon: Users,
+              },
+              {
+                id: 'expenses' as UnifiedTab,
+                label: 'Expense Tracker',
+                badge: filteredExpenses.length,
+                icon: TrendingDown,
+              },
+              {
+                id: 'settlement' as UnifiedTab,
+                label: 'Daily & Monthly Settlement',
+                badge: existingSettlement?.status === 'settled' ? '✓' : 'Open',
+                icon: CheckCircle2,
+              },
+              {
+                id: 'simple-report' as UnifiedTab,
+                label: 'Simple Day / Month Report',
+                icon: FileText,
+              },
+              {
+                id: 'analytics' as UnifiedTab,
+                label: 'Brand & Category Mix',
+                badge: brandBreakdown.length,
+                icon: Tag,
+              },
+            ]
+          ).map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  setCurrentPage(1);
+                }}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap flex-1 sm:flex-none flex items-center justify-center gap-2 cursor-pointer ${
+                  isActive
+                    ? 'bg-blue-100 text-blue-700 shadow-sm font-semibold'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{tab.label}</span>
+                {tab.badge !== undefined && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                      isActive ? 'bg-blue-200 text-blue-800' : 'bg-gray-100 text-gray-600'
+                    }`}
                   >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="text-xs font-bold text-indigo-900 px-2">
-                    {selectedMonthDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                    {tab.badge}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => navigateSingleMonth(1)}
-                    disabled={toYYYYMM(selectedMonthDate) >= toYYYYMM(new Date())}
-                    className="p-1 hover:bg-indigo-100 rounded text-indigo-700 disabled:opacity-30 cursor-pointer"
-                    title="Next Month"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
+                )}
+              </button>
+            );
+          })}
+        </div>
 
-              {/* Custom Date Range Pickers */}
-              {dateRangeType === 'custom' && (
-                <div className="inline-flex items-center gap-1.5 bg-slate-100 px-2 py-1 rounded-lg">
-                  <input
-                    type="date"
-                    value={customStartDate}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="text-xs bg-white border border-slate-300 rounded px-2 py-0.5"
-                  />
-                  <span className="text-xs text-slate-400">to</span>
-                  <input
-                    type="date"
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="text-xs bg-white border border-slate-300 rounded px-2 py-0.5"
-                  />
-                </div>
+        {/* ═══ COMPACT FILTERS & SEARCH (Matching Products.tsx filter pattern) ═══ */}
+        <div className="bg-white rounded-lg border border-gray-200 p-2 sm:p-3 mb-3 sm:mb-4 shadow-sm print:hidden">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            {/* Period Presets: All, Today, Yesterday, 7 Days, Monthly, Custom */}
+            {(
+              [
+                { id: 'today', label: 'Today' },
+                { id: 'yesterday', label: 'Yesterday' },
+                { id: 'week', label: '7 Days' },
+                { id: 'month', label: 'Monthly' },
+                { id: 'custom', label: 'Custom' },
+                { id: 'all', label: 'All Time' },
+              ] as { id: DateRangeType; label: string }[]
+            ).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => handleSelectDatePreset(p.id)}
+                className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium border transition-all cursor-pointer ${
+                  dateRangeType === p.id
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+
+            {/* Inline Day Stepper when in Daily mode */}
+            {dateRangeType === 'today' && (
+              <div className="inline-flex items-center bg-blue-50 border border-blue-200 rounded-lg px-1.5 py-0.5">
+                <button
+                  type="button"
+                  onClick={() => navigateSingleDay(-1)}
+                  className="p-1 hover:bg-blue-100 rounded text-blue-700 cursor-pointer"
+                  title="Previous Day"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <input
+                  type="date"
+                  value={toYYYYMMDD(selectedDayDate)}
+                  onChange={(e) => {
+                    const d = new Date(e.target.value + 'T00:00:00');
+                    if (!isNaN(d.getTime())) setSelectedDayDate(d);
+                  }}
+                  className="text-xs font-bold text-blue-900 bg-transparent border-none px-1.5 py-0.5 focus:outline-none cursor-pointer"
+                />
+                <button
+                  type="button"
+                  onClick={() => navigateSingleDay(1)}
+                  disabled={toYYYYMMDD(selectedDayDate) >= toYYYYMMDD(new Date())}
+                  className="p-1 hover:bg-blue-100 rounded text-blue-700 disabled:opacity-30 cursor-pointer"
+                  title="Next Day"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Inline Month Stepper when in Monthly mode */}
+            {dateRangeType === 'month' && (
+              <div className="inline-flex items-center bg-indigo-50 border border-indigo-200 rounded-lg px-1.5 py-0.5">
+                <button
+                  type="button"
+                  onClick={() => navigateSingleMonth(-1)}
+                  className="p-1 hover:bg-indigo-100 rounded text-indigo-700 cursor-pointer"
+                  title="Previous Month"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-xs font-bold text-indigo-900 px-2">
+                  {selectedMonthDate.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => navigateSingleMonth(1)}
+                  disabled={toYYYYMM(selectedMonthDate) >= toYYYYMM(new Date())}
+                  className="p-1 hover:bg-indigo-100 rounded text-indigo-700 disabled:opacity-30 cursor-pointer"
+                  title="Next Month"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Custom Date Range Pickers */}
+            {dateRangeType === 'custom' && (
+              <div className="inline-flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-2 py-1 rounded-lg">
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="text-xs bg-white border border-gray-300 rounded px-2 py-0.5"
+                />
+                <span className="text-xs text-gray-400">to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="text-xs bg-white border border-gray-300 rounded px-2 py-0.5"
+                />
+              </div>
+            )}
+
+            {/* Search Input inline matching Products.tsx */}
+            <div className="relative flex-1 min-w-[200px] sm:min-w-[260px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="Search bill #, customer, IMEI, item..."
+                className="w-full pl-9 pr-7 py-1.5 sm:py-2 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
 
-            {/* Search + Salesperson + Payment + More Filters */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Instant Search */}
-              <div className="relative flex-1 sm:w-60 min-w-[180px]">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  placeholder="Search bill #, customer, IMEI, item..."
-                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Salesperson Filter Dropdown */}
+            {/* Salesperson Filter Dropdown */}
+            <div className="relative">
               <select
                 value={selectedSalesPerson}
                 onChange={(e) => {
                   setSelectedSalesPerson(e.target.value);
                   setCurrentPage(1);
                 }}
-                className={`px-2.5 py-1.5 text-xs rounded-lg border font-medium focus:outline-none cursor-pointer ${
-                  selectedSalesPerson
-                    ? 'bg-blue-50 border-blue-400 text-blue-800 font-bold'
-                    : 'bg-white border-slate-200 text-slate-700'
+                className={`px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg text-xs sm:text-sm bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 pr-7 cursor-pointer appearance-none ${
+                  selectedSalesPerson ? 'text-blue-700 font-bold border-blue-400' : 'text-gray-700'
                 }`}
               >
                 <option value="">All Salespersons</option>
                 {availableSalesPersons.map((sp) => (
                   <option key={sp} value={sp}>
-                    👤 {sp}
+                    {sp}
                   </option>
                 ))}
               </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+            </div>
 
-              {/* Payment Mode Filter */}
+            {/* Payment Mode Filter */}
+            <div className="relative">
               <select
                 value={selectedPaymentMode}
                 onChange={(e) => {
                   setSelectedPaymentMode(e.target.value);
                   setCurrentPage(1);
                 }}
-                className={`px-2.5 py-1.5 text-xs rounded-lg border font-medium focus:outline-none cursor-pointer ${
-                  selectedPaymentMode
-                    ? 'bg-blue-50 border-blue-400 text-blue-800 font-bold'
-                    : 'bg-white border-slate-200 text-slate-700'
+                className={`px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg text-xs sm:text-sm bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 pr-7 cursor-pointer appearance-none ${
+                  selectedPaymentMode ? 'text-blue-700 font-bold border-blue-400' : 'text-gray-700'
                 }`}
               >
                 <option value="">All Payment Modes</option>
@@ -2652,60 +2902,66 @@ const OverallSales: React.FC = () => {
                 <option value="split">Split Payment</option>
                 <option value="credit">Credit Due</option>
               </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+            </div>
 
-              {/* GST / Bill Type Filter */}
+            {/* GST / Bill Type Filter */}
+            <div className="relative">
               <select
                 value={salesGstFilter}
                 onChange={(e) => {
                   setSalesGstFilter(e.target.value as 'all' | 'regular' | 'gst');
                   setCurrentPage(1);
                 }}
-                className={`px-2.5 py-1.5 text-xs rounded-lg border font-medium focus:outline-none cursor-pointer ${
-                  salesGstFilter !== 'all'
-                    ? 'bg-emerald-50 border-emerald-400 text-emerald-800 font-bold'
-                    : 'bg-white border-slate-200 text-slate-700'
+                className={`px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg text-xs sm:text-sm bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 pr-7 cursor-pointer appearance-none ${
+                  salesGstFilter !== 'all' ? 'text-emerald-700 font-bold border-emerald-400' : 'text-gray-700'
                 }`}
               >
                 <option value="all">All Bills ({financialStats.billCount})</option>
                 <option value="gst">GST Bills ({financialStats.gstInvoices})</option>
                 <option value="regular">Regular Bills ({financialStats.regularInvoices})</option>
               </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+            </div>
 
-              {/* More Filters Modal Trigger (Brand, Category, Audit Export) */}
+            {/* More Filters Modal Trigger */}
+            <button
+              type="button"
+              onClick={() => setShowFilterModal(true)}
+              className={`px-3 py-1.5 sm:py-2 border rounded-lg text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                selectedBrand || selectedCategory || selectedEntryType
+                  ? 'bg-blue-50 border-blue-400 text-blue-700'
+                  : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Filter className="w-3.5 h-3.5" />
+              <span>More Filters</span>
+              {(selectedBrand || selectedCategory || selectedEntryType) && (
+                <span className="w-1.5 h-1.5 bg-blue-600 rounded-full" />
+              )}
+            </button>
+
+            {/* Reset Filters */}
+            {hasActiveFilters && (
               <button
                 type="button"
-                onClick={() => setShowFilterModal(true)}
-                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
-                  selectedBrand || selectedCategory || selectedEntryType
-                    ? 'bg-blue-50 border-blue-300 text-blue-700'
-                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
+                onClick={resetAllFilters}
+                className="px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
               >
-                <Filter className="w-3.5 h-3.5" />
-                <span>Filters & GST Audit</span>
+                <X className="w-3.5 h-3.5" />
+                <span>Reset</span>
               </button>
-
-              {hasActiveFilters && (
-                <button
-                  type="button"
-                  onClick={resetAllFilters}
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  <span>Reset</span>
-                </button>
-              )}
-            </div>
+            )}
           </div>
 
           {/* Active Filter Pills Strip */}
           {hasActiveFilters && (
-            <div className="mt-2.5 flex items-center gap-1.5 flex-wrap text-xs">
-              <span className="text-slate-400 font-medium">Active filters:</span>
+            <div className="mt-2.5 pt-2 border-t border-gray-100 flex items-center gap-1.5 flex-wrap text-xs">
+              <span className="text-gray-400 font-medium">Active filters:</span>
               {selectedSalesPerson && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-200">
                   Salesperson: {selectedSalesPerson}
-                  <button onClick={() => setSelectedSalesPerson('')} className="hover:text-blue-900">
+                  <button onClick={() => setSelectedSalesPerson('')} className="hover:text-blue-900 cursor-pointer">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -2713,7 +2969,7 @@ const OverallSales: React.FC = () => {
               {selectedPaymentMode && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-semibold border border-purple-200 uppercase">
                   Mode: {selectedPaymentMode}
-                  <button onClick={() => setSelectedPaymentMode('')} className="hover:text-purple-900">
+                  <button onClick={() => setSelectedPaymentMode('')} className="hover:text-purple-900 cursor-pointer">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -2721,7 +2977,7 @@ const OverallSales: React.FC = () => {
               {selectedBrand && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200">
                   Brand: {selectedBrand}
-                  <button onClick={() => setSelectedBrand('')} className="hover:text-indigo-900">
+                  <button onClick={() => setSelectedBrand('')} className="hover:text-indigo-900 cursor-pointer">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -2729,7 +2985,7 @@ const OverallSales: React.FC = () => {
               {selectedCategory && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold border border-amber-200">
                   Category: {selectedCategory}
-                  <button onClick={() => setSelectedCategory('')} className="hover:text-amber-900">
+                  <button onClick={() => setSelectedCategory('')} className="hover:text-amber-900 cursor-pointer">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -2737,203 +2993,13 @@ const OverallSales: React.FC = () => {
               {salesGstFilter !== 'all' && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200 uppercase">
                   {salesGstFilter} Bills
-                  <button onClick={() => setSalesGstFilter('all')} className="hover:text-emerald-900">
+                  <button onClick={() => setSalesGstFilter('all')} className="hover:text-emerald-900 cursor-pointer">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
               )}
             </div>
           )}
-        </div>
-
-        {/* ═══ EXECUTIVE KPI RIBBON (Professional Billing Software Style) ════ */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 print:hidden">
-          {/* 1. Net Sales Revenue */}
-          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Net Sales</span>
-              <span className="p-1.5 rounded-lg bg-blue-50 text-blue-600">
-                <TrendingUp className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-2">
-              <p className="text-lg sm:text-xl font-extrabold text-slate-900 font-mono tabular-nums">
-                {fmtRs(financialStats.totalRevenue)}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                {financialStats.billCount} bills • {financialStats.totalItemsSold} items
-              </p>
-            </div>
-          </div>
-
-          {/* 2. Cash + Digital Breakdown */}
-          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Cash Sales</span>
-              <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">
-                <Wallet className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-2">
-              <p className="text-lg sm:text-xl font-extrabold text-emerald-700 font-mono tabular-nums">
-                {fmtRs(financialStats.cashSales)}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                Drawer Net: <strong className="text-slate-700">{fmtRs(financialStats.netCashInDrawer)}</strong>
-              </p>
-            </div>
-          </div>
-
-          {/* 3. UPI & Card Digital */}
-          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">UPI & Card</span>
-              <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
-                <Smartphone className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-2">
-              <p className="text-lg sm:text-xl font-extrabold text-indigo-700 font-mono tabular-nums">
-                {fmtRs(financialStats.upiSales + financialStats.cardSales)}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5 truncate">
-                UPI {fmtRs(financialStats.upiSales)} • Card {fmtRs(financialStats.cardSales)}
-              </p>
-            </div>
-          </div>
-
-          {/* 4. Store Expenses (Separate Collection) */}
-          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Expenses</span>
-              <span className="p-1.5 rounded-lg bg-rose-50 text-rose-600">
-                <TrendingDown className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-2">
-              <p className="text-lg sm:text-xl font-extrabold text-rose-600 font-mono tabular-nums">
-                {fmtRs(financialStats.totalExpenses)}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                {financialStats.expenseCount} vouchers recorded
-              </p>
-            </div>
-          </div>
-
-          {/* 5. Gross Profit */}
-          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Sales Profit</span>
-              <span className="p-1.5 rounded-lg bg-teal-50 text-teal-600">
-                <BarChart3 className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-2">
-              <p className="text-lg sm:text-xl font-extrabold text-teal-700 font-mono tabular-nums">
-                {fmtSecretOrCurrency(financialStats.totalProfit)}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Margin: {financialStats.profitMargin.toFixed(1)}%
-              </p>
-            </div>
-          </div>
-
-          {/* 6. Net Operating Profit (After Expenses) */}
-          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Net Profit</span>
-              <span
-                className={`p-1.5 rounded-lg ${
-                  financialStats.netProfit >= 0 ? 'bg-violet-50 text-violet-600' : 'bg-orange-50 text-orange-600'
-                }`}
-              >
-                <Banknote className="w-4 h-4" />
-              </span>
-            </div>
-            <div className="mt-2">
-              <p
-                className={`text-lg sm:text-xl font-extrabold font-mono tabular-nums ${
-                  financialStats.netProfit >= 0 ? 'text-violet-700' : 'text-orange-600'
-                }`}
-              >
-                {fmtSecretOrCurrency(financialStats.netProfit)}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                After all expenses
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* ═══ UNIFIED WORKSPACE NAVIGATION TABS ════════════════════════════ */}
-        <div className="bg-white rounded-xl border border-slate-200 p-1.5 shadow-2xs flex items-center gap-1 overflow-x-auto print:hidden">
-          {(
-            [
-              {
-                id: 'sales' as UnifiedTab,
-                label: 'Sales Transactions',
-                badge: groupedSalesTransactions.length,
-                icon: <Receipt className="w-4 h-4" />,
-              },
-              {
-                id: 'salespersons' as UnifiedTab,
-                label: 'Salesperson Tracker',
-                badge: salespersonAnalytics.filter((s) => s.billsCount > 0).length,
-                icon: <Users className="w-4 h-4" />,
-              },
-              {
-                id: 'expenses' as UnifiedTab,
-                label: 'Expense Tracker',
-                badge: filteredExpenses.length,
-                icon: <TrendingDown className="w-4 h-4" />,
-              },
-              {
-                id: 'settlement' as UnifiedTab,
-                label: 'Daily & Monthly Settlement',
-                badge: existingSettlement?.status === 'settled' ? '✓' : 'Open',
-                icon: <CheckCircle2 className="w-4 h-4" />,
-              },
-              {
-                id: 'simple-report' as UnifiedTab,
-                label: 'Simple Day / Month Report',
-                icon: <FileText className="w-4 h-4" />,
-              },
-              {
-                id: 'analytics' as UnifiedTab,
-                label: 'Brand & Category Mix',
-                badge: brandBreakdown.length,
-                icon: <Tag className="w-4 h-4" />,
-              },
-            ]
-          ).map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                setActiveTab(tab.id);
-                setCurrentPage(1);
-              }}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs sm:text-sm font-bold whitespace-nowrap transition-all cursor-pointer ${
-                activeTab === tab.id
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-            >
-              {tab.icon}
-              <span>{tab.label}</span>
-              {tab.badge !== undefined && (
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                    activeTab === tab.id
-                      ? 'bg-white/20 text-white'
-                      : 'bg-slate-200 text-slate-700'
-                  }`}
-                >
-                  {tab.badge}
-                </span>
-              )}
-            </button>
-          ))}
         </div>
 
         {/* ═══ TAB 1: SALES TRANSACTIONS REGISTER ═══════════════════════════ */}
@@ -2954,19 +3020,19 @@ const OverallSales: React.FC = () => {
                   onClick={() =>
                     setSelectedPaymentMode((prev) => (prev === m.mode ? '' : m.mode))
                   }
-                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                  className={`p-3 rounded-lg border text-left transition-all cursor-pointer flex items-center justify-between ${
                     selectedPaymentMode === m.mode
-                      ? `${m.bg} ${m.border} ring-2 ring-blue-500`
-                      : 'bg-white border-slate-200 hover:bg-slate-50'
+                      ? `${m.bg} ${m.border} ring-2 ring-blue-500 shadow-sm`
+                      : 'bg-white border-gray-200 hover:bg-gray-50 shadow-sm'
                   }`}
                 >
                   <div>
-                    <p className="text-[11px] font-semibold text-slate-500">{m.label}</p>
+                    <p className="text-[11px] font-semibold text-gray-500">{m.label}</p>
                     <p className={`text-sm sm:text-base font-extrabold font-mono tabular-nums mt-0.5 ${m.color}`}>
                       {fmtRs(m.val)}
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold text-slate-400">
+                  <span className="text-[10px] font-bold text-gray-400">
                     {financialStats.totalRevenue > 0
                       ? `${((m.val / financialStats.totalRevenue) * 100).toFixed(0)}%`
                       : '0%'}
@@ -2977,10 +3043,10 @@ const OverallSales: React.FC = () => {
 
             {/* Salesperson Quick Filter Chips */}
             {salespersonAnalytics.some((s) => s.billsCount > 0) && (
-              <div className="bg-white rounded-xl border border-slate-200 px-3.5 py-2.5 flex items-center gap-2 overflow-x-auto">
-                <span className="text-xs font-bold text-slate-500 flex items-center gap-1 whitespace-nowrap">
+              <div className="bg-white rounded-lg border border-gray-200 px-3 py-2 flex items-center gap-2 overflow-x-auto shadow-sm">
+                <span className="text-xs font-medium text-gray-500 flex items-center gap-1 whitespace-nowrap">
                   <Users className="w-3.5 h-3.5 text-blue-600" />
-                  Salesperson Filter:
+                  Staff Filter:
                 </span>
                 <button
                   type="button"
@@ -2988,7 +3054,7 @@ const OverallSales: React.FC = () => {
                   className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                     !selectedSalesPerson
                       ? 'bg-blue-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
                   All Staff ({financialStats.billCount})
@@ -3005,16 +3071,16 @@ const OverallSales: React.FC = () => {
                         onClick={() =>
                           setSelectedSalesPerson(isSelected ? '' : sp.name)
                         }
-                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                           isSelected
-                            ? 'bg-blue-600 text-white shadow-2xs'
-                            : 'bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700'
+                            ? 'bg-blue-600 text-white shadow-sm'
+                            : 'bg-gray-100 text-gray-700 hover:bg-blue-50 hover:text-blue-700'
                         }`}
                       >
                         <span>{sp.name}</span>
                         <span
                           className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
-                            isSelected ? 'bg-white/20 text-white' : 'bg-white text-slate-600'
+                            isSelected ? 'bg-white/20 text-white' : 'bg-white text-gray-600'
                           }`}
                         >
                           {sp.billsCount} • {fmtRs(sp.revenue)}
@@ -3026,17 +3092,17 @@ const OverallSales: React.FC = () => {
             )}
 
             {/* Sales Transactions Table Card */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/50">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-4 py-3.5 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-gray-50/50">
                 <div>
-                  <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+                  <h2 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
                     <Receipt className="w-4 h-4 text-blue-600" />
                     <span>Sales Bills & Invoice Register</span>
-                    <span className="text-xs font-semibold text-slate-500">
+                    <span className="text-xs font-normal text-gray-500">
                       ({groupedSalesTransactions.length} bills)
                     </span>
                   </h2>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-gray-500">
                     Pure sales register — store expenses are isolated in the separate Expenses collection
                   </p>
                 </div>
@@ -3045,7 +3111,7 @@ const OverallSales: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleDownloadOverallPDF}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-lg text-xs font-medium transition-colors cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5 text-blue-600" />
                     <span>Sales PDF</span>
@@ -3053,7 +3119,7 @@ const OverallSales: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => navigate('/billing')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>New Bill</span>
@@ -3063,11 +3129,11 @@ const OverallSales: React.FC = () => {
 
               {groupedSalesTransactions.length === 0 ? (
                 <div className="py-14 text-center px-4">
-                  <Receipt className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm font-bold text-slate-600">
+                  <Receipt className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm font-bold text-gray-600">
                     No sales transactions found for {getRangeName()}
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-gray-400 mt-1">
                     Try selecting a different date range or clearing active filters.
                   </p>
                 </div>
@@ -3077,9 +3143,9 @@ const OverallSales: React.FC = () => {
                   <div className="hidden md:block overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider font-bold text-[11px]">
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase tracking-wider font-semibold text-[11px]">
                           <th
-                            className="py-3 px-4 cursor-pointer hover:text-slate-900"
+                            className="py-3 px-4 cursor-pointer hover:text-gray-900"
                             onClick={() => {
                               setSortBy('date');
                               setSortOrder((p) => (p === 'asc' ? 'desc' : 'asc'));
@@ -3099,7 +3165,7 @@ const OverallSales: React.FC = () => {
                           <th className="py-3 px-4">Customer</th>
                           <th className="py-3 px-4">Salesperson</th>
                           <th
-                            className="py-3 px-3 text-center cursor-pointer hover:text-slate-900"
+                            className="py-3 px-3 text-center cursor-pointer hover:text-gray-900"
                             onClick={() => {
                               setSortBy('quantity');
                               setSortOrder((p) => (p === 'asc' ? 'desc' : 'asc'));
@@ -3109,7 +3175,7 @@ const OverallSales: React.FC = () => {
                           </th>
                           <th className="py-3 px-3 text-right">Cost</th>
                           <th
-                            className="py-3 px-4 text-right cursor-pointer hover:text-slate-900"
+                            className="py-3 px-4 text-right cursor-pointer hover:text-gray-900"
                             onClick={() => {
                               setSortBy('amount');
                               setSortOrder((p) => (p === 'asc' ? 'desc' : 'asc'));
@@ -3130,7 +3196,7 @@ const OverallSales: React.FC = () => {
                           <th className="py-3 px-4 text-right">Actions</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-800">
+                      <tbody className="divide-y divide-gray-200 text-gray-800">
                         {paginatedSales.map((item, idx) => {
                           const sp = getSalesPersonDisplay(item);
                           const isMulti = item.items && item.items.length > 1;
@@ -3148,9 +3214,9 @@ const OverallSales: React.FC = () => {
                               className="hover:bg-blue-50/30 transition-colors cursor-pointer"
                             >
                               <td className="py-3 px-4 whitespace-nowrap align-top">
-                                <div className="font-bold text-slate-900">
+                                <div className="font-bold text-gray-900">
                                   {dObj ? dObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'N/A'}
-                                  <span className="text-slate-400 font-normal ml-1.5">
+                                  <span className="text-gray-400 font-normal ml-1.5">
                                     {item.invoiceTime ||
                                       (dObj
                                         ? dObj.toLocaleTimeString('en-IN', {
@@ -3172,11 +3238,11 @@ const OverallSales: React.FC = () => {
                                       <Layers className="w-3 h-3" />
                                       Combined Bill ({item.items!.length} items)
                                     </span>
-                                    <ul className="space-y-0.5 text-[11px] text-slate-600 pl-2 border-l-2 border-slate-200">
+                                    <ul className="space-y-0.5 text-[11px] text-gray-600 pl-2 border-l-2 border-gray-200">
                                       {item.items!.map((sub, sIdx) => (
                                         <li key={sIdx} className="truncate">
-                                          <span className="font-medium text-slate-800">{sub.title}</span>{' '}
-                                          <span className="text-slate-400">×{sub.quantity}</span>
+                                          <span className="font-medium text-gray-800">{sub.title}</span>{' '}
+                                          <span className="text-gray-400">×{sub.quantity}</span>
                                           {sub.imei && (
                                             <span className="text-[10px] font-mono text-blue-600 ml-1">
                                               [{sub.imei}]
@@ -3188,7 +3254,7 @@ const OverallSales: React.FC = () => {
                                   </div>
                                 ) : (
                                   <div>
-                                    <div className="font-semibold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                                    <div className="font-semibold text-gray-900 flex items-center gap-1.5 flex-wrap">
                                       <span>{item.title || 'N/A'}</span>
                                       {item.gstEnabled && (
                                         <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
@@ -3207,7 +3273,7 @@ const OverallSales: React.FC = () => {
                                       </div>
                                     )}
                                     {item.brand && item.brand !== 'Other' && (
-                                      <div className="text-[10px] text-slate-400 mt-0.5">
+                                      <div className="text-[10px] text-gray-400 mt-0.5">
                                         {item.brand} • {item.category}
                                       </div>
                                     )}
@@ -3216,11 +3282,11 @@ const OverallSales: React.FC = () => {
                               </td>
 
                               <td className="py-3 px-4 whitespace-nowrap align-top">
-                                <div className="font-medium text-slate-900">
+                                <div className="font-medium text-gray-900">
                                   {item.customerName || 'Walk-in Customer'}
                                 </div>
                                 {item.customerPhone && item.customerPhone !== 'N/A' && (
-                                  <div className="text-[11px] text-slate-500 font-mono">
+                                  <div className="text-[11px] text-gray-500 font-mono">
                                     {item.customerPhone}
                                   </div>
                                 )}
@@ -3240,7 +3306,7 @@ const OverallSales: React.FC = () => {
                                       prev.toLowerCase() === sp.name.toLowerCase() ? '' : sp.name
                                     );
                                   }}
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 font-semibold text-xs transition-colors cursor-pointer"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-gray-100 hover:bg-blue-100 text-gray-700 hover:text-blue-800 font-semibold text-xs transition-colors cursor-pointer"
                                   title="Click to filter by this salesperson"
                                 >
                                   <span className="w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center font-bold">
@@ -3250,18 +3316,18 @@ const OverallSales: React.FC = () => {
                                 </button>
                               </td>
 
-                              <td className="py-3 px-3 text-center whitespace-nowrap align-top font-semibold text-slate-700">
+                              <td className="py-3 px-3 text-center whitespace-nowrap align-top font-semibold text-gray-700">
                                 {isMulti
                                   ? item.items!.reduce((s, i) => s + (i.quantity || 1), 0)
                                   : item.quantity || 1}
                               </td>
 
-                              <td className="py-3 px-3 text-right whitespace-nowrap align-top font-mono text-slate-600">
+                              <td className="py-3 px-3 text-right whitespace-nowrap align-top font-mono text-gray-600">
                                 {fmtSecretOrCurrency(item.cost || 0)}
                               </td>
 
                               <td className="py-3 px-4 text-right whitespace-nowrap align-top">
-                                <div className="font-extrabold text-slate-900 font-mono text-sm">
+                                <div className="font-extrabold text-gray-900 font-mono text-sm">
                                   {fmtRs(netAmt)}
                                 </div>
                                 {discAmt > 0 && (
@@ -3284,7 +3350,7 @@ const OverallSales: React.FC = () => {
                                   {item.paymentMode || 'CASH'}
                                 </span>
                                 {item.paymentMode === 'split' && item.paymentSplit && (
-                                  <div className="text-[10px] text-slate-500 mt-0.5">
+                                  <div className="text-[10px] text-gray-500 mt-0.5">
                                     {item.paymentSplit.cash ? `C:${item.paymentSplit.cash} ` : ''}
                                     {item.paymentSplit.upi ? `U:${item.paymentSplit.upi} ` : ''}
                                     {item.paymentSplit.card ? `Card:${item.paymentSplit.card}` : ''}
@@ -3344,7 +3410,7 @@ const OverallSales: React.FC = () => {
                   </div>
 
                   {/* Mobile Cards */}
-                  <div className="md:hidden divide-y divide-slate-100">
+                  <div className="md:hidden divide-y divide-gray-200">
                     {paginatedSales.map((item, idx) => {
                       const sp = getSalesPersonDisplay(item);
                       const isMulti = item.items && item.items.length > 1;
@@ -3358,18 +3424,18 @@ const OverallSales: React.FC = () => {
                             setSelectedViewTransaction(item);
                             setIsViewTransactionModalOpen(true);
                           }}
-                          className="p-3.5 hover:bg-slate-50 transition-colors"
+                          className="p-3.5 hover:bg-gray-50 transition-colors"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="font-bold text-slate-900 text-sm truncate">
+                              <p className="font-bold text-gray-900 text-sm truncate">
                                 {isMulti ? `Combined Bill (${item.items!.length} items)` : item.title}
                               </p>
                               <div className="flex items-center gap-1.5 flex-wrap mt-1">
                                 <span className="text-[11px] font-mono text-blue-600 font-semibold">
                                   {item.invoiceNumber || item.transactionId || ''}
                                 </span>
-                                <span className="text-[11px] text-slate-400">
+                                <span className="text-[11px] text-gray-400">
                                   • {dObj ? dObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : ''}
                                 </span>
                                 <span
@@ -3382,7 +3448,7 @@ const OverallSales: React.FC = () => {
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className="text-base font-extrabold text-slate-900 font-mono">
+                              <p className="text-base font-extrabold text-gray-900 font-mono">
                                 {fmtRs(netAmt)}
                               </p>
                               <p className="text-[11px] font-semibold text-emerald-600 font-mono">
@@ -3391,13 +3457,13 @@ const OverallSales: React.FC = () => {
                             </div>
                           </div>
 
-                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                            <span>Customer: <strong className="text-slate-700">{item.customerName || 'Walk-in'}</strong></span>
+                          <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                            <span>Customer: <strong className="text-gray-700">{item.customerName || 'Walk-in'}</strong></span>
                             <span>Sold by: <strong className="text-blue-700">{sp.name}</strong></span>
                           </div>
 
                           <div
-                            className="mt-2.5 pt-2 border-t border-slate-100 flex items-center gap-1.5"
+                            className="mt-2.5 pt-2 border-t border-gray-100 flex items-center gap-1.5"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button
@@ -3439,8 +3505,8 @@ const OverallSales: React.FC = () => {
 
                   {/* Pagination Footer */}
                   {totalSalesPages > 1 && (
-                    <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
-                      <span className="text-slate-500 font-medium">
+                    <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs">
+                      <span className="text-gray-500 font-medium">
                         Showing page <strong>{currentPage}</strong> of <strong>{totalSalesPages}</strong> ({groupedSalesTransactions.length} total bills)
                       </span>
                       <div className="flex items-center gap-1.5">
@@ -3448,7 +3514,7 @@ const OverallSales: React.FC = () => {
                           type="button"
                           onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                           disabled={currentPage === 1}
-                          className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                          className="px-2.5 py-1 bg-white border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-40 cursor-pointer"
                         >
                           Prev
                         </button>
@@ -3456,7 +3522,7 @@ const OverallSales: React.FC = () => {
                           type="button"
                           onClick={() => setCurrentPage((p) => Math.min(totalSalesPages, p + 1))}
                           disabled={currentPage === totalSalesPages}
-                          className="px-2.5 py-1 bg-white border border-slate-300 rounded-lg font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                          className="px-2.5 py-1 bg-white border border-gray-300 rounded-lg font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-40 cursor-pointer"
                         >
                           Next
                         </button>
@@ -3473,15 +3539,15 @@ const OverallSales: React.FC = () => {
         {activeTab === 'salespersons' && (
           <div className="space-y-4">
             {/* Salesperson Overview Header */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
                   <Award className="w-5 h-5 text-blue-600" />
                   <span>Salesperson Performance & Follow-Up Tracker</span>
                 </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
+                <p className="text-xs text-gray-500 mt-0.5">
                   Monitor staff sales, cash/UPI collection responsibility, target achievement, and pending credit follow-ups for{' '}
-                  <strong className="text-slate-700">{getRangeName()}</strong>
+                  <strong className="text-gray-700">{getRangeName()}</strong>
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -3489,7 +3555,7 @@ const OverallSales: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setFocusedSalesPerson(null)}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
+                    className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold cursor-pointer"
                   >
                     Show All Staff
                   </button>
@@ -3514,29 +3580,29 @@ const OverallSales: React.FC = () => {
                 return (
                   <div
                     key={sp.name}
-                    className={`bg-white rounded-2xl border transition-all p-4 flex flex-col justify-between shadow-2xs ${
+                    className={`bg-white rounded-lg border transition-all p-4 flex flex-col justify-between shadow-sm ${
                       isFocused
                         ? 'border-blue-500 ring-2 ring-blue-500/30'
-                        : 'border-slate-200 hover:border-blue-300'
+                        : 'border-gray-200 hover:border-blue-300'
                     }`}
                   >
                     <div>
                       {/* Card Top: Rank + Name + Action Buttons */}
-                      <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                      <div className="flex items-start justify-between gap-2 pb-3 border-b border-gray-100">
                         <div className="flex items-center gap-2.5">
                           <div
-                            className={`w-9 h-9 rounded-xl flex items-center justify-center font-extrabold text-sm ${
+                            className={`w-9 h-9 rounded-lg flex items-center justify-center font-extrabold text-sm ${
                               index === 0 && sp.revenue > 0
                                 ? 'bg-amber-100 text-amber-800 border border-amber-300'
                                 : index === 1 && sp.revenue > 0
-                                ? 'bg-slate-200 text-slate-800'
+                                ? 'bg-gray-200 text-gray-800'
                                 : 'bg-blue-50 text-blue-700'
                             }`}
                           >
                             #{index + 1}
                           </div>
                           <div>
-                            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                            <h3 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
                               <span>{sp.name}</span>
                               {sp.billsCount === 0 && (
                                 <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
@@ -3544,7 +3610,7 @@ const OverallSales: React.FC = () => {
                                 </span>
                               )}
                             </h3>
-                            <p className="text-[11px] text-slate-400">
+                            <p className="text-[11px] text-gray-400">
                               {sp.lastSaleAt
                                 ? `Last bill: ${sp.lastSaleAt.toLocaleTimeString('en-IN', {
                                     hour: '2-digit',
@@ -3570,7 +3636,7 @@ const OverallSales: React.FC = () => {
                               setEditingTargetFor(sp.name);
                               setTargetInputVal(String(targetAmt || ''));
                             }}
-                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-[10px] font-semibold cursor-pointer"
+                            className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-[10px] font-semibold cursor-pointer"
                             title="Set Sales Target"
                           >
                             Target
@@ -3580,7 +3646,7 @@ const OverallSales: React.FC = () => {
 
                       {/* Target Input Box (if editing) */}
                       {editingTargetFor === sp.name && (
-                        <div className="mt-2.5 p-2.5 bg-blue-50 rounded-xl border border-blue-200 flex items-center gap-2">
+                        <div className="mt-2.5 p-2.5 bg-blue-50 rounded-lg border border-blue-200 flex items-center gap-2">
                           <input
                             type="number"
                             placeholder="Target ₹..."
@@ -3598,7 +3664,7 @@ const OverallSales: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => setEditingTargetFor(null)}
-                            className="p-1 text-slate-400 hover:text-slate-600"
+                            className="p-1 text-gray-400 hover:text-gray-600"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -3607,38 +3673,38 @@ const OverallSales: React.FC = () => {
 
                       {/* Primary Metrics */}
                       <div className="grid grid-cols-3 gap-2 my-3">
-                        <div className="bg-slate-50 rounded-xl p-2.5">
-                          <span className="text-[10px] text-slate-500 font-semibold block">
+                        <div className="bg-gray-50 rounded-lg p-2.5">
+                          <span className="text-[10px] text-gray-500 font-semibold block">
                             Revenue
                           </span>
                           <span className="text-sm font-extrabold text-blue-700 font-mono">
                             {fmtRs(sp.revenue)}
                           </span>
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
+                          <span className="text-[10px] text-gray-400 block mt-0.5">
                             {sharePct.toFixed(1)}% of store
                           </span>
                         </div>
 
-                        <div className="bg-slate-50 rounded-xl p-2.5">
-                          <span className="text-[10px] text-slate-500 font-semibold block">
+                        <div className="bg-gray-50 rounded-lg p-2.5">
+                          <span className="text-[10px] text-gray-500 font-semibold block">
                             Bills / Qty
                           </span>
-                          <span className="text-sm font-extrabold text-slate-900 font-mono">
-                            {sp.billsCount} <span className="text-xs font-normal text-slate-500">({sp.itemsSold})</span>
+                          <span className="text-sm font-extrabold text-gray-900 font-mono">
+                            {sp.billsCount} <span className="text-xs font-normal text-gray-500">({sp.itemsSold})</span>
                           </span>
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
+                          <span className="text-[10px] text-gray-400 block mt-0.5">
                             Avg: {fmtRs(avgBill)}
                           </span>
                         </div>
 
-                        <div className="bg-slate-50 rounded-xl p-2.5">
-                          <span className="text-[10px] text-slate-500 font-semibold block">
+                        <div className="bg-gray-50 rounded-lg p-2.5">
+                          <span className="text-[10px] text-gray-500 font-semibold block">
                             Profit
                           </span>
                           <span className="text-sm font-extrabold text-emerald-700 font-mono">
                             {fmtSecretOrCurrency(sp.profit)}
                           </span>
-                          <span className="text-[10px] text-slate-400 block mt-0.5">
+                          <span className="text-[10px] text-gray-400 block mt-0.5">
                             Disc: {fmtRs(sp.discountGiven)}
                           </span>
                         </div>
@@ -3648,10 +3714,10 @@ const OverallSales: React.FC = () => {
                       {targetAmt > 0 && (
                         <div className="mb-3">
                           <div className="flex justify-between text-[11px] font-semibold mb-1">
-                            <span className="text-slate-600">Target: {fmtRs(targetAmt)}</span>
+                            <span className="text-gray-600">Target: {fmtRs(targetAmt)}</span>
                             <span className="text-blue-700">{targetPct.toFixed(0)}% Achieved</span>
                           </div>
-                          <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-blue-600 rounded-full transition-all"
                               style={{ width: `${targetPct}%` }}
@@ -3661,32 +3727,32 @@ const OverallSales: React.FC = () => {
                       )}
 
                       {/* Collection Handover Breakdown (Critical for following up cash with salesperson) */}
-                      <div className="bg-slate-50/80 rounded-xl p-2.5 border border-slate-100 space-y-1.5 text-xs">
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      <div className="bg-gray-50/80 rounded-lg p-2.5 border border-gray-100 space-y-1.5 text-xs">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
                           Collection Responsibility (To Hand Over)
                         </div>
                         <div className="grid grid-cols-3 gap-1.5">
                           <div>
-                            <span className="text-[10px] text-slate-500 block">Cash Collected</span>
+                            <span className="text-[10px] text-gray-500 block">Cash Collected</span>
                             <span className="font-bold text-emerald-700 font-mono">
                               {fmtRs(sp.cashCollected)}
                             </span>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-500 block">UPI / QR</span>
+                            <span className="text-[10px] text-gray-500 block">UPI / QR</span>
                             <span className="font-bold text-blue-700 font-mono">
                               {fmtRs(sp.upiCollected)}
                             </span>
                           </div>
                           <div>
-                            <span className="text-[10px] text-slate-500 block">Card / EMI</span>
+                            <span className="text-[10px] text-gray-500 block">Card / EMI</span>
                             <span className="font-bold text-purple-700 font-mono">
                               {fmtRs(sp.cardCollected + sp.financeCollected)}
                             </span>
                           </div>
                         </div>
                         {sp.creditPending > 0 && (
-                          <div className="pt-1.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-orange-700 font-semibold">
+                          <div className="pt-1.5 border-t border-gray-200 flex items-center justify-between text-[11px] text-orange-700 font-semibold">
                             <span>⚠️ Pending Credit to Follow Up:</span>
                             <span className="font-mono font-bold">{fmtRs(sp.creditPending)}</span>
                           </div>
@@ -3695,13 +3761,13 @@ const OverallSales: React.FC = () => {
                     </div>
 
                     {/* Card Footer Buttons */}
-                    <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center gap-2">
+                    <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() =>
                           setFocusedSalesPerson(isFocused ? null : sp.name)
                         }
-                        className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+                        className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1 ${
                           isFocused
                             ? 'bg-blue-600 text-white'
                             : 'bg-blue-50 hover:bg-blue-100 text-blue-700'
@@ -3716,7 +3782,7 @@ const OverallSales: React.FC = () => {
                           setSelectedSalesPerson(sp.name);
                           setActiveTab('sales');
                         }}
-                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1"
+                        className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold cursor-pointer flex items-center gap-1"
                         title="Filter main sales table by this salesperson"
                       >
                         <span>Filter</span>
@@ -3730,7 +3796,7 @@ const OverallSales: React.FC = () => {
 
             {/* Focused Salesperson Drill-Down Ledger */}
             {focusedSalesPerson && (
-              <div className="bg-white rounded-2xl border-2 border-blue-500 shadow-sm overflow-hidden">
+              <div className="bg-white rounded-lg border border-blue-500 shadow-sm overflow-hidden">
                 <div className="px-4 py-3.5 bg-blue-50 border-b border-blue-200 flex items-center justify-between">
                   <div>
                     <h3 className="text-sm sm:text-base font-bold text-blue-950">
@@ -3752,7 +3818,7 @@ const OverallSales: React.FC = () => {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[11px]">
+                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase font-bold text-[11px]">
                         <th className="py-2.5 px-4">Time & Bill #</th>
                         <th className="py-2.5 px-4">Customer</th>
                         <th className="py-2.5 px-4">Items Sold</th>
@@ -3762,7 +3828,7 @@ const OverallSales: React.FC = () => {
                         <th className="py-2.5 px-4 text-right">Profit</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-gray-100">
                       {salespersonAnalytics
                         .find((s) => s.name.toLowerCase() === focusedSalesPerson.toLowerCase())
                         ?.transactions.map((tx, idx) => {
@@ -3782,16 +3848,16 @@ const OverallSales: React.FC = () => {
                                 <span className="font-bold text-blue-600">
                                   {tx.invoiceNumber || tx.transactionId || tx.id?.slice(0, 8)}
                                 </span>
-                                <span className="block text-[10px] text-slate-400">
+                                <span className="block text-[10px] text-gray-400">
                                   {dObj ? dObj.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
                                 </span>
                               </td>
                               <td className="py-2.5 px-4">
-                                <div className="font-semibold text-slate-900">
+                                <div className="font-semibold text-gray-900">
                                   {tx.customerName || 'Walk-in'}
                                 </div>
                                 {tx.customerPhone && tx.customerPhone !== 'N/A' && (
-                                  <div className="text-[10px] text-slate-500">{tx.customerPhone}</div>
+                                  <div className="text-[10px] text-gray-500">{tx.customerPhone}</div>
                                 )}
                               </td>
                               <td className="py-2.5 px-4">
@@ -3811,7 +3877,7 @@ const OverallSales: React.FC = () => {
                               <td className="py-2.5 px-4 text-right font-mono text-rose-600">
                                 {disc > 0 ? `-${fmtRs(disc)}` : '—'}
                               </td>
-                              <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
+                              <td className="py-2.5 px-4 text-right font-mono font-bold text-gray-900">
                                 {fmtRs(amt)}
                               </td>
                               <td className="py-2.5 px-4 text-right font-mono font-semibold text-emerald-600">
@@ -3832,10 +3898,10 @@ const OverallSales: React.FC = () => {
         {activeTab === 'expenses' && (
           <div className="space-y-4">
             {/* Collection Separation Banner & Summary */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
                     <Database className="w-5 h-5 text-rose-600" />
                     <span>Dedicated Store Expense Tracker</span>
                   </h2>
@@ -3843,8 +3909,8 @@ const OverallSales: React.FC = () => {
                     Saved in Separate &quot;expenses&quot; Collection
                   </span>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  All store expenses, salaries, and bonuses are saved in the dedicated Firestore <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">expenses</code> collection so they never conflict with sales invoices.
+                <p className="text-xs text-gray-500 mt-1">
+                  All store expenses, salaries, and bonuses are saved in the dedicated Firestore <code className="bg-gray-100 px-1 py-0.5 rounded text-gray-700">expenses</code> collection so they never conflict with sales invoices.
                 </p>
               </div>
 
@@ -3854,7 +3920,7 @@ const OverallSales: React.FC = () => {
                     type="button"
                     onClick={handleMigrateLegacyExpenses}
                     disabled={migratingExpenses}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                   >
                     <Database className="w-3.5 h-3.5" />
                     <span>
@@ -3868,7 +3934,7 @@ const OverallSales: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddExpenseDrawer((prev) => !prev)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs sm:text-sm font-bold shadow-xs transition-colors cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>{showAddExpenseDrawer ? 'Hide Expense Form' : 'Record New Expense'}</span>
@@ -3877,7 +3943,7 @@ const OverallSales: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate('/add-expense')}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
                 >
                   <span>Presets & Full Manager</span>
                   <ArrowRight className="w-3.5 h-3.5" />
@@ -3897,29 +3963,29 @@ const OverallSales: React.FC = () => {
                   key={c.key}
                   type="button"
                   onClick={() => setExpenseCategoryFilter(c.key)}
-                  className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  className={`p-3.5 rounded-lg border text-left transition-all cursor-pointer ${
                     expenseCategoryFilter === c.key
                       ? `${c.bg} ${c.border} ring-2 ring-rose-500`
-                      : 'bg-white border-slate-200 hover:bg-slate-50'
+                      : 'bg-white border-gray-200 hover:bg-gray-50'
                   }`}
                 >
-                  <p className="text-xs font-semibold text-slate-500">{c.label}</p>
+                  <p className="text-xs font-semibold text-gray-500">{c.label}</p>
                   <p className={`text-lg font-extrabold font-mono tabular-nums mt-1 ${c.color}`}>
                     {fmtRs(c.val)}
                   </p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{c.sub}</p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">{c.sub}</p>
                 </button>
               ))}
             </div>
 
             {/* Expense Table */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-4 py-3.5 border-b border-gray-200 flex items-center justify-between bg-gray-50/50">
                 <div>
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900">
                     Expense Voucher Transactions ({filteredExpenses.length})
                   </h3>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-gray-500">
                     Cash Expenses: <strong>{fmtRs(financialStats.cashExpenses)}</strong> • UPI Expenses: <strong>{fmtRs(financialStats.upiExpenses)}</strong> • Bank: <strong>{fmtRs(financialStats.bankExpenses)}</strong>
                   </p>
                 </div>
@@ -3927,11 +3993,11 @@ const OverallSales: React.FC = () => {
 
               {filteredExpenses.length === 0 ? (
                 <div className="py-12 text-center px-4">
-                  <TrendingDown className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                  <p className="text-sm font-bold text-slate-600">
+                  <TrendingDown className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm font-bold text-gray-600">
                     No expenses recorded for {getRangeName()}
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-gray-400 mt-1">
                     Click &quot;Record New Expense&quot; above to log a store expenditure into the dedicated expenses collection.
                   </p>
                 </div>
@@ -3939,7 +4005,7 @@ const OverallSales: React.FC = () => {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[11px]">
+                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase font-bold text-[11px]">
                         <th className="py-3 px-4">Date & Time</th>
                         <th className="py-3 px-4">Expense Title & Notes</th>
                         <th className="py-3 px-4">Category</th>
@@ -3950,7 +4016,7 @@ const OverallSales: React.FC = () => {
                         <th className="py-3 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-800">
+                    <tbody className="divide-y divide-gray-100 text-gray-800">
                       {filteredExpenses.map((exp, idx) => {
                         const dObj = toDateValue(exp.createdAt);
                         const amt =
@@ -3962,18 +4028,18 @@ const OverallSales: React.FC = () => {
                         return (
                           <tr key={exp.id || idx} className="hover:bg-rose-50/20 transition-colors">
                             <td className="py-3 px-4 whitespace-nowrap">
-                              <div className="font-bold text-slate-900">
+                              <div className="font-bold text-gray-900">
                                 {dObj ? dObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
                               </div>
-                              <div className="text-[10px] text-slate-400">
+                              <div className="text-[10px] text-gray-400">
                                 {dObj ? dObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}
                               </div>
                             </td>
 
                             <td className="py-3 px-4">
-                              <div className="font-bold text-slate-900">{exp.title}</div>
+                              <div className="font-bold text-gray-900">{exp.title}</div>
                               {exp.description && (
-                                <div className="text-[11px] text-slate-500">{exp.description}</div>
+                                <div className="text-[11px] text-gray-500">{exp.description}</div>
                               )}
                             </td>
 
@@ -3995,9 +4061,9 @@ const OverallSales: React.FC = () => {
                               {exp.employeeName ? (
                                 <span className="font-semibold text-purple-700">{exp.employeeName}</span>
                               ) : exp.customerName ? (
-                                <span className="text-slate-700">{exp.customerName}</span>
+                                <span className="text-gray-700">{exp.customerName}</span>
                               ) : (
-                                <span className="text-slate-400 text-[11px]">By {exp.createdByName || 'Staff'}</span>
+                                <span className="text-gray-400 text-[11px]">By {exp.createdByName || 'Staff'}</span>
                               )}
                             </td>
 
@@ -4062,8 +4128,8 @@ const OverallSales: React.FC = () => {
         {activeTab === 'settlement' && (
           <div className="space-y-4">
             {/* Sub-navigation for Daily / Monthly / History */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
+            <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center bg-gray-100 p-1 rounded-lg w-full sm:w-auto">
                 {(
                   [
                     { id: 'daily', label: 'Daily Settlement', icon: <Calendar className="w-4 h-4" /> },
@@ -4085,7 +4151,7 @@ const OverallSales: React.FC = () => {
                     className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
                       settlementMode === m.id
                         ? 'bg-blue-600 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     {m.icon}
@@ -4099,7 +4165,7 @@ const OverallSales: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleDownloadDailySettlementPDF}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold cursor-pointer"
                   >
                     <FileDown className="w-4 h-4" />
                     <span>Download Daily Settlement PDF</span>
@@ -4109,7 +4175,7 @@ const OverallSales: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleDownloadMonthlySettlementPDF}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold cursor-pointer"
                   >
                     <FileDown className="w-4 h-4" />
                     <span>Download Monthly Settlement PDF</span>
@@ -4123,13 +4189,13 @@ const OverallSales: React.FC = () => {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
                 {/* Left 7 Cols: Expected System Collection & Drawer Math */}
                 <div className="lg:col-span-7 space-y-4">
-                  <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-5 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between border-b border-gray-100 pb-3">
                       <div>
-                        <h3 className="text-base font-bold text-slate-900">
+                        <h3 className="text-base font-bold text-gray-900">
                           System Expected Collection ({selectedDayDate.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })})
                         </h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-gray-500">
                           Auto-calculated from {currentExpected.salesCount} sales items and {currentExpected.expenseCount} expense vouchers
                         </p>
                       </div>
@@ -4156,39 +4222,39 @@ const OverallSales: React.FC = () => {
                         { label: 'Customer Credit', val: currentExpected.credit, sub: 'Credit receivable', color: 'text-orange-700', bg: 'bg-orange-50/70', border: 'border-orange-200' },
                         { label: 'Cheque / Bank', val: currentExpected.cheque, sub: 'Cheque clearance', color: 'text-teal-700', bg: 'bg-teal-50/70', border: 'border-teal-200' },
                       ].map((pm) => (
-                        <div key={pm.label} className={`p-3 rounded-xl border ${pm.border} ${pm.bg}`}>
-                          <p className="text-xs font-bold text-slate-600">{pm.label}</p>
+                        <div key={pm.label} className={`p-3 rounded-lg border ${pm.border} ${pm.bg}`}>
+                          <p className="text-xs font-bold text-gray-600">{pm.label}</p>
                           <p className={`text-lg font-extrabold font-mono mt-1 ${pm.color}`}>
                             {fmtRs(pm.val)}
                           </p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">{pm.sub}</p>
+                          <p className="text-[10px] text-gray-500 mt-0.5">{pm.sub}</p>
                         </div>
                       ))}
                     </div>
 
                     {/* Cash Drawer Reconciliation Formula Box */}
-                    <div className="bg-slate-900 text-white rounded-xl p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div className="bg-gradient-to-r from-blue-50/70 via-indigo-50/60 to-emerald-50/70 border border-blue-200 text-gray-900 rounded-lg p-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs shadow-sm">
                       <div>
-                        <span className="text-slate-400 block text-[10px]">Total Cash Sales</span>
-                        <span className="font-mono font-bold text-base text-emerald-400">
+                        <span className="text-gray-500 block text-[10px] font-bold uppercase tracking-wider">Total Cash Sales</span>
+                        <span className="font-mono font-bold text-base text-emerald-700">
                           {fmtRs(currentExpected.cash)}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block text-[10px]">Less: Cash Expenses</span>
-                        <span className="font-mono font-bold text-base text-rose-400">
+                        <span className="text-gray-500 block text-[10px] font-bold uppercase tracking-wider">Less: Cash Expenses</span>
+                        <span className="font-mono font-bold text-base text-rose-600">
                           -{fmtRs(financialStats.cashExpenses)}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block text-[10px]">Net Cash in Drawer</span>
-                        <span className="font-mono font-extrabold text-base text-amber-300">
+                        <span className="text-gray-500 block text-[10px] font-bold uppercase tracking-wider">Net Cash in Drawer</span>
+                        <span className="font-mono font-extrabold text-base text-amber-800">
                           {fmtRs(currentExpected.cash - financialStats.cashExpenses)}
                         </span>
                       </div>
                       <div>
-                        <span className="text-slate-400 block text-[10px]">Net Day Revenue</span>
-                        <span className="font-mono font-extrabold text-base text-blue-300">
+                        <span className="text-gray-500 block text-[10px] font-bold uppercase tracking-wider">Net Day Revenue</span>
+                        <span className="font-mono font-extrabold text-base text-blue-800">
                           {fmtRs(currentExpected.totalRevenue)}
                         </span>
                       </div>
@@ -4198,13 +4264,13 @@ const OverallSales: React.FC = () => {
 
                 {/* Right 5 Cols: Physical Drawer Count & Sign-Off */}
                 <div className="lg:col-span-5 space-y-4">
-                  <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-5 shadow-sm space-y-4">
+                    <div className="flex items-center justify-between border-b border-gray-100 pb-3">
                       <div>
-                        <h3 className="text-base font-bold text-slate-900">
+                        <h3 className="text-base font-bold text-gray-900">
                           Actual Counted Collection
                         </h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-gray-500">
                           Enter physical cash & verified bank settlements
                         </p>
                       </div>
@@ -4231,7 +4297,7 @@ const OverallSales: React.FC = () => {
                         return (
                           <div key={f.label}>
                             <div className="flex items-center justify-between text-xs mb-1">
-                              <span className="font-semibold text-slate-700">{f.label}</span>
+                              <span className="font-semibold text-gray-700">{f.label}</span>
                               {f.val !== '' && (
                                 <span
                                   className={`text-[10px] font-mono font-bold ${
@@ -4251,7 +4317,7 @@ const OverallSales: React.FC = () => {
                               value={f.val}
                               onChange={(e) => f.set(e.target.value)}
                               placeholder={String(f.exp)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-xl text-sm font-bold font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-bold font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             />
                           </div>
                         );
@@ -4261,7 +4327,7 @@ const OverallSales: React.FC = () => {
                     {/* Variance Banner */}
                     {(actualCash !== '' || actualUpi !== '' || actualCard !== '') && (
                       <div
-                        className={`p-3 rounded-xl border flex items-center justify-between ${
+                        className={`p-3 rounded-lg border flex items-center justify-between ${
                           settlementDifference.total === 0
                             ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                             : settlementDifference.total > 0
@@ -4299,7 +4365,7 @@ const OverallSales: React.FC = () => {
                     )}
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
                         Settlement Handover Notes (Optional)
                       </label>
                       <textarea
@@ -4307,7 +4373,7 @@ const OverallSales: React.FC = () => {
                         value={settlementNotes}
                         onChange={(e) => setSettlementNotes(e.target.value)}
                         placeholder="Cash handover remarks, denomination notes, or discrepancy explanation..."
-                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
                       />
                     </div>
 
@@ -4315,7 +4381,7 @@ const OverallSales: React.FC = () => {
                       type="button"
                       onClick={() => handleSaveSettlement('daily')}
                       disabled={savingSettlement}
-                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 text-sm cursor-pointer disabled:opacity-50"
+                      className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 text-sm cursor-pointer disabled:opacity-50"
                     >
                       <CheckCircle2 className="w-4 h-4" />
                       <span>
@@ -4334,13 +4400,13 @@ const OverallSales: React.FC = () => {
             {/* ── MONTHLY SETTLEMENT VIEW ───────────────────────────────────── */}
             {settlementMode === 'monthly' && (
               <div className="space-y-4">
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">
+                    <h3 className="text-base font-bold text-gray-900">
                       Monthly Financial & Settlement Register —{' '}
                       {selectedMonthDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}
                     </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <p className="text-xs text-gray-500 mt-0.5">
                       {monthlySettlements.length} of {dailyBreakdown.length} active trading days settled
                     </p>
                   </div>
@@ -4349,7 +4415,7 @@ const OverallSales: React.FC = () => {
                       type="button"
                       onClick={() => handleSaveSettlement('monthly')}
                       disabled={savingSettlement}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
                     >
                       Sign Off Month Settlement
                     </button>
@@ -4357,11 +4423,11 @@ const OverallSales: React.FC = () => {
                 </div>
 
                 {/* Day-by-Day Table */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[11px]">
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase font-bold text-[11px]">
                           <th className="py-3 px-4">Date</th>
                           <th className="py-3 px-3 text-center">Entries</th>
                           <th className="py-3 px-4 text-right">Net Sales</th>
@@ -4373,16 +4439,16 @@ const OverallSales: React.FC = () => {
                           <th className="py-3 px-4 text-right">Action</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-gray-100">
                         {dailyBreakdown.map((day) => {
                           const dObj = new Date(day.dateStr + 'T00:00:00');
                           const dayNetProfit = day.expected.totalProfit - day.expected.totalExpenses;
                           return (
-                            <tr key={day.dateStr} className="hover:bg-slate-50 transition-colors">
-                              <td className="py-3 px-4 font-bold text-slate-900">
+                            <tr key={day.dateStr} className="hover:bg-gray-50 transition-colors">
+                              <td className="py-3 px-4 font-bold text-gray-900">
                                 {dObj.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })}
                               </td>
-                              <td className="py-3 px-3 text-center text-slate-600">{day.count}</td>
+                              <td className="py-3 px-3 text-center text-gray-600">{day.count}</td>
                               <td className="py-3 px-4 text-right font-mono font-bold text-blue-700">
                                 {fmtRs(day.expected.totalSales)}
                               </td>
@@ -4427,7 +4493,7 @@ const OverallSales: React.FC = () => {
                         })}
                         {dailyBreakdown.length === 0 && (
                           <tr>
-                            <td colSpan={9} className="py-10 text-center text-slate-400">
+                            <td colSpan={9} className="py-10 text-center text-gray-400">
                               No transactions recorded in this month
                             </td>
                           </tr>
@@ -4441,23 +4507,23 @@ const OverallSales: React.FC = () => {
 
             {/* ── SETTLEMENT HISTORY VIEW ───────────────────────────────────── */}
             {settlementMode === 'history' && (
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-                <div className="px-4 py-3.5 border-b border-slate-200 bg-slate-50/50">
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900">
+              <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-4 py-3.5 border-b border-gray-200 bg-gray-50/50">
+                  <h3 className="text-sm sm:text-base font-bold text-gray-900">
                     Past Settlement Audit Log ({allSettlements.length})
                   </h3>
                 </div>
                 {loadingSettlement ? (
-                  <div className="py-12 text-center text-slate-500 text-xs">Loading settlements...</div>
+                  <div className="py-12 text-center text-gray-500 text-xs">Loading settlements...</div>
                 ) : allSettlements.length === 0 ? (
-                  <div className="py-12 text-center text-slate-400 text-xs">
+                  <div className="py-12 text-center text-gray-400 text-xs">
                     No settlement records saved yet.
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[11px]">
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase font-bold text-[11px]">
                           <th className="py-3 px-4">Date / Period</th>
                           <th className="py-3 px-3 text-center">Type</th>
                           <th className="py-3 px-4 text-right">Expected (Cash+UPI+Card)</th>
@@ -4467,14 +4533,14 @@ const OverallSales: React.FC = () => {
                           <th className="py-3 px-4 text-center">Actions</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-gray-100">
                         {allSettlements.map((s) => {
                           const expTotal = s.expected.cash + s.expected.upi + s.expected.card;
                           const actTotal = s.actual.cash + s.actual.upi + s.actual.card;
                           const diff = s.difference.total;
                           return (
-                            <tr key={s.id} className="hover:bg-slate-50">
-                              <td className="py-3 px-4 font-bold text-slate-900">{s.date}</td>
+                            <tr key={s.id} className="hover:bg-gray-50">
+                              <td className="py-3 px-4 font-bold text-gray-900">{s.date}</td>
                               <td className="py-3 px-3 text-center">
                                 <span
                                   className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
@@ -4504,7 +4570,7 @@ const OverallSales: React.FC = () => {
                                 {diff >= 0 ? '+' : ''}
                                 {fmtRs(diff)}
                               </td>
-                              <td className="py-3 px-4 text-slate-600">{s.settledByName}</td>
+                              <td className="py-3 px-4 text-gray-600">{s.settledByName}</td>
                               <td className="py-3 px-4 text-center">
                                 <button
                                   type="button"
@@ -4531,19 +4597,19 @@ const OverallSales: React.FC = () => {
         {activeTab === 'simple-report' && (
           <div className="space-y-4">
             {/* Report Control Bar */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-3.5 sm:p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
+            <div className="bg-white rounded-lg border border-gray-200 p-3 sm:p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
               <div className="flex items-center gap-2">
-                <div className="flex bg-slate-100 p-1 rounded-xl">
+                <div className="flex bg-gray-100 p-1 rounded-lg">
                   <button
                     type="button"
                     onClick={() => {
                       setReportPeriodMode('daily');
                       setDateRangeType('today');
                     }}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
                       reportPeriodMode === 'daily'
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     Simple Daily Report
@@ -4554,18 +4620,18 @@ const OverallSales: React.FC = () => {
                       setReportPeriodMode('monthly');
                       setDateRangeType('month');
                     }}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
                       reportPeriodMode === 'monthly'
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
                     }`}
                   >
                     Simple Monthly Report
                   </button>
                 </div>
-                <span className="text-xs text-slate-500 hidden md:inline">
+                <span className="text-xs text-gray-500 hidden md:inline">
                   Complete one-sheet financial statement for{' '}
-                  <strong className="text-slate-800">{getRangeName()}</strong>
+                  <strong className="text-gray-800">{getRangeName()}</strong>
                 </span>
               </div>
 
@@ -4573,7 +4639,7 @@ const OverallSales: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg text-xs font-medium transition-colors cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Print Sheet</span>
@@ -4585,7 +4651,7 @@ const OverallSales: React.FC = () => {
                       ? handleDownloadMonthlySettlementPDF
                       : handleDownloadDailySettlementPDF
                   }
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition-colors cursor-pointer"
                 >
                   <FileDown className="w-4 h-4" />
                   <span>Download Official PDF</span>
@@ -4594,32 +4660,32 @@ const OverallSales: React.FC = () => {
             </div>
 
             {/* Printable Professional Report Sheet */}
-            <div className="bg-white rounded-2xl border border-slate-300 shadow-sm p-5 sm:p-8 max-w-5xl mx-auto space-y-6 print:border-none print:shadow-none print:p-0">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-5 sm:p-8 max-w-5xl mx-auto space-y-6 print:border-none print:shadow-none print:p-0">
               {/* Sheet Header */}
-              <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+              <div className="border-b-2 border-blue-600 pb-4 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-xl sm:text-2xl font-black text-slate-900 uppercase tracking-tight">
+                  <h2 className="text-xl sm:text-2xl font-black text-gray-900 uppercase tracking-tight">
                     {currentStore?.name || shopDetails.shopName || 'DIGITAL ZONE'}
                   </h2>
                   {shopDetails.address && (
-                    <p className="text-xs text-slate-600 mt-0.5">{shopDetails.address}</p>
+                    <p className="text-xs text-gray-600 mt-0.5">{shopDetails.address}</p>
                   )}
-                  <p className="text-xs text-slate-600 mt-0.5">
+                  <p className="text-xs text-gray-600 mt-0.5">
                     {shopDetails.phone && `Ph: ${shopDetails.phone}`}
                     {shopDetails.gst && ` • GSTIN: ${shopDetails.gst}`}
                   </p>
                 </div>
 
                 <div className="sm:text-right">
-                  <span className="inline-block px-3 py-1 bg-slate-900 text-white text-xs font-extrabold uppercase tracking-wider rounded-md">
+                  <span className="inline-block px-3 py-1 bg-blue-600 text-white text-xs font-bold uppercase tracking-wider rounded-md">
                     {reportPeriodMode === 'monthly'
                       ? 'COMPLETE MONTHLY REPORT'
                       : 'COMPLETE DAILY REPORT'}
                   </span>
-                  <p className="text-sm font-extrabold text-slate-900 mt-1.5">
+                  <p className="text-sm font-extrabold text-gray-900 mt-1.5">
                     Period: {getRangeName()}
                   </p>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="text-[11px] text-gray-500">
                     Generated: {new Date().toLocaleString('en-IN')}
                   </p>
                 </div>
@@ -4627,15 +4693,15 @@ const OverallSales: React.FC = () => {
 
               {/* Section 1: Complete Financial Statement */}
               <div>
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2.5">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500 mb-2.5">
                   1. Executive Financial Summary
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
-                    <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                  <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+                    <span className="text-[10px] font-bold text-gray-500 uppercase block">
                       Gross Sales ({financialStats.billCount} Bills)
                     </span>
-                    <span className="text-base sm:text-lg font-extrabold font-mono text-slate-900 mt-0.5 block">
+                    <span className="text-base sm:text-lg font-extrabold font-mono text-gray-900 mt-0.5 block">
                       {fmtRs(financialStats.totalGrossSales)}
                     </span>
                     <span className="text-[10px] text-rose-600 font-semibold">
@@ -4643,38 +4709,38 @@ const OverallSales: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="p-3 rounded-xl border border-blue-200 bg-blue-50/40">
+                  <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/40">
                     <span className="text-[10px] font-bold text-blue-700 uppercase block">
                       Net Sales Revenue
                     </span>
                     <span className="text-base sm:text-lg font-extrabold font-mono text-blue-800 mt-0.5 block">
                       {fmtRs(financialStats.totalRevenue)}
                     </span>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[10px] text-gray-500">
                       {financialStats.totalItemsSold} units sold
                     </span>
                   </div>
 
-                  <div className="p-3 rounded-xl border border-rose-200 bg-rose-50/40">
+                  <div className="p-3 rounded-lg border border-rose-200 bg-rose-50/40">
                     <span className="text-[10px] font-bold text-rose-700 uppercase block">
                       Total Store Expenses
                     </span>
                     <span className="text-base sm:text-lg font-extrabold font-mono text-rose-700 mt-0.5 block">
                       {fmtRs(financialStats.totalExpenses)}
                     </span>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[10px] text-gray-500">
                       {financialStats.expenseCount} expense vouchers
                     </span>
                   </div>
 
-                  <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/40">
+                  <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/40">
                     <span className="text-[10px] font-bold text-emerald-800 uppercase block">
                       Net Operating Profit
                     </span>
                     <span className="text-base sm:text-lg font-extrabold font-mono text-emerald-800 mt-0.5 block">
                       {fmtSecretOrCurrency(financialStats.netProfit)}
                     </span>
-                    <span className="text-[10px] text-slate-500">
+                    <span className="text-[10px] text-gray-500">
                       Gross Profit: {fmtSecretOrCurrency(financialStats.totalProfit)}
                     </span>
                   </div>
@@ -4683,44 +4749,44 @@ const OverallSales: React.FC = () => {
 
               {/* Section 2: Payment Collection & Cash Drawer Balance */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="bg-slate-100 px-3.5 py-2 font-bold text-xs text-slate-800 uppercase">
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="bg-gray-100 px-3.5 py-2 font-bold text-xs text-gray-800 uppercase">
                     2A. Payment Mode Collections
                   </div>
                   <table className="w-full text-xs">
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-gray-100">
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Cash Sales</td>
-                        <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900">
+                        <td className="py-2 px-3.5 text-gray-600">Cash Sales</td>
+                        <td className="py-2 px-3.5 text-right font-mono font-bold text-gray-900">
                           {fmtRs(financialStats.cashSales)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">UPI / QR Collections</td>
-                        <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900">
+                        <td className="py-2 px-3.5 text-gray-600">UPI / QR Collections</td>
+                        <td className="py-2 px-3.5 text-right font-mono font-bold text-gray-900">
                           {fmtRs(financialStats.upiSales)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Card (POS) Collections</td>
-                        <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900">
+                        <td className="py-2 px-3.5 text-gray-600">Card (POS) Collections</td>
+                        <td className="py-2 px-3.5 text-right font-mono font-bold text-gray-900">
                           {fmtRs(financialStats.cardSales)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Finance / EMI Sales</td>
-                        <td className="py-2 px-3.5 text-right font-mono font-bold text-slate-900">
+                        <td className="py-2 px-3.5 text-gray-600">Finance / EMI Sales</td>
+                        <td className="py-2 px-3.5 text-right font-mono font-bold text-gray-900">
                           {fmtRs(financialStats.financeSales)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Credit Sales (Due)</td>
+                        <td className="py-2 px-3.5 text-gray-600">Credit Sales (Due)</td>
                         <td className="py-2 px-3.5 text-right font-mono font-bold text-orange-700">
                           {fmtRs(financialStats.creditSalesAmount)}
                         </td>
                       </tr>
-                      <tr className="bg-slate-50 font-extrabold">
-                        <td className="py-2 px-3.5 text-slate-900">Total Sales Revenue</td>
+                      <tr className="bg-gray-50 font-extrabold">
+                        <td className="py-2 px-3.5 text-gray-900">Total Sales Revenue</td>
                         <td className="py-2 px-3.5 text-right font-mono text-blue-700">
                           {fmtRs(financialStats.totalRevenue)}
                         </td>
@@ -4729,44 +4795,44 @@ const OverallSales: React.FC = () => {
                   </table>
                 </div>
 
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <div className="bg-slate-100 px-3.5 py-2 font-bold text-xs text-slate-800 uppercase">
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="bg-gray-100 px-3.5 py-2 font-bold text-xs text-gray-800 uppercase">
                     2B. Cash Drawer & Expense Summary
                   </div>
                   <table className="w-full text-xs">
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-gray-100">
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Opening / System Cash Sales</td>
+                        <td className="py-2 px-3.5 text-gray-600">Opening / System Cash Sales</td>
                         <td className="py-2 px-3.5 text-right font-mono font-bold text-emerald-700">
                           +{fmtRs(financialStats.cashSales)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Less: Cash Expenses Paid</td>
+                        <td className="py-2 px-3.5 text-gray-600">Less: Cash Expenses Paid</td>
                         <td className="py-2 px-3.5 text-right font-mono font-bold text-rose-600">
                           -{fmtRs(financialStats.cashExpenses)}
                         </td>
                       </tr>
                       <tr className="bg-amber-50/60 font-extrabold">
-                        <td className="py-2 px-3.5 text-slate-900">Net Expected Cash in Drawer</td>
-                        <td className="py-2 px-3.5 text-right font-mono text-slate-900">
+                        <td className="py-2 px-3.5 text-gray-900">Net Expected Cash in Drawer</td>
+                        <td className="py-2 px-3.5 text-right font-mono text-gray-900">
                           {fmtRs(financialStats.netCashInDrawer)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">General Store Expenses</td>
-                        <td className="py-2 px-3.5 text-right font-mono text-slate-700">
+                        <td className="py-2 px-3.5 text-gray-600">General Store Expenses</td>
+                        <td className="py-2 px-3.5 text-right font-mono text-gray-700">
                           {fmtRs(financialStats.generalExpenses)}
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-3.5 text-slate-600">Staff Salaries & Bonuses</td>
-                        <td className="py-2 px-3.5 text-right font-mono text-slate-700">
+                        <td className="py-2 px-3.5 text-gray-600">Staff Salaries & Bonuses</td>
+                        <td className="py-2 px-3.5 text-right font-mono text-gray-700">
                           {fmtRs(financialStats.salaryExpenses + financialStats.bonusExpenses)}
                         </td>
                       </tr>
-                      <tr className="bg-slate-50 font-extrabold">
-                        <td className="py-2 px-3.5 text-slate-900">Settlement Status</td>
+                      <tr className="bg-gray-50 font-extrabold">
+                        <td className="py-2 px-3.5 text-gray-900">Settlement Status</td>
                         <td className="py-2 px-3.5 text-right">
                           {existingSettlement?.status === 'settled' ? (
                             <span className="text-emerald-700">
@@ -4784,13 +4850,13 @@ const OverallSales: React.FC = () => {
 
               {/* Section 3: Salesperson-Wise Summary */}
               <div>
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500 mb-2">
                   3. Salesperson-Wise Sales & Collection Summary
                 </h3>
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+                      <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold">
                         <th className="py-2 px-3">#</th>
                         <th className="py-2 px-3">Salesperson Name</th>
                         <th className="py-2 px-3 text-center">Bills</th>
@@ -4801,10 +4867,10 @@ const OverallSales: React.FC = () => {
                         <th className="py-2 px-3 text-right">Share %</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-gray-100">
                       {salespersonAnalytics.filter((s) => s.billsCount > 0).length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-4 text-center text-slate-400">
+                          <td colSpan={8} className="py-4 text-center text-gray-400">
                             No salesperson sales in this period
                           </td>
                         </tr>
@@ -4813,18 +4879,18 @@ const OverallSales: React.FC = () => {
                           .filter((s) => s.billsCount > 0)
                           .map((sp, i) => (
                             <tr key={sp.name}>
-                              <td className="py-2 px-3 text-slate-500">{i + 1}</td>
-                              <td className="py-2 px-3 font-bold text-slate-900">{sp.name}</td>
+                              <td className="py-2 px-3 text-gray-500">{i + 1}</td>
+                              <td className="py-2 px-3 font-bold text-gray-900">{sp.name}</td>
                               <td className="py-2 px-3 text-center">{sp.billsCount}</td>
                               <td className="py-2 px-3 text-center">{sp.itemsSold}</td>
                               <td className="py-2 px-3 text-right font-mono">{fmtRs(sp.cashCollected)}</td>
                               <td className="py-2 px-3 text-right font-mono">
                                 {fmtRs(sp.upiCollected + sp.cardCollected + sp.financeCollected)}
                               </td>
-                              <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                              <td className="py-2 px-3 text-right font-mono font-bold text-gray-900">
                                 {fmtRs(sp.revenue)}
                               </td>
-                              <td className="py-2 px-3 text-right text-slate-600">
+                              <td className="py-2 px-3 text-right text-gray-600">
                                 {financialStats.totalRevenue > 0
                                   ? `${((sp.revenue / financialStats.totalRevenue) * 100).toFixed(1)}%`
                                   : '0%'}
@@ -4840,13 +4906,13 @@ const OverallSales: React.FC = () => {
               {/* Section 4: Itemized Sales Register (or Day-by-Day if Monthly) */}
               {reportPeriodMode === 'monthly' ? (
                 <div>
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500 mb-2">
                     4. Monthly Day-by-Day Summary ({dailyBreakdown.length} Active Days)
                   </h3>
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+                        <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold">
                           <th className="py-2 px-3">Date</th>
                           <th className="py-2 px-3 text-center">Entries</th>
                           <th className="py-2 px-3 text-right">Net Sales</th>
@@ -4857,10 +4923,10 @@ const OverallSales: React.FC = () => {
                           <th className="py-2 px-3 text-center">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-gray-100">
                         {dailyBreakdown.map((d) => (
                           <tr key={d.dateStr}>
-                            <td className="py-2 px-3 font-semibold text-slate-900">{d.dateStr}</td>
+                            <td className="py-2 px-3 font-semibold text-gray-900">{d.dateStr}</td>
                             <td className="py-2 px-3 text-center">{d.count}</td>
                             <td className="py-2 px-3 text-right font-mono font-bold">
                               {fmtRs(d.expected.totalSales)}
@@ -4886,13 +4952,13 @@ const OverallSales: React.FC = () => {
                 </div>
               ) : (
                 <div>
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500 mb-2">
                     4. Itemized Sales Bills ({groupedSalesTransactions.length} Bills)
                   </h3>
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="border border-gray-200 rounded-lg overflow-hidden">
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+                        <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold">
                           <th className="py-2 px-3">#</th>
                           <th className="py-2 px-3">Time / Bill #</th>
                           <th className="py-2 px-3">Customer</th>
@@ -4902,10 +4968,10 @@ const OverallSales: React.FC = () => {
                           <th className="py-2 px-3 text-right">Amount</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
+                      <tbody className="divide-y divide-gray-100">
                         {groupedSalesTransactions.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="py-4 text-center text-slate-400">
+                            <td colSpan={7} className="py-4 text-center text-gray-400">
                               No sales bills recorded
                             </td>
                           </tr>
@@ -4916,12 +4982,12 @@ const OverallSales: React.FC = () => {
                             const dObj = toDateValue(tx.createdAt);
                             return (
                               <tr key={tx.transactionId || tx.id || idx}>
-                                <td className="py-1.5 px-3 text-slate-500">{idx + 1}</td>
+                                <td className="py-1.5 px-3 text-gray-500">{idx + 1}</td>
                                 <td className="py-1.5 px-3 font-mono text-[11px]">
-                                  <span className="font-bold text-slate-900">
+                                  <span className="font-bold text-gray-900">
                                     {tx.invoiceNumber || tx.transactionId || tx.id?.slice(0, 8)}
                                   </span>
-                                  <span className="text-slate-400 ml-1">
+                                  <span className="text-gray-400 ml-1">
                                     {dObj
                                       ? dObj.toLocaleTimeString('en-IN', {
                                           hour: '2-digit',
@@ -4955,13 +5021,13 @@ const OverallSales: React.FC = () => {
 
               {/* Section 5: Itemized Expenses */}
               <div>
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500 mb-2">
                   5. Itemized Store Expenses ({filteredExpenses.length} Entries)
                 </h3>
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold">
+                      <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold">
                         <th className="py-2 px-3">#</th>
                         <th className="py-2 px-3">Date / Time</th>
                         <th className="py-2 px-3">Expense Description</th>
@@ -4971,10 +5037,10 @@ const OverallSales: React.FC = () => {
                         <th className="py-2 px-3 text-right">Amount</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-gray-100">
                       {filteredExpenses.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-4 text-center text-slate-400">
+                          <td colSpan={7} className="py-4 text-center text-gray-400">
                             No expenses recorded for this period
                           </td>
                         </tr>
@@ -4986,12 +5052,12 @@ const OverallSales: React.FC = () => {
                             Number(exp.quantity || 1);
                           return (
                             <tr key={exp.id || idx}>
-                              <td className="py-1.5 px-3 text-slate-500">{idx + 1}</td>
+                              <td className="py-1.5 px-3 text-gray-500">{idx + 1}</td>
                               <td className="py-1.5 px-3 text-[11px]">
                                 {dObj ? dObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : ''}{' '}
                                 {dObj ? dObj.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}
                               </td>
-                              <td className="py-1.5 px-3 font-semibold text-slate-900">{exp.title}</td>
+                              <td className="py-1.5 px-3 font-semibold text-gray-900">{exp.title}</td>
                               <td className="py-1.5 px-3 uppercase text-[10px]">
                                 {exp.expenseCategory || 'general'}
                               </td>
@@ -5014,16 +5080,16 @@ const OverallSales: React.FC = () => {
               </div>
 
               {/* Signatures Footer */}
-              <div className="pt-6 border-t border-slate-200 grid grid-cols-2 gap-8 text-xs text-slate-600">
+              <div className="pt-6 border-t border-gray-200 grid grid-cols-2 gap-8 text-xs text-gray-600">
                 <div>
-                  <p className="font-bold text-slate-800">Prepared & Reconciled By:</p>
-                  <p className="mt-8 border-t border-slate-300 pt-1 w-48">
+                  <p className="font-bold text-gray-800">Prepared & Reconciled By:</p>
+                  <p className="mt-8 border-t border-gray-300 pt-1 w-48">
                     {existingSettlement?.settledByName || currentUserDisplayName} (Cashier / Staff)
                   </p>
                 </div>
                 <div className="text-right flex flex-col items-end">
-                  <p className="font-bold text-slate-800">Verified & Approved By:</p>
-                  <p className="mt-8 border-t border-slate-300 pt-1 w-48">
+                  <p className="font-bold text-gray-800">Verified & Approved By:</p>
+                  <p className="mt-8 border-t border-gray-300 pt-1 w-48">
                     Authorized Signatory ({shopDetails.shopName || 'Digital Zone'})
                   </p>
                 </div>
@@ -5036,9 +5102,9 @@ const OverallSales: React.FC = () => {
         {activeTab === 'analytics' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Brand Breakdown */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-4 py-3.5 border-b border-gray-200 flex items-center justify-between bg-gray-50/50">
+                <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
                   <Tag className="w-4 h-4 text-blue-600" />
                   <span>Brand-Wise Performance ({brandBreakdown.length})</span>
                 </h3>
@@ -5046,7 +5112,7 @@ const OverallSales: React.FC = () => {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[11px]">
+                    <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase font-bold text-[11px]">
                       <th className="py-2.5 px-4">#</th>
                       <th className="py-2.5 px-4">Brand</th>
                       <th className="py-2.5 px-3 text-right">Qty Sold</th>
@@ -5055,7 +5121,7 @@ const OverallSales: React.FC = () => {
                       <th className="py-2.5 px-3 text-right">Margin</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-gray-100">
                     {brandBreakdown.map((item, idx) => {
                       const margin = item.revenue > 0 ? (item.profit / item.revenue) * 100 : 0;
                       return (
@@ -5067,10 +5133,10 @@ const OverallSales: React.FC = () => {
                           }}
                           className="hover:bg-blue-50/30 cursor-pointer"
                         >
-                          <td className="py-2.5 px-4 text-slate-400">{idx + 1}</td>
-                          <td className="py-2.5 px-4 font-bold text-slate-900">{item.brand}</td>
+                          <td className="py-2.5 px-4 text-gray-400">{idx + 1}</td>
+                          <td className="py-2.5 px-4 font-bold text-gray-900">{item.brand}</td>
                           <td className="py-2.5 px-3 text-right font-mono">{item.quantity}</td>
-                          <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
+                          <td className="py-2.5 px-4 text-right font-mono font-bold text-gray-900">
                             {fmtRs(item.revenue)}
                           </td>
                           <td className="py-2.5 px-4 text-right font-mono font-semibold text-emerald-600">
@@ -5084,7 +5150,7 @@ const OverallSales: React.FC = () => {
                     })}
                     {brandBreakdown.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                        <td colSpan={6} className="py-8 text-center text-gray-400">
                           No brand data for selected period
                         </td>
                       </tr>
@@ -5095,9 +5161,9 @@ const OverallSales: React.FC = () => {
             </div>
 
             {/* Category Breakdown */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-              <div className="px-4 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+            <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-4 py-3.5 border-b border-gray-200 flex items-center justify-between bg-gray-50/50">
+                <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
                   <Grid3x3 className="w-4 h-4 text-indigo-600" />
                   <span>Category-Wise Performance ({categoryBreakdown.length})</span>
                 </h3>
@@ -5105,7 +5171,7 @@ const OverallSales: React.FC = () => {
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-bold text-[11px]">
+                    <tr className="bg-gray-50 border-b border-gray-200 text-gray-500 uppercase font-bold text-[11px]">
                       <th className="py-2.5 px-4">#</th>
                       <th className="py-2.5 px-4">Category</th>
                       <th className="py-2.5 px-3 text-right">Qty Sold</th>
@@ -5114,7 +5180,7 @@ const OverallSales: React.FC = () => {
                       <th className="py-2.5 px-3 text-right">Margin</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-gray-100">
                     {categoryBreakdown.map((item, idx) => {
                       const margin = item.revenue > 0 ? (item.profit / item.revenue) * 100 : 0;
                       return (
@@ -5126,10 +5192,10 @@ const OverallSales: React.FC = () => {
                           }}
                           className="hover:bg-indigo-50/30 cursor-pointer"
                         >
-                          <td className="py-2.5 px-4 text-slate-400">{idx + 1}</td>
-                          <td className="py-2.5 px-4 font-bold text-slate-900">{item.category}</td>
+                          <td className="py-2.5 px-4 text-gray-400">{idx + 1}</td>
+                          <td className="py-2.5 px-4 font-bold text-gray-900">{item.category}</td>
                           <td className="py-2.5 px-3 text-right font-mono">{item.quantity}</td>
-                          <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">
+                          <td className="py-2.5 px-4 text-right font-mono font-bold text-gray-900">
                             {fmtRs(item.revenue)}
                           </td>
                           <td className="py-2.5 px-4 text-right font-mono font-semibold text-emerald-600">
@@ -5143,7 +5209,7 @@ const OverallSales: React.FC = () => {
                     })}
                     {categoryBreakdown.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                        <td colSpan={6} className="py-8 text-center text-gray-400">
                           No category data for selected period
                         </td>
                       </tr>
@@ -5154,7 +5220,7 @@ const OverallSales: React.FC = () => {
             </div>
           </div>
         )}
-      </main>
+      </div>
 
       {/* ═══ QUICK RECORD EXPENSE MODAL (Saves to `expenses` Collection) ═══ */}
       {showAddExpenseDrawer && (
@@ -5163,23 +5229,23 @@ const OverallSales: React.FC = () => {
           onClick={() => setShowAddExpenseDrawer(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+            className="bg-white rounded-lg border border-gray-200 shadow-xl w-full max-w-md overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between bg-rose-50/50">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-rose-50/50">
               <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
                   <Receipt className="w-4 h-4 text-rose-600" />
                   <span>Record Store Expense</span>
                 </h3>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-gray-500">
                   Saved directly to the separate <code className="bg-white px-1 rounded">expenses</code> collection
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowAddExpenseDrawer(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -5188,7 +5254,7 @@ const OverallSales: React.FC = () => {
             <form onSubmit={handleAddQuickExpense} className="p-5 space-y-3.5">
               {/* Category Selector */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                <label className="block text-xs font-bold text-gray-700 mb-1.5">
                   Expense Category
                 </label>
                 <div className="grid grid-cols-3 gap-2">
@@ -5201,10 +5267,10 @@ const OverallSales: React.FC = () => {
                       key={c.id}
                       type="button"
                       onClick={() => setExpCategory(c.id)}
-                      className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
                         expCategory === c.id
                           ? 'bg-rose-50 border-rose-500 text-rose-800 ring-1 ring-rose-500'
-                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                       }`}
                     >
                       {c.icon}
@@ -5216,14 +5282,14 @@ const OverallSales: React.FC = () => {
 
               {(expCategory === 'salary' || expCategory === 'bonus') && (
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
                     Select Staff Member <span className="text-rose-500">*</span>
                   </label>
                   <select
                     required
                     value={expEmployeeId}
                     onChange={(e) => setExpEmployeeId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-rose-500 focus:outline-none"
                   >
                     <option value="">-- Choose Employee --</option>
                     {employeesList.map((emp) => (
@@ -5236,7 +5302,7 @@ const OverallSales: React.FC = () => {
               )}
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-gray-700 mb-1">
                   Expense Title <span className="text-rose-500">*</span>
                 </label>
                 <input
@@ -5245,7 +5311,7 @@ const OverallSales: React.FC = () => {
                   value={expTitle}
                   onChange={(e) => setExpTitle(e.target.value)}
                   placeholder="e.g. Tea & Snacks, Shop Rent, Electricity, Courier..."
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:outline-none"
                 />
                 <div className="flex flex-wrap gap-1 mt-1.5">
                   {['Tea & Snacks', 'Electricity Bill', 'Shop Maintenance', 'Travel & Fuel', 'Courier', 'Cleaning'].map(
@@ -5254,7 +5320,7 @@ const OverallSales: React.FC = () => {
                         key={preset}
                         type="button"
                         onClick={() => setExpTitle(preset)}
-                        className="px-2 py-0.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-600 rounded text-[10px] font-medium cursor-pointer"
+                        className="px-2 py-0.5 bg-gray-100 hover:bg-rose-50 hover:text-rose-700 text-gray-600 rounded text-[10px] font-medium cursor-pointer"
                       >
                         + {preset}
                       </button>
@@ -5265,7 +5331,7 @@ const OverallSales: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
                     Amount (₹) <span className="text-rose-500">*</span>
                   </label>
                   <input
@@ -5276,24 +5342,24 @@ const OverallSales: React.FC = () => {
                     value={expAmount}
                     onChange={(e) => setExpAmount(e.target.value)}
                     placeholder="0.00"
-                    className="w-full px-3 py-2 text-sm font-bold font-mono border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-sm font-bold font-mono border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
                     Date
                   </label>
                   <input
                     type="date"
                     value={expDate}
                     onChange={(e) => setExpDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:outline-none"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-gray-700 mb-1">
                   Payment Mode
                 </label>
                 <div className="grid grid-cols-4 gap-1.5">
@@ -5304,8 +5370,8 @@ const OverallSales: React.FC = () => {
                       onClick={() => setExpPaymentMode(m)}
                       className={`py-1.5 rounded-lg text-xs font-bold uppercase border cursor-pointer ${
                         expPaymentMode === m
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                       }`}
                     >
                       {m}
@@ -5315,7 +5381,7 @@ const OverallSales: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+                <label className="block text-xs font-bold text-gray-700 mb-1">
                   Notes / Voucher Ref (Optional)
                 </label>
                 <input
@@ -5323,7 +5389,7 @@ const OverallSales: React.FC = () => {
                   value={expDescription}
                   onChange={(e) => setExpDescription(e.target.value)}
                   placeholder="Optional voucher # or remarks..."
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:outline-none"
                 />
               </div>
 
@@ -5331,14 +5397,14 @@ const OverallSales: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddExpenseDrawer(false)}
-                  className="flex-1 py-2.5 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  className="flex-1 py-2.5 border border-gray-300 rounded-lg text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingExpense}
-                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
                 >
                   {savingExpense ? 'Saving...' : 'Save to Expenses'}
                 </button>
@@ -5355,20 +5421,20 @@ const OverallSales: React.FC = () => {
           onClick={() => setShowFilterModal(false)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            className="bg-white rounded-lg border border-gray-200 shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Filter className="w-5 h-5 text-blue-600" />
-                <h2 className="text-base font-bold text-slate-900">
+                <h2 className="text-base font-bold text-gray-900">
                   Advanced Filters & GST Audit Export
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={() => setShowFilterModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -5377,18 +5443,18 @@ const OverallSales: React.FC = () => {
             <div className="p-5 space-y-5">
               {/* Brand, Category & Entry Type Filters */}
               <div className="space-y-3">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500">
                   Product & Entry Filters
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Brand
                     </label>
                     <select
                       value={selectedBrand}
                       onChange={(e) => setSelectedBrand(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white"
                     >
                       <option value="">All Brands</option>
                       {availableBrands.map((b) => (
@@ -5400,13 +5466,13 @@ const OverallSales: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Category
                     </label>
                     <select
                       value={selectedCategory}
                       onChange={(e) => setSelectedCategory(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white"
                     >
                       <option value="">All Categories</option>
                       {availableCategories.map((c) => (
@@ -5418,13 +5484,13 @@ const OverallSales: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Sale Type
                     </label>
                     <select
                       value={selectedEntryType}
                       onChange={(e) => setSelectedEntryType(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white"
                     >
                       <option value="">All Types</option>
                       <option value="product">Product Sales</option>
@@ -5436,19 +5502,19 @@ const OverallSales: React.FC = () => {
               </div>
 
               {/* GST Audit Export Section */}
-              <div className="pt-4 border-t border-slate-200 space-y-3">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+              <div className="pt-4 border-t border-gray-200 space-y-3">
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-gray-500">
                   CA / GST Audit Excel Export
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Invoice Scope
                     </label>
                     <select
                       value={auditFilterMode}
                       onChange={(e) => setAuditFilterMode(e.target.value as AuditFilterMode)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white"
                     >
                       <option value="gst-only">GST Tax Invoices Only</option>
                       <option value="all-bills">All Sales Invoices</option>
@@ -5456,13 +5522,13 @@ const OverallSales: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">
                       Audit Duration
                     </label>
                     <select
                       value={auditDuration}
                       onChange={(e) => setAuditDuration(e.target.value as AuditDuration)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs bg-white"
                     >
                       <option value="today">Today</option>
                       <option value="week">Last 7 Days</option>
@@ -5477,25 +5543,25 @@ const OverallSales: React.FC = () => {
                 {auditDuration === 'custom' && (
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">
                         Start Date
                       </label>
                       <input
                         type="date"
                         value={auditStartDate}
                         onChange={(e) => setAuditStartDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">
                         End Date
                       </label>
                       <input
                         type="date"
                         value={auditEndDate}
                         onChange={(e) => setAuditEndDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs"
                       />
                     </div>
                   </div>
@@ -5505,14 +5571,14 @@ const OverallSales: React.FC = () => {
                   type="button"
                   onClick={exportAuditExcel}
                   disabled={isExportingAudit}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50"
                 >
                   {isExportingAudit ? 'Generating Audit Sheet...' : 'Download CA / GST Audit Excel'}
                 </button>
               </div>
             </div>
 
-            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+            <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
               <button
                 type="button"
                 onClick={resetAllFilters}
@@ -5523,7 +5589,7 @@ const OverallSales: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowFilterModal(false)}
-                className="px-5 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold cursor-pointer"
+                className="px-5 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold cursor-pointer"
               >
                 Apply & Close
               </button>
@@ -5539,31 +5605,31 @@ const OverallSales: React.FC = () => {
           onClick={() => setDetailSettlement(null)}
         >
           <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto"
+            className="bg-white rounded-lg border border-gray-200 shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between p-5 border-b border-slate-200">
-              <h3 className="text-base font-bold text-slate-900">
+            <div className="flex items-center justify-between p-5 border-b border-gray-200">
+              <h3 className="text-base font-bold text-gray-900">
                 Settlement Audit Details ({detailSettlement.date})
               </h3>
               <button
                 type="button"
                 onClick={() => setDetailSettlement(null)}
-                className="p-1.5 rounded-lg hover:bg-slate-100"
+                className="p-1.5 rounded-lg hover:bg-gray-100"
               >
-                <X className="w-5 h-5 text-slate-500" />
+                <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
 
             <div className="p-5 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 bg-emerald-50 rounded-xl">
+                <div className="p-3 bg-emerald-50 rounded-lg">
                   <span className="text-emerald-700 font-semibold block">Total Sales</span>
                   <span className="text-base font-extrabold text-emerald-900 font-mono">
                     {fmtRs(detailSettlement.expected.totalSales)}
                   </span>
                 </div>
-                <div className="p-3 bg-rose-50 rounded-xl">
+                <div className="p-3 bg-rose-50 rounded-lg">
                   <span className="text-rose-700 font-semibold block">Total Expenses</span>
                   <span className="text-base font-extrabold text-rose-900 font-mono">
                     {fmtRs(detailSettlement.expected.totalExpenses)}
@@ -5571,9 +5637,9 @@ const OverallSales: React.FC = () => {
                 </div>
               </div>
 
-              <div className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200">
+                  <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
                       <th className="text-left py-2 px-3">Mode</th>
                       <th className="text-right py-2 px-3">Expected</th>
@@ -5581,7 +5647,7 @@ const OverallSales: React.FC = () => {
                       <th className="text-right py-2 px-3">Variance</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-gray-100">
                     {[
                       { label: 'Cash', exp: detailSettlement.expected.cash, act: detailSettlement.actual.cash },
                       { label: 'UPI', exp: detailSettlement.expected.upi, act: detailSettlement.actual.upi },
@@ -5612,9 +5678,9 @@ const OverallSales: React.FC = () => {
               </div>
 
               {detailSettlement.notes && (
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-                  <span className="font-bold text-slate-700 block mb-0.5">Settlement Notes:</span>
-                  <p className="text-slate-600">{detailSettlement.notes}</p>
+                <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <span className="font-bold text-gray-700 block mb-0.5">Settlement Notes:</span>
+                  <p className="text-gray-600">{detailSettlement.notes}</p>
                 </div>
               )}
             </div>
@@ -5625,15 +5691,15 @@ const OverallSales: React.FC = () => {
       {/* ═══ EDIT ITEM / EXPENSE MODAL ═════════════════════════════════════ */}
       {isEditModalOpen && editingItem && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-lg border border-gray-200 shadow-xl w-full max-w-md p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-slate-900">
+              <h2 className="text-base font-bold text-gray-900">
                 {isExpenseItem(editingItem) ? 'Edit Expense Entry' : 'Edit Billing Entry'}
               </h2>
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600"
+                className="text-gray-400 hover:text-gray-600"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -5641,30 +5707,30 @@ const OverallSales: React.FC = () => {
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Title</label>
+                <label className="block font-semibold text-gray-700 mb-1">Title</label>
                 <input
                   type="text"
                   value={editingItem.title}
                   disabled
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 text-slate-600"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
                 />
               </div>
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
+                <label className="block font-semibold text-gray-700 mb-1">
                   {isExpenseItem(editingItem) ? 'Vendor / Staff Name' : 'Customer Name'}
                 </label>
                 <input
                   type="text"
                   value={editCustomerName}
                   onChange={(e) => setEditCustomerName(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
               </div>
 
               {isExpenseItem(editingItem) ? (
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">
+                  <label className="block font-semibold text-gray-700 mb-1">
                     Expense Amount (₹)
                   </label>
                   <input
@@ -5673,23 +5739,23 @@ const OverallSales: React.FC = () => {
                     step="0.01"
                     value={editCost}
                     onChange={(e) => setEditCost(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono font-bold"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono font-bold"
                   />
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Quantity</label>
+                    <label className="block font-semibold text-gray-700 mb-1">Quantity</label>
                     <input
                       type="number"
                       min="1"
                       value={editQuantity}
                       onChange={(e) => setEditQuantity(Number(e.target.value))}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                     />
                   </div>
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
+                    <label className="block font-semibold text-gray-700 mb-1">
                       Selling Price (₹)
                     </label>
                     <input
@@ -5698,19 +5764,19 @@ const OverallSales: React.FC = () => {
                       step="0.01"
                       value={editSellingPrice}
                       onChange={(e) => setEditSellingPrice(Number(e.target.value))}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl font-mono font-bold"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono font-bold"
                     />
                   </div>
                 </div>
               )}
 
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Date & Time</label>
+                <label className="block font-semibold text-gray-700 mb-1">Date & Time</label>
                 <input
                   type="datetime-local"
                   value={editCreatedAt}
                   onChange={(e) => setEditCreatedAt(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
               </div>
             </div>
@@ -5719,14 +5785,14 @@ const OverallSales: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsEditModalOpen(false)}
-                className="flex-1 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700"
+                className="flex-1 py-2 border border-gray-300 rounded-lg text-xs font-bold text-gray-700"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSaveEdit}
-                className="flex-1 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold"
+                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold"
               >
                 Save Changes
               </button>

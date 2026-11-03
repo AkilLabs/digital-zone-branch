@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
-import { doc, getDoc, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { doc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { User, Attendance, BillingItem } from '../types';
 import { formatWorkHours } from '../utils/attendance';
