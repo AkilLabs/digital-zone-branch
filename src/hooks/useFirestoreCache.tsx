@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { 
   query, 
@@ -9,8 +10,9 @@ import {
   QueryConstraint,
   Timestamp
 } from 'firebase/firestore';
-import { isExpenseItem, type BillingItem, type Product } from '../types';
+import { isExpenseItem, type BillingItem } from '../types';
 import { useStore } from '../context/StoreContext';
+import { syncStoreProducts } from '../utils/productSyncCache';
 
 // Cache times
 const CACHE_TIME = {
@@ -291,58 +293,52 @@ export const useExpenses = (
   });
 };
 
-// Hook for fetching available products (cached for longer)
-export const useAvailableProducts = () => {
-  const { getCollectionRef, currentStore } = useStore();
+// Fetches all products using Delta Sync (0-5 Firestore reads instead of 2,000)
+export const useAllStoreProducts = () => {
+  const { currentStore } = useStore();
 
   return useQuery({
-    queryKey: ['products', 'available', currentStore?.id],
+    queryKey: ['products', 'catalog', currentStore?.id],
     queryFn: async () => {
-      const q = query(
-        getCollectionRef('products'),
-        where('quantity', '>', 0),
-        orderBy('quantity', 'desc')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const products = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Product[];
-      
-      return products;
+      return await syncStoreProducts(currentStore?.id);
     },
-    staleTime: CACHE_TIME.MEDIUM,
-    gcTime: CACHE_TIME.LONG,
+    staleTime: 1000 * 60 * 5, // 5 minutes in memory, backed by IndexedDB
+    gcTime: 1000 * 60 * 60,
   });
 };
 
-// Hook for fetching all products with pagination
-export const useProducts = (pageSize: number = 50) => {
-  const { getCollectionRef, currentStore } = useStore();
+// Drop-in replacement for useAvailableProducts() used by BillingForm.tsx and Billing.tsx
+export const useAvailableProducts = () => {
+  const queryResult = useAllStoreProducts();
+  const availableData = useMemo(
+    () =>
+      (queryResult.data || [])
+        .filter((p) => Number(p.quantity) > 0)
+        .sort((a, b) => Number(b.quantity) - Number(a.quantity)),
+    [queryResult.data]
+  );
 
-  return useQuery({
-    queryKey: ['products', 'all', currentStore?.id, pageSize],
-    queryFn: async () => {
-      const q = query(
-        getCollectionRef('products'),
-        orderBy('createdAt', 'desc'),
-        limit(pageSize)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const products = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate(),
-        updatedAt: doc.data().updatedAt?.toDate(),
-      })) as Product[];
-      
-      return products;
-    },
-    staleTime: CACHE_TIME.MEDIUM,
-    gcTime: CACHE_TIME.LONG,
-  });
+  return {
+    ...queryResult,
+    data: availableData,
+  };
+};
+
+// Hook for fetching all products with pagination (shares local Delta-Sync catalog)
+export const useProducts = (pageSize: number = 50) => {
+  const queryResult = useAllStoreProducts();
+  const paginatedData = useMemo(
+    () =>
+      [...(queryResult.data || [])]
+        .sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0))
+        .slice(0, pageSize),
+    [queryResult.data, pageSize]
+  );
+
+  return {
+    ...queryResult,
+    data: paginatedData,
+  };
 };
 
 // Hook for fetching credit sales with date range

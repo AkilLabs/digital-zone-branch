@@ -1,6 +1,7 @@
 import { collection, getDocs } from 'firebase/firestore';
 import type { CollectionReference, DocumentData } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { syncStoreProducts } from './productSyncCache';
 
 export const IMEI_PRODUCT_CODE_START = 10000001;
 export const NON_IMEI_PRODUCT_CODE_START = 1;
@@ -41,16 +42,17 @@ export const generateProductCode = async (
   isIMEI: boolean = false
 ): Promise<string> => {
   try {
-    const querySnapshot = await getDocs(productsCollectionRef);
+    const storeId = productsCollectionRef.parent?.id || null;
+    const cachedProducts = await syncStoreProducts(storeId);
     let highestCodeNumber = 0;
 
     if (isIMEI) {
       // Baseline for IMEI is 10000000, so the first generated code will be 10000001
       highestCodeNumber = IMEI_PRODUCT_CODE_START - 1;
 
-      // 1. Scan products collection for existing IMEI product codes (>= 10000001)
-      querySnapshot.docs.forEach((docSnapshot) => {
-        const code = docSnapshot.data().productCode;
+      // 1. Scan local delta-synced products catalog for existing IMEI product codes (>= 10000001)
+      cachedProducts.forEach((product) => {
+        const code = product.productCode;
         if (!code || !isValidProductCode(code)) return;
 
         const codeNumber = parseInt(code, 10);
@@ -90,9 +92,8 @@ export const generateProductCode = async (
       return nextNumber.toString().padStart(8, '0');
     } else {
       // Non-IMEI: strictly scan codes < 10000001 (excluding IMEI range >= 10000001)
-      querySnapshot.docs.forEach((docSnapshot) => {
-        const data = docSnapshot.data();
-        const code = data.productCode;
+      cachedProducts.forEach((product) => {
+        const code = product.productCode;
         if (!code || !isValidProductCode(code)) return;
 
         const codeNumber = parseInt(code, 10);

@@ -29,15 +29,19 @@ import {
 import type { Product, ShopDetails } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
+import { useInvalidateCache } from '../hooks/useFirestoreCache';
 import {
-  query,
-  orderBy,
-  getDocs,
+  syncStoreProducts,
+  upsertLocalProducts,
+  removeLocalProducts,
+} from '../utils/productSyncCache';
+import {
   deleteDoc,
   doc,
   getDoc,
   updateDoc,
-  writeBatch
+  writeBatch,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -54,6 +58,7 @@ const Products: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
   const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { invalidateProducts } = useInvalidateCache();
 
   const isOwnerOrAdmin = currentUser?.role === 'owner' || currentUser?.role === 'admin';
 
@@ -216,52 +221,23 @@ const Products: React.FC = () => {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const productsRef = getCollectionRef('products');
-      const q = query(productsRef, orderBy('createdAt', 'desc'));
-      const querySnapshot = await getDocs(q);
+      const syncedProducts = await syncStoreProducts(currentStore?.id);
 
-      const productsData: Product[] = [];
-      const productsWithoutCodes: { doc: any; index: number; isIMEI: boolean }[] = [];
+      const productsData: Product[] = [...syncedProducts].sort(
+        (a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0)
+      );
+      const productsWithoutCodes: { product: Product; index: number; isIMEI: boolean }[] = [];
 
-      querySnapshot.docs.forEach((docSnap, index) => {
-        const data = docSnap.data();
-        const product: Product = {
-          id: docSnap.id,
-          name: data.name || '',
-          model: data.model || '',
-          brand: data.brand || '',
-          category: data.category || '',
-          cost: data.cost || 0,
-          mrp: data.mrp || 0,
-          quantity: data.quantity || 0,
-          productCode: data.productCode || '',
-          imei: data.imei || '',
-          paymentType: data.paymentType || 'cash',
-          suitableModels: data.suitableModels || [],
-          hcsCode: data.hcsCode || (data as any).hsnCode || '',
-          mop: data.mop || 0,
-          supplier: data.supplier || '',
-          taxPercent: data.taxPercent ?? (data.gstEnabled ? 18 : 0),
-          gstEnabled: data.gstEnabled || false,
-          isAvailable: data.isAvailable !== undefined ? data.isAvailable : (data.quantity || 0) > 0,
-          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt || Date.now()),
-          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt || Date.now()),
-          createdBy: data.createdBy,
-          createdByName: data.createdByName,
-          imageUrl: data.imageUrl || ''
-        };
-
+      productsData.forEach((product, index) => {
         const isIMEI = Boolean(
           (product.imei && product.imei.trim()) ||
           (product.productCode && parseInt(product.productCode) >= 10000001) ||
-          (data as any).isIMEIPurchase === true
+          (product as any).isIMEIPurchase === true
         );
 
-        if (!product.productCode) {
-          productsWithoutCodes.push({ doc: docSnap, index, isIMEI });
+        if (!product.productCode && product.id) {
+          productsWithoutCodes.push({ product, index, isIMEI });
         }
-
-        productsData.push(product);
       });
 
       // Auto-generate missing product codes if any
@@ -269,17 +245,26 @@ const Products: React.FC = () => {
         const BATCH_SIZE = 400;
         let batch = writeBatch(db);
         let batchCounter = 0;
+        const updatedForLocalCache: Array<Partial<Product> & { id: string }> = [];
 
         for (const item of productsWithoutCodes) {
-          const generatedCode = item.isIMEI ? await generateIMEIProductCode() : await generateProductCode();
-          const docRef = getDocRef('products', item.doc.id);
+          const generatedCode = item.isIMEI
+            ? await generateIMEIProductCode(getCollectionRef('products'))
+            : await generateProductCode(getCollectionRef('products'));
+          const docRef = getDocRef('products', item.product.id!);
           batch.update(docRef, {
             productCode: generatedCode,
             barcode: generatedCode,
-            updatedAt: new Date()
+            updatedAt: serverTimestamp()
           });
 
           productsData[item.index].productCode = generatedCode;
+          updatedForLocalCache.push({
+            ...productsData[item.index],
+            id: item.product.id!,
+            productCode: generatedCode,
+            updatedAt: new Date(),
+          });
           batchCounter++;
 
           if (batchCounter >= BATCH_SIZE) {
@@ -292,6 +277,8 @@ const Products: React.FC = () => {
         if (batchCounter > 0) {
           await batch.commit();
         }
+        await upsertLocalProducts(currentStore?.id, updatedForLocalCache);
+        invalidateProducts();
       }
 
       setProducts(productsData);
@@ -490,13 +477,16 @@ const Products: React.FC = () => {
     if (!productToDelete) return;
     if (deleteConfirmationInput.trim() !== productToDelete.name) return;
 
+    const deletedId = productToDelete.id!;
     try {
-      setDeleteLoading(productToDelete.id!);
-      await deleteDoc(getDocRef('products', productToDelete.id!));
+      setDeleteLoading(deletedId);
+      await deleteDoc(getDocRef('products', deletedId));
+      await removeLocalProducts(currentStore?.id, [deletedId]);
+      setProducts(prev => prev.filter(p => p.id !== deletedId));
+      invalidateProducts();
       setShowDeleteModal(false);
       setProductToDelete(null);
       setDeleteConfirmationInput('');
-      fetchProducts();
     } catch (error) {
       console.error('Error deleting product:', error);
       alert('Failed to delete product: ' + (error instanceof Error ? error.message : 'Unknown error'));
@@ -554,17 +544,39 @@ const Products: React.FC = () => {
         taxPercent,
         hcsCode: editFormData.hcsCode.trim() || null,
         mop,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp()
       };
 
       if (updatedProduct.quantity !== productToEdit.quantity) {
         updatedProduct.isAvailable = quantity > 0;
       }
 
-      await updateDoc(getDocRef('products', productToEdit.id!), updatedProduct);
+      const editId = productToEdit.id!;
+      await updateDoc(getDocRef('products', editId), updatedProduct);
+
+      const localUpdated: Product = {
+        ...productToEdit,
+        name: editFormData.name.trim(),
+        model: editFormData.model.trim() || '',
+        brand: editFormData.brand.trim(),
+        category: editFormData.category.trim(),
+        cost,
+        mrp,
+        quantity,
+        supplier: editFormData.supplier.trim() || '',
+        gstEnabled: editFormData.gstEnabled,
+        taxPercent,
+        hcsCode: editFormData.hcsCode.trim() || '',
+        mop: mop || 0,
+        isAvailable: quantity > 0,
+        updatedAt: new Date(),
+      };
+
+      await upsertLocalProducts(currentStore?.id, [{ ...localUpdated, id: editId }]);
+      setProducts(prev => prev.map(p => (p.id === editId ? localUpdated : p)));
+      invalidateProducts();
       setShowEditModal(false);
       setProductToEdit(null);
-      fetchProducts();
     } catch (error) {
       console.error('Error updating product:', error);
       alert('Failed to update product: ' + (error instanceof Error ? error.message : 'Unknown error'));

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, CheckCircle } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useStore } from '../context/StoreContext';
+import { upsertLocalProducts } from '../utils/productSyncCache';
 import type { Product } from '../types';
 
 interface SuitableModelsModalProps {
@@ -11,6 +12,7 @@ interface SuitableModelsModalProps {
 }
 
 const SuitableModelsModal: React.FC<SuitableModelsModalProps> = ({ product, onClose, onUpdate }) => {
+    const { getDocRef, currentStore } = useStore();
     const [inputValue, setInputValue] = useState('');
     const [tags, setTags] = useState<string[]>(product.suitableModels || []);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -73,11 +75,17 @@ const SuitableModelsModal: React.FC<SuitableModelsModalProps> = ({ product, onCl
 
         try {
             setIsSubmitting(true);
-            const productRef = doc(db, 'products', product.id);
+            const productRef = getDocRef('products', product.id);
             await updateDoc(productRef, {
                 suitableModels: tags,
-                updatedAt: new Date()
+                updatedAt: serverTimestamp()
             });
+            await upsertLocalProducts(currentStore?.id, [{
+                ...product,
+                id: product.id,
+                suitableModels: tags,
+                updatedAt: new Date()
+            }]);
 
             onUpdate();
             onClose();

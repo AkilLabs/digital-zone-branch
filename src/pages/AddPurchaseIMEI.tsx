@@ -10,6 +10,7 @@ import type { Purchase, PurchaseItem, Supplier, PaymentMode, PaymentSplit, Produ
 import { collection, addDoc, getDocs, query, where, updateDoc, doc, increment, Timestamp, orderBy, limit, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateIMEIProductCode } from '../utils/productCode';
+import { syncStoreProducts } from '../utils/productSyncCache';
 import { encodePrice, decodePrice } from '../utils/secretCode';
 import { MultiStepLoader } from '../components/ui/multi-step-loader';
 import SearchableSelect from '../components/SearchableSelect';
@@ -42,7 +43,7 @@ const getInitialSupplierForm = () => ({
 
 const AddPurchaseIMEI: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef } = useStore();
+  const { getCollectionRef, getDocRef, currentStore } = useStore();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = !!id;
@@ -347,39 +348,8 @@ const AddPurchaseIMEI: React.FC = () => {
 
     setSearching(true);
     try {
-      const snapshot = await getDocs(getCollectionRef('products'));
+      const products = await syncStoreProducts(currentStore?.id);
       const qLower = queryText.toLowerCase();
-
-      const products = snapshot.docs.map(docSnap => {
-        const data: any = docSnap.data();
-        return {
-          id: docSnap.id,
-          productCode: data.productCode || '',
-          hcsCode: data.hcsCode,
-          name: data.name || '',
-          model: data.model || '',
-          cost: Number(data.cost) || 0,
-          mrp: Number(data.mrp) || 0,
-          brand: data.brand || '',
-          category: data.category || '',
-          paymentType: data.paymentType || 'cash',
-          supplier: data.supplier,
-          quantity: Number(data.quantity) || 0,
-          isAvailable: data.isAvailable,
-          imageUrl: data.imageUrl,
-          createdAt: data.createdAt?.toDate?.() || new Date(),
-          createdBy: data.createdBy || '',
-          createdByName: data.createdByName,
-          updatedAt: data.updatedAt?.toDate?.() || undefined,
-          imei: data.imei,
-          sourcePurchaseId: data.sourcePurchaseId,
-          storeId: data.storeId,
-          mop: data.mop,
-          taxPercent: data.taxPercent,
-          highestDiscountLimit: data.highestDiscountLimit,
-          gstEnabled: data.gstEnabled
-        } as Product;
-      });
 
       const filtered = products.filter(product => {
         if (!product.imei || !String(product.imei).trim()) return false;
@@ -1201,7 +1171,7 @@ const AddPurchaseIMEI: React.FC = () => {
 
         if (!snapshot.empty) {
           const productDoc = snapshot.docs[0];
-          await updateDoc(doc(db, 'products', productDoc.id), {
+          await updateDoc(getDocRef('products', productDoc.id), {
             ...productData,
             quantity: increment(Number(item.quantity) || 1),
             updatedAt: Timestamp.now(),
@@ -1213,6 +1183,7 @@ const AddPurchaseIMEI: React.FC = () => {
             quantity: Number(item.quantity) || 1,
             sourcePurchaseId: purchaseRefId,
             createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
             createdBy: currentUser?.uid || '',
             createdByName: currentUser?.displayName || ''
           });

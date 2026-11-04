@@ -19,11 +19,8 @@ import {
 } from 'lucide-react';
 import type { Product, ShopDetails } from '../types';
 import { useStore } from '../context/StoreContext';
+import { syncStoreProducts } from '../utils/productSyncCache';
 import {
-    query,
-    getDocs,
-    where,
-    orderBy,
     doc,
     getDoc,
 } from 'firebase/firestore';
@@ -64,7 +61,7 @@ const formatDate = (date?: Date | string | null): string => {
 };
 
 const StockValue: React.FC = () => {
-    const { getCollectionRef, currentStore, currentHub } = useStore();
+    const { currentStore, currentHub } = useStore();
 
     // Data states
     const [loading, setLoading] = useState(false);
@@ -107,7 +104,7 @@ const StockValue: React.FC = () => {
         }
     }, []);
 
-    // Fetch in-stock products
+    // Fetch in-stock products using local Delta-Sync product cache (0-5 reads instead of 2,000+)
     const fetchProducts = useCallback(async (isRefresh = false) => {
         try {
             if (isRefresh) {
@@ -116,28 +113,18 @@ const StockValue: React.FC = () => {
                 setLoading(true);
             }
 
-            const productsQuery = query(
-                getCollectionRef('products'),
-                where('quantity', '>', 0),
-                orderBy('quantity', 'desc')
-            );
-            const querySnapshot = await getDocs(productsQuery);
+            const syncedProducts = await syncStoreProducts(currentStore?.id);
 
-            const fetchedProducts: Product[] = querySnapshot.docs.map((docSnapshot) => {
-                const data = docSnapshot.data();
-                return {
-                    id: docSnapshot.id,
+            const availableProducts: Product[] = syncedProducts
+                .map((data) => ({
                     ...data,
                     cost: toNumber(data.cost),
                     mrp: toNumber(data.mrp),
                     quantity: toNumber(data.quantity),
-                    createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt,
-                    updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt,
-                } as Product;
-            });
+                }))
+                .filter((p) => (p.quantity || 0) > 0)
+                .sort((a, b) => (b.quantity || 0) - (a.quantity || 0));
 
-            // Filter strictly to in-stock items
-            const availableProducts = fetchedProducts.filter((p) => (p.quantity || 0) > 0);
             setProducts(availableProducts);
         } catch (error) {
             console.error('Error fetching stock products:', error);
@@ -146,7 +133,7 @@ const StockValue: React.FC = () => {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [getCollectionRef]);
+    }, [currentStore?.id]);
 
     useEffect(() => {
         fetchProducts();

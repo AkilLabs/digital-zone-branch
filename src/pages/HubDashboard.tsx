@@ -5,6 +5,7 @@ import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
 import { collection, getDocs, query, where, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { syncStoreProducts } from '../utils/productSyncCache';
 import type { StockTransfer, BillingItem } from '../types';
 
 const HubDashboard: React.FC = () => {
@@ -35,12 +36,12 @@ const HubDashboard: React.FC = () => {
     if (!currentHub?.id || stores.length === 0) return;
     setLoading(true);
     try {
-      // Count products across all stores of this hub
+      // Count products across all stores of this hub using local Delta-Sync cache
       let totalProducts = 0;
       for (const store of stores) {
         if (!store.id) continue;
-        const productsSnap = await getDocs(collection(db, 'stores', store.id, 'products'));
-        totalProducts += productsSnap.size;
+        const products = await syncStoreProducts(store.id);
+        totalProducts += products.length;
       }
       setWarehouseProductCount(totalProducts);
     } catch (err) {
@@ -62,29 +63,16 @@ const HubDashboard: React.FC = () => {
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
 
-      // Warehouse product count: sum across all store products for this hub
-      try {
-        let total = 0;
-        for (const s of stores) {
-          if (s.id) {
-            const snap = await getDocs(collection(db, 'stores', s.id, 'products'));
-            total += snap.size;
-          }
-        }
-        setWarehouseProductCount(total);
-      } catch {
-        setWarehouseProductCount(0);
-      }
+      let totalProductsCount = 0;
 
       // Load stats for each store
       for (const store of stores) {
         if (!store.id) continue;
 
         try {
-          // Flat path: stores/{storeId}/products
-          const productsSnap = await getDocs(
-            collection(db, 'stores', store.id, 'products')
-          );
+          // Use Delta-Sync product catalog (0-5 reads instead of 2,000+ per store)
+          const storeProducts = await syncStoreProducts(store.id);
+          totalProductsCount += storeProducts.length;
 
           const billingQ = query(
             collection(db, 'stores', store.id, 'billingItems'),
@@ -114,7 +102,7 @@ const HubDashboard: React.FC = () => {
           statsMap.set(store.id, {
             totalSales: todaySales,
             totalProfit: todayProfit,
-            productCount: productsSnap.size,
+            productCount: storeProducts.length,
             todayOrders,
           });
         } catch (err) {
@@ -122,6 +110,8 @@ const HubDashboard: React.FC = () => {
           statsMap.set(store.id, { totalSales: 0, totalProfit: 0, productCount: 0, todayOrders: 0 });
         }
       }
+
+      setWarehouseProductCount(totalProductsCount);
 
       setStoreStats(statsMap);
 

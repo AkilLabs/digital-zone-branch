@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
-import { collection, getDocs, doc, query, orderBy, where, Timestamp, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, doc, query, orderBy, Timestamp, writeBatch } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { Product, StockTransfer, StockTransferItem } from '../types';
+import { syncStoreProducts, updateLocalProductQuantities, upsertLocalProducts } from '../utils/productSyncCache';
+import { useInvalidateCache } from '../hooks/useFirestoreCache';
 
 type Step = 'locations' | 'products' | 'review';
 
@@ -33,6 +35,7 @@ const getProductDocRefByLocation = (locationId: string, hubId: string | undefine
 const StockTransferPage: React.FC = () => {
   const { currentUser } = useAuth();
   const { currentHub, stores } = useStore();
+  const { invalidateProducts } = useInvalidateCache();
   const navigate = useNavigate();
 
   // Step-based wizard
@@ -81,12 +84,8 @@ const StockTransferPage: React.FC = () => {
     if (!fromStoreId) return;
     setLoadingProducts(true);
     try {
-      // Use the helper to resolve the correct path (root collection for hub, subcollection for stores)
-      const sourceCol = getProductsColRef(fromStoreId, currentHub?.id);
-
-      const q = query(sourceCol);
-      const snap = await getDocs(q);
-      const prods: Product[] = snap.docs.map(d => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate() } as Product));
+      const storeScopeId = fromStoreId === currentHub?.id ? null : fromStoreId;
+      const prods = await syncStoreProducts(storeScopeId);
 
       const validProds = prods.filter(p => (p.quantity || 0) > 0);
       validProds.sort((a, b) => (b.quantity || 0) - (a.quantity || 0));
@@ -204,19 +203,17 @@ const StockTransferPage: React.FC = () => {
         completedByName: currentUser?.displayName || currentUser?.email || '',
       };
 
-      // Collect destination product data first (reads must happen before the batch)
-      const destProductData = new Map<string, { ref: any; quantity: number } | null>();
+      // Collect destination product data from local Delta-Sync cache (0 extra N+1 reads)
+      const destStoreScopeId = toStoreId === currentHub?.id ? null : toStoreId;
+      const sourceStoreScopeId = fromStoreId === currentHub?.id ? null : fromStoreId;
+      const destLocalProducts = await syncStoreProducts(destStoreScopeId);
+      const destProductData = new Map<string, { ref: any; id: string; quantity: number } | null>();
 
       for (const item of selectedItems) {
-        // Resolve correct path for destination
-        const destProductsRef = getProductsColRef(toStoreId, currentHub?.id);
-
-        const destQ = query(destProductsRef, where('productCode', '==', item.productCode));
-        const destSnap = await getDocs(destQ);
-
-        if (!destSnap.empty) {
-          const destDoc = destSnap.docs[0];
-          destProductData.set(item.productId, { ref: destDoc.ref, quantity: destDoc.data().quantity || 0 });
+        const destProd = destLocalProducts.find(p => p.productCode === item.productCode);
+        if (destProd && destProd.id) {
+          const destRef = getProductDocRefByLocation(toStoreId, currentHub?.id, destProd.id);
+          destProductData.set(item.productId, { ref: destRef, id: destProd.id, quantity: destProd.quantity || 0 });
         } else {
           destProductData.set(item.productId, null);
         }
@@ -224,10 +221,15 @@ const StockTransferPage: React.FC = () => {
 
       // Create batch — all writes are atomic (all succeed or all fail)
       const batch = writeBatch(db);
+      const nowTs = Timestamp.now();
 
       // Store the transfer record inside the batch for atomicity
       const transferDocRef = doc(collection(db, 'stores', fromStoreId, 'stockTransfers'));
       batch.set(transferDocRef, transferData);
+
+      const sourceQuantityChanges: Array<{ productId: string; quantityDelta: number }> = [];
+      const destQuantityChanges: Array<{ productId: string; quantityDelta: number }> = [];
+      const destNewProducts: Array<Partial<Product> & { id: string }> = [];
 
       for (const item of selectedItems) {
         // Decrease quantity in source (use helper for correct path)
@@ -238,8 +240,9 @@ const StockTransferPage: React.FC = () => {
           batch.update(sourceRef, {
             quantity: newQty,
             isAvailable: newQty > 0,
-            updatedAt: Timestamp.now(),
+            updatedAt: nowTs,
           });
+          sourceQuantityChanges.push({ productId: item.productId, quantityDelta: -item.quantity });
         }
 
         // Handle destination product
@@ -249,14 +252,15 @@ const StockTransferPage: React.FC = () => {
           batch.update(destData.ref, {
             quantity: destData.quantity + item.quantity,
             isAvailable: true,
-            updatedAt: Timestamp.now(),
+            updatedAt: nowTs,
           });
+          destQuantityChanges.push({ productId: destData.id, quantityDelta: item.quantity });
         } else {
           // New product doesn't exist in destination – create it
           const destProductsRef = getProductsColRef(toStoreId, currentHub?.id);
 
           const newProductRef = doc(destProductsRef);
-          batch.set(newProductRef, {
+          const newProductPayload = {
             productCode: item.productCode,
             name: item.productName,
             brand: item.brand,
@@ -268,14 +272,32 @@ const StockTransferPage: React.FC = () => {
             paymentType: 'transfer',
             supplier: `Transfer from ${fromStoreName}`,
             storeId: toStoreId === currentHub.id ? null : toStoreId,
-            createdAt: Timestamp.now(),
+            createdAt: nowTs,
+            updatedAt: nowTs,
             createdBy: currentUser?.uid || '',
             createdByName: currentUser?.displayName || '',
-          });
+          };
+          batch.set(newProductRef, newProductPayload);
+          destNewProducts.push({
+            id: newProductRef.id,
+            ...newProductPayload,
+            paymentType: 'cash',
+            createdAt: nowTs.toDate(),
+            updatedAt: nowTs.toDate(),
+          } as Partial<Product> & { id: string });
         }
       }
 
       await batch.commit();
+
+      await updateLocalProductQuantities(sourceStoreScopeId, sourceQuantityChanges);
+      if (destQuantityChanges.length > 0) {
+        await updateLocalProductQuantities(destStoreScopeId, destQuantityChanges);
+      }
+      if (destNewProducts.length > 0) {
+        await upsertLocalProducts(destStoreScopeId, destNewProducts);
+      }
+      invalidateProducts();
 
       // Reset form
       setSelectedItems([]);

@@ -10,6 +10,8 @@ import type { Product, ShopDetails, Brand, Category } from '../types';
 import { collection, addDoc, doc, getDoc, Timestamp, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateProductCode } from '../utils/productCode';
+import { upsertLocalProducts } from '../utils/productSyncCache';
+import { useInvalidateCache } from '../hooks/useFirestoreCache';
 
 // Autocomplete Input Component
 interface AutocompleteInputProps {
@@ -213,7 +215,8 @@ const AutocompleteInput: React.FC<AutocompleteInputProps> = ({
 const AddProduct: React.FC = () => {
   const { currentUser } = useAuth();
   const { success, error: showError } = useToastContext();
-  const { getCollectionRef } = useStore();
+  const { getCollectionRef, currentStore } = useStore();
+  const { invalidateProducts } = useInvalidateCache();
   const navigate = useNavigate();
   const [model, setModel] = useState('');
   const [cost, setCost] = useState('');
@@ -307,10 +310,11 @@ const AddProduct: React.FC = () => {
     try {
       setIsSubmitting(true);
       const productCode = await generateProductCode(getCollectionRef('products'));
+      const nowTs = Timestamp.now();
       const productData: any = {
         productCode, name: computedName, model: model.trim(), cost: costNum, mrp: mrpNum,
         brand: brand.trim(), category: category.trim(), supplier: supplier.trim(),
-        quantity: quantityNum, isAvailable: quantityNum > 0, createdAt: Timestamp.now(),
+        quantity: quantityNum, isAvailable: quantityNum > 0, createdAt: nowTs, updatedAt: nowTs,
         createdBy: currentUser?.uid || '', createdByName: currentUser?.displayName || currentUser?.email || 'Unknown',
         paymentType,
       };
@@ -319,10 +323,12 @@ const AddProduct: React.FC = () => {
         id: docRef.id, productCode, name: computedName, model: model.trim(),
         cost: costNum, mrp: mrpNum, brand: brand.trim(), category: category.trim(), supplier: supplier.trim(),
         quantity: quantityNum, isAvailable: quantityNum > 0,
-        createdAt: new Date(), createdBy: currentUser?.uid || '',
+        createdAt: new Date(), updatedAt: new Date(), createdBy: currentUser?.uid || '',
         createdByName: currentUser?.displayName || currentUser?.email || 'Unknown',
         paymentType,
       };
+      await upsertLocalProducts(currentStore?.id, [{ ...newProduct, id: docRef.id }]);
+      invalidateProducts();
       setModel(''); setCost(''); setMrp(''); setBrand(''); setCategory(''); setSupplier(''); setQuantity(''); setPaymentType('cash');
       setSelectedProductForLabel(newProduct);
       success('Product added successfully!');

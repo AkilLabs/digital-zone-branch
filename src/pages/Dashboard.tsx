@@ -1,19 +1,16 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
 import CustomLoader from '../components/CustomLoader';
 import RevenueChart from '../components/RevenueChart';
 import PaymentMethodsChart from '../components/PaymentMethodsChart';
 import TopProductsChart from '../components/TopProductsChart';
 import { useBillingItems, useProducts, useCreditSales } from '../hooks/useFirestoreCache';
-import { query, orderBy, limit, getDocs } from 'firebase/firestore';
-import { isExpenseItem, type BillingItem } from '../types';
+import { isExpenseItem } from '../types';
 import { getItemFinancials } from './OverallSales';
 const Dashboard: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, currentStore } = useStore();
   const navigate = useNavigate();
 
   // State for date filter
@@ -53,69 +50,7 @@ const Dashboard: React.FC = () => {
   const { data: creditSalesData, isLoading: loadingCredits } = useCreditSales(undefined, undefined, 100);
   const creditSales = creditSalesData?.items || [];
 
-  const [recentSales, setRecentSales] = useState<BillingItem[]>([]);
-  const [topCustomers, setTopCustomers] = useState<{name: string; total: number; orders: number}[]>([]);
-
   const loading = loadingBilling || loadingProducts || loadingCredits;
-
-  useEffect(() => {
-    loadRecentSales();
-    loadTopCustomers();
-  // Re-run when current store changes so data reflects the selected store
-  }, [currentStore?.id]);
-
-
-
-  const loadRecentSales = async () => {
-    try {
-      // Uses scoped collection ref from StoreContext (hub > store path)
-      const q = query(
-        getCollectionRef('billingItems'),
-        orderBy('createdAt', 'desc'),
-        limit(20)
-      );
-      const querySnapshot = await getDocs(q);
-      const sales: BillingItem[] = [];
-      querySnapshot.forEach((doc: any) => {
-        const data = doc.data() as BillingItem;
-        if (data.sellingPrice > 0) {
-          sales.push({ id: doc.id, ...data });
-        }
-      });
-      setRecentSales(sales.slice(0, 5));
-    } catch (error) {
-      console.error('Error loading recent sales:', error);
-    }
-  };
-
-  const loadTopCustomers = async () => {
-    try {
-      // Uses scoped collection ref from StoreContext (hub > store path)
-      const querySnapshot = await getDocs(getCollectionRef('billingItems'));
-      const customerMap = new Map<string, { name: string; total: number; orders: number }>();
-
-      querySnapshot.forEach((doc: any) => {
-        const item = doc.data() as BillingItem;
-        if (item.sellingPrice > 0 && item.customerName) {
-          const existing = customerMap.get(item.customerName) || { name: item.customerName, total: 0, orders: 0 };
-          existing.total += item.sellingPrice * item.quantity;
-          existing.orders += 1;
-          customerMap.set(item.customerName, existing);
-        }
-      });
-
-      const customers = Array.from(customerMap.values())
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 5);
-      setTopCustomers(customers);
-    } catch (error) {
-      console.error('Error loading top customers:', error);
-    }
-  };
-
-
-
-
 
   // Calculate stats
   // Logic updated to match OverallSales.tsx
@@ -123,6 +58,26 @@ const Dashboard: React.FC = () => {
     billingItems.filter(item => !isExpenseItem(item)),
     [billingItems]
   );
+
+  const recentSales = useMemo(() =>
+    salesEntries.filter(item => item.sellingPrice > 0).slice(0, 5),
+    [salesEntries]
+  );
+
+  const topCustomers = useMemo(() => {
+    const customerMap = new Map<string, { name: string; total: number; orders: number }>();
+    salesEntries.forEach(item => {
+      if (item.sellingPrice > 0 && item.customerName) {
+        const existing = customerMap.get(item.customerName) || { name: item.customerName, total: 0, orders: 0 };
+        existing.total += getItemFinancials(item).netTotal;
+        existing.orders += 1;
+        customerMap.set(item.customerName, existing);
+      }
+    });
+    return Array.from(customerMap.values())
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+  }, [salesEntries]);
 
   const expenseEntries = useMemo(() =>
     billingItems.filter(isExpenseItem),

@@ -11,20 +11,23 @@ import {
   addDoc, 
   doc,
   getDoc,
-  getDocs,
+  setDoc,
   updateDoc,
-  query,
-  where,
+  increment,
+  serverTimestamp,
   Timestamp 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateInvoice } from '../utils/pdfGenerator';
+import { syncStoreProducts, updateLocalProductQuantities } from '../utils/productSyncCache';
+import { useInvalidateCache } from '../hooks/useFirestoreCache';
 
 const AddEntry: React.FC = () => {
   const { currentUser } = useAuth();
   const navigate = useNavigate();
   const { success, error, warning } = useToastContext();
-  const { getCollectionRef, getDocRef } = useStore();
+  const { currentStore, getCollectionRef, getDocRef } = useStore();
+  const { invalidateProducts, invalidateBillingItems } = useInvalidateCache();
   const [lastAddedItem, setLastAddedItem] = useState<BillingItem | null>(null);
   const [shopDetails, setShopDetails] = useState<ShopDetails | null>(null);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -59,53 +62,30 @@ const AddEntry: React.FC = () => {
       const itemType = (item as any).type || 'product';
       
       if (itemType === 'product') {
-        // Find the product by matching item.title with product.name
-        const productQuery = query(
-          getCollectionRef('products'), 
-          where('name', '==', item.title)
-        );
-        const productSnapshot = await getDocs(productQuery);
-        
-        if (!productSnapshot.empty) {
-          const productDoc = productSnapshot.docs[0];
-          const currentQuantity = productDoc.data().quantity;
+        const localProducts = await syncStoreProducts(currentStore?.id);
+        const matchedProduct =
+          localProducts.find(p => p.name === item.title) ||
+          localProducts.find(p => p.productCode === item.title);
+
+        if (matchedProduct && matchedProduct.id) {
+          const currentQuantity = matchedProduct.quantity || 0;
           const newQuantity = currentQuantity - item.quantity;
-          
+
           if (currentQuantity < item.quantity) {
             warning(`Insufficient stock! Only ${currentQuantity} units available.`);
             return;
           }
-          
-          await updateDoc(getDocRef('products', productDoc.id), {
+
+          await updateDoc(getDocRef('products', matchedProduct.id), {
             quantity: newQuantity,
             isAvailable: newQuantity > 0,
-            updatedAt: new Date()
+            updatedAt: serverTimestamp()
           });
-        } else {
-          // If product not found by name, try by product code
-          const productCodeQuery = query(
-            getCollectionRef('products'), 
-            where('productCode', '==', item.title)
-          );
-          const productCodeSnapshot = await getDocs(productCodeQuery);
-          
-          if (!productCodeSnapshot.empty) {
-            const productDoc = productCodeSnapshot.docs[0];
-            const currentQuantity = productDoc.data().quantity;
-            const newQuantity = currentQuantity - item.quantity;
-            
-            if (currentQuantity < item.quantity) {
-              warning(`Insufficient stock! Only ${currentQuantity} units available.`);
-              return;
-            }
-            
-            await updateDoc(getDocRef('products', productDoc.id), {
-              quantity: newQuantity,
-              isAvailable: newQuantity > 0,
-              updatedAt: new Date()
-            });
-          }
-          // If product not found in inventory, continue with sale (manual entry)
+
+          await updateLocalProductQuantities(currentStore?.id, [
+            { productId: matchedProduct.id, quantityDelta: -item.quantity }
+          ]);
+          invalidateProducts();
         }
       }
       
@@ -114,6 +94,23 @@ const AddEntry: React.FC = () => {
       
       // Add the sale to appropriate collection
       const docRef = await addDoc(getCollectionRef(collectionName), newItem);
+
+      if (currentStore?.id && collectionName === 'billingItems') {
+        const todayKey = new Date().toISOString().split('T')[0];
+        const saleTotal = (item.sellingPrice || 0) * (item.quantity || 1);
+        const dailySummaryRef = doc(db, 'overallSales', `${todayKey}_${currentStore.id}`);
+        setDoc(dailySummaryRef, {
+          date: todayKey,
+          storeId: currentStore.id,
+          storeName: currentStore.name || '',
+          totalRevenue: increment(saleTotal),
+          totalBills: increment(1),
+          totalItemsSold: increment(item.quantity || 1),
+          updatedAt: serverTimestamp(),
+        }, { merge: true }).catch(() => {});
+      }
+
+      invalidateBillingItems();
       
       // Store the item with its ID for invoice generation
       const itemWithId = {

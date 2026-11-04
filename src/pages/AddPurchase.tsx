@@ -10,6 +10,7 @@ import type { Purchase, PurchaseItem, Supplier, PaymentMode, PaymentSplit, Produ
 import { collection, addDoc, getDocs, query, where, updateDoc, doc, increment, Timestamp, orderBy, limit, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateProductCode } from '../utils/productCode';
+import { syncStoreProducts } from '../utils/productSyncCache';
 import { encodePrice, decodePrice } from '../utils/secretCode';
 import { MultiStepLoader } from '../components/ui/multi-step-loader';
 import SearchableSelect from '../components/SearchableSelect';
@@ -17,7 +18,7 @@ import * as XLSX from 'xlsx';
 
 const AddPurchase: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef } = useStore();
+  const { getCollectionRef, getDocRef, currentStore } = useStore();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = !!id;
@@ -660,33 +661,8 @@ const AddPurchase: React.FC = () => {
 
     setSearching(true);
     try {
-      const productsRef = getCollectionRef('products');
-      // Search across all products (including out-of-stock) to ensure results are found
-      const snapshot = await getDocs(productsRef);
-      const products: Product[] = [];
-
-      for (const docSnap of snapshot.docs) {
-        const data: any = docSnap.data();
-        const quantity = data.quantity || 0;
-        // Debug log for diagnosis
-        if (data.productCode === '20102187') {
-          console.log('DEBUG: Product 20102187 Firestore data:', data);
-          console.log('DEBUG: Parsed quantity for 20102187:', quantity);
-        }
-        products.push({
-          id: docSnap.id,
-          productCode: data.productCode,
-          name: data.name,
-          brand: data.brand,
-          model: data.model,
-          category: data.category,
-          cost: data.cost,
-          mrp: data.mrp,
-          quantity,
-          supplier: data.supplier,
-          isAvailable: data.isAvailable
-        } as Product);
-      }
+      // Search across local Delta-Synced catalog (0 Firestore reads on search keystrokes!)
+      const products = await syncStoreProducts(currentStore?.id);
 
       // Filter products that match the search query in name, brand, model, or category
       const qLower = searchQuery.toLowerCase();
@@ -1449,6 +1425,7 @@ const AddPurchase: React.FC = () => {
             isAvailable: true,
             sourcePurchaseId: purchaseRefId,
             createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
             createdBy: currentUser?.uid || '',
             createdByName: currentUser?.displayName || ''
           });

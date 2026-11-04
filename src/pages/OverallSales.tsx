@@ -22,7 +22,9 @@ import {
   generateMonthlySettlementPDF,
 } from '../utils/settlementPdfGenerator';
 import { encodePrice } from '../utils/secretCode';
+import { syncStoreProducts, updateLocalProductQuantities } from '../utils/productSyncCache';
 import {
+  collection,
   doc,
   getDoc,
   updateDoc,
@@ -33,10 +35,30 @@ import {
   getDocs,
   orderBy,
   Timestamp,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+
+// Costs ONLY 1 read per branch + 1 read per day!
+export const fetchHeadOfficeDashboard = async (startDateStr: string, endDateStr: string) => {
+  // 1. Read branch list & cumulative stock/revenue totals (e.g., 5 branches = 5 reads)
+  const storesSnapshot = await getDocs(collection(db, 'stores'));
+  const stores = storesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  // 2. Read daily branch summaries for selected date range
+  const salesQuery = query(
+    collection(db, 'overallSales'),
+    where('date', '>=', startDateStr),
+    where('date', '<=', endDateStr),
+    orderBy('date', 'desc')
+  );
+  const salesSnapshot = await getDocs(salesQuery);
+  const dailySummaries = salesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return { stores, dailySummaries };
+};
 import {
   Edit,
   Trash2,
@@ -617,10 +639,9 @@ const OverallSales: React.FC = () => {
   useEffect(() => {
     const fetchMetadata = async () => {
       try {
-        const productsSnap = await getDocs(getCollectionRef('products'));
+        const productsList = await syncStoreProducts(currentStore?.id);
         const pMap = new Map<string, { brand: string; category: string }>();
-        productsSnap.forEach((d) => {
-          const data = d.data();
+        productsList.forEach((data) => {
           if (data.name) {
             pMap.set(data.name.toLowerCase().trim(), {
               brand: data.brand || 'Other',
@@ -1746,13 +1767,17 @@ const OverallSales: React.FC = () => {
       if (!productSnap.empty) {
         const productDoc = productSnap.docs[0];
         const currentQuantity = Number(productDoc.data().quantity || 0);
-        const newQuantity = currentQuantity + (item.quantity || 0);
+        const restoredDelta = Number(item.quantity || 0);
+        const newQuantity = currentQuantity + restoredDelta;
 
         await updateDoc(getDocRef('products', productDoc.id), {
           quantity: newQuantity,
           isAvailable: newQuantity > 0,
-          updatedAt: new Date(),
+          updatedAt: serverTimestamp(),
         });
+        await updateLocalProductQuantities(currentStore?.id, [
+          { productId: productDoc.id, quantityDelta: restoredDelta },
+        ]);
       }
     } catch (error) {
       console.error('Error restoring product quantity:', error);

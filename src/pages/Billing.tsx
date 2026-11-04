@@ -12,7 +12,8 @@ import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
 
-import { useAvailableProducts } from '../hooks/useFirestoreCache';
+import { useAvailableProducts, useInvalidateCache } from '../hooks/useFirestoreCache';
+import { updateLocalProductQuantities } from '../utils/productSyncCache';
 import { generateInvoice } from '../utils/pdfGenerator';
 import { generateUPIQRCode } from '../utils/qrcode';
 import { openRazorpayCheckout } from '../utils/razorpay';
@@ -51,7 +52,6 @@ import {
   collection,
   doc,
   addDoc,
-  deleteDoc,
   getDoc,
   getDocs,
   updateDoc,
@@ -61,7 +61,10 @@ import {
   Timestamp,
   orderBy,
   limit,
-  runTransaction
+  runTransaction,
+  writeBatch,
+  increment,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -162,6 +165,7 @@ function Billing() {
   const addBtnRef = useRef<HTMLButtonElement>(null);
   const [searchText, setSearchText] = useState('');
   const { data: products = [], isLoading: loadingProducts } = useAvailableProducts();
+  const { invalidateProducts, invalidateBillingItems, invalidateCreditSales } = useInvalidateCache();
   const [selectedProductInfo, setSelectedProductInfo] = useState<{ id: string; name: string; productCode?: string; brand?: string; category?: string; mrp?: number; cost?: number; baseCost?: number; price: number; quantity: number; imei?: string; hcsCode?: string; hsnCode?: string; mop?: number; taxPercent?: number; highestDiscountLimit?: number; gstEnabled?: boolean } | null>(null);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [showProductSearchModal, setShowProductSearchModal] = useState(false);
@@ -1401,8 +1405,8 @@ function Billing() {
         : generatedTransactionId;
       const targetCollection = entryType === 'credit' ? 'creditSales' : 'billingItems';
 
-      // For product and credit entries, validate and update inventory
-      const productsWithCost: Array<{ item: Product; productCost: number; matchedDocId: string }> = [];
+      // For product and credit entries, validate inventory using local Delta-Sync cache first (0 extra reads)
+      const productsWithCost: Array<{ item: Product; productCost: number; matchedDocId: string; currentQty: number }> = [];
 
       if (!isEditMode && (entryType === 'product' || entryType === 'credit')) {
         for (const item of orderItems) {
@@ -1421,9 +1425,24 @@ function Billing() {
             productCost = Number(data.cost || 0);
           };
 
-          const selectedProductDoc = item.id ? await getDoc(getDocRef('products', item.id)) : null;
-          if (selectedProductDoc?.exists()) {
-            applyMatchedProduct(selectedProductDoc.id, selectedProductDoc.data());
+          // 1. Check local Delta-Synced products array first (0 Firestore reads!)
+          const localMatch =
+            (item.id ? products.find((p: any) => p.id === item.id) : undefined) ||
+            (item.imei ? products.find((p: any) => p.imei === item.imei) : undefined) ||
+            (item.code ? products.find((p: any) => p.productCode === item.code) : undefined) ||
+            products.find((p: any) => p.name === item.name && Number(p.quantity || 0) >= item.quantity) ||
+            products.find((p: any) => p.name === item.name);
+
+          if (localMatch && localMatch.id) {
+            applyMatchedProduct(localMatch.id, localMatch);
+          }
+
+          // 2. Fallback to Firestore only if not found in local catalog
+          if (!matchedDocId && item.id) {
+            const selectedProductDoc = await getDoc(getDocRef('products', item.id));
+            if (selectedProductDoc?.exists()) {
+              applyMatchedProduct(selectedProductDoc.id, selectedProductDoc.data());
+            }
           }
 
           if (!matchedDocId && item.imei) {
@@ -1460,20 +1479,8 @@ function Billing() {
               showError(`Insufficient stock for ${item.name}${productRef}. Available: ${currentQty}`);
               return;
             }
-            productsWithCost.push({ item, productCost, matchedDocId });
+            productsWithCost.push({ item, productCost, matchedDocId, currentQty });
           }
-        }
-
-        // Update inventory after validation
-        for (const { item, matchedDocId } of productsWithCost) {
-          const productDoc = await getDoc(getDocRef('products', matchedDocId));
-          const currentQty = Number(productDoc.data()?.quantity || 0);
-          const newQty = currentQty - item.quantity;
-          await updateDoc(getDocRef('products', matchedDocId), {
-            quantity: newQty,
-            isAvailable: newQty > 0,
-            updatedAt: new Date()
-          });
         }
       }
 
@@ -1586,11 +1593,13 @@ function Billing() {
         items: orderItems, // Save detailed items list for invoice generation
       };
 
+      const batch = writeBatch(db);
+      const todayKey = billingDate || new Date().toISOString().split('T')[0];
+
       if (isEditMode && existingBillDocs.length > 0) {
-        const removePreviousDocs = existingBillDocs.map((docInfo) =>
-          deleteDoc(getDocRef(docInfo.collection, docInfo.id))
-        );
-        await Promise.all(removePreviousDocs);
+        existingBillDocs.forEach((docInfo) => {
+          batch.delete(getDocRef(docInfo.collection, docInfo.id));
+        });
       }
 
       const savedItems: BillingItem[] = [];
@@ -1612,8 +1621,6 @@ function Billing() {
 
       // Product, Service, or Credit: save each item separately with shared transaction info
       const totalItems = orderItems.length;
-
-
 
       // Calculate proportional discount and payment for each item
       for (let i = 0; i < orderItems.length; i++) {
@@ -1686,6 +1693,7 @@ function Billing() {
           roundOff: roundOffAmount,
           grandTotal: grandTotal,
           subtotal: subTotal,
+          ...(currentStore?.id ? { storeId: currentStore.id } : {}),
           ...salesPersonData,
           ...customerData,
           ...discountData,
@@ -1707,27 +1715,93 @@ function Billing() {
             : {}),
         };
 
-        const docRef = await addDoc(getCollectionRef(targetCollection), {
+        const billRef = doc(getCollectionRef(targetCollection));
+        batch.set(billRef, {
           ...billingItemData,
+          ...(currentStore?.name ? { storeName: currentStore.name } : {}),
           createdAt: Timestamp.fromDate(date),
+          updatedAt: serverTimestamp(),
         });
 
-        savedItems.push({ ...billingItemData, id: docRef.id });
+        savedItems.push({ ...billingItemData, id: billRef.id });
       }
 
+      // 2. Decrement product quantities & update 'updatedAt' for delta sync
+      let totalItemsSold = 0;
+      if (!isEditMode && productsWithCost.length > 0) {
+        for (const { item, matchedDocId, currentQty } of productsWithCost) {
+          const newQty = currentQty - item.quantity;
+          const productRef = getDocRef('products', matchedDocId);
+          batch.update(productRef, {
+            quantity: increment(-item.quantity),
+            isAvailable: newQty > 0,
+            updatedAt: serverTimestamp(),
+          });
+          totalItemsSold += Number(item.quantity);
+        }
+      }
+
+      const totalOrderUnits =
+        totalItemsSold > 0
+          ? totalItemsSold
+          : orderItems.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+
+      if (!isEditMode && currentStore?.id) {
+        // 3. Update Head Office Daily Summary document (1 document per branch per day)
+        const hoDailyRef = doc(db, 'overallSales', `${todayKey}_${currentStore.id}`);
+        batch.set(
+          hoDailyRef,
+          {
+            storeId: currentStore.id,
+            storeName: currentStore.name,
+            date: todayKey,
+            totalRevenue: increment(Number(grandTotal) || 0),
+            totalBills: increment(1),
+            totalItemsSold: increment(totalOrderUnits),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        // 4. Update cumulative store counters on stores/{storeId}
+        const storeRef = doc(db, 'stores', currentStore.id);
+        batch.set(
+          storeRef,
+          {
+            lifetimeRevenue: increment(Number(grandTotal) || 0),
+            lifetimeBills: increment(1),
+            ...(totalItemsSold > 0 ? { totalStockUnits: increment(-totalItemsSold) } : {}),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
 
       // Save transaction summary to root collection (for public customer view-bill)
       // and to store-scoped collection (for multi-store reporting)
-      try {
-        // Use a safe document ID for Firestore (replace / with _ to avoid subcollection paths)
-        const safeDocId = transactionId.replace(/\//g, '_');
-        await setDoc(doc(db, 'transactions', safeDocId), transactionSummary);
-        if (currentStore?.id) {
-          await setDoc(getDocRef('transactions', safeDocId), transactionSummary);
-        }
-      } catch (err) {
-        console.error('Failed to save transaction summary:', err);
-        // Don't fail the entire operation if summary save fails
+      const safeDocId = transactionId.replace(/\//g, '_');
+      batch.set(doc(db, 'transactions', safeDocId), transactionSummary);
+      if (currentStore?.id) {
+        batch.set(getDocRef('transactions', safeDocId), transactionSummary);
+      }
+
+      await batch.commit();
+
+      // 5. Update local IndexedDB cache immediately (0 Firestore reads!)
+      if (!isEditMode && productsWithCost.length > 0) {
+        await updateLocalProductQuantities(
+          currentStore?.id,
+          productsWithCost.map(({ item, matchedDocId }) => ({
+            productId: matchedDocId,
+            quantityDelta: -item.quantity,
+          }))
+        );
+        invalidateProducts();
+      }
+      if (entryType === 'credit') {
+        invalidateCreditSales();
+      } else {
+        invalidateBillingItems();
       }
 
       // Store comprehensive item for download/print/share

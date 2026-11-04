@@ -37,6 +37,7 @@ import {
 } from 'firebase/firestore';
 import type { Customer, Product, Quotation, QuotationItem, ShopDetails } from '../types';
 import { generateQuotationPDF } from '../utils/pdfGenerator';
+import { syncStoreProducts } from '../utils/productSyncCache';
 
 const QuotationManagement: React.FC = () => {
   const { currentUser } = useAuth();
@@ -175,8 +176,7 @@ const QuotationManagement: React.FC = () => {
 
   const fetchProducts = async () => {
     try {
-      const snap = await getDocs(getCollectionRef('products'));
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Product[];
+      const list = await syncStoreProducts(currentStore?.id);
       setProducts(list);
     } catch (e) {
       console.error('Error fetching products:', e);
