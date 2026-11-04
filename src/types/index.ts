@@ -135,6 +135,8 @@ export interface Store {
   id?: string;
   hubId: string;
   name: string;
+  ownerName?: string;
+  managerName?: string;
   address?: string;
   phone?: string;
   email?: string;
@@ -144,6 +146,12 @@ export interface Store {
   longitude?: number;
   upiId?: string;
   merchantName?: string;
+  /** Enables the Recharge module for this branch (managed from HO) */
+  rechargeEnabled?: boolean;
+  /** Cumulative counters maintained atomically by Billing (0 extra reads for HO) */
+  lifetimeRevenue?: number;
+  lifetimeBills?: number;
+  totalStockUnits?: number;
   isActive: boolean;
   createdAt: Date;
   createdBy: string;
@@ -350,6 +358,8 @@ export interface Customer {
   email?: string;
   address?: string;
   gstNo?: string;
+  homeStoreId?: string;
+  homeStoreName?: string;
   createdAt: Date;
   createdBy?: string;
   createdByName?: string;

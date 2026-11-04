@@ -11,7 +11,7 @@ import EmployeeAttendanceView from '../components/EmployeeAttendanceView';
 
 const EmployeeManagement: React.FC = () => {
     const { currentUser } = useAuth();
-  const { getCollectionRef } = useStore();
+    const { getCollectionRef, currentStore } = useStore();
     const navigate = useNavigate();
 
     const [employees, setEmployees] = useState<User[]>([]);
@@ -40,7 +40,7 @@ const EmployeeManagement: React.FC = () => {
         }
 
         fetchEmployees();
-    }, [currentUser, navigate]);
+    }, [currentUser, currentStore?.id, navigate]);
 
     useEffect(() => {
         if (selectedDate && employees.length > 0) {
@@ -67,7 +67,7 @@ const EmployeeManagement: React.FC = () => {
             );
             const snapshot = await getDocs(employeesQuery);
 
-            const employeesList: User[] = snapshot.docs.map(doc => {
+            const allUsers: User[] = snapshot.docs.map(doc => {
                 const data = doc.data();
                 return {
                     uid: doc.id,
@@ -75,16 +75,21 @@ const EmployeeManagement: React.FC = () => {
                     role: data.role,
                     displayName: data.name || data.displayName,
                     name: data.name,
+                    storeId: data.storeId || '',
                     isActive: data.isActive,
                 };
             });
 
-            setEmployees(employeesList);
+            const branchEmployees = allUsers.filter(
+                u => !currentStore?.id || !u.storeId || u.storeId === currentStore.id
+            );
+
+            setEmployees(branchEmployees);
 
             // Fetch attendance for today after employees are loaded
-            const records = await getAttendanceByDate(new Date(selectedDate));
+            const records = await getAttendanceByDate(new Date(selectedDate), currentStore?.id);
             setAttendanceRecords(records);
-            calculateStats(employeesList, records);
+            calculateStats(branchEmployees, records);
         } catch (err) {
             console.error('Error fetching employees:', err);
         } finally {

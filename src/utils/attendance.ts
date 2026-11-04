@@ -23,18 +23,33 @@ function formatDate(date: Date): string {
     return `${year}-${month}-${day}`;
 }
 
+function getAttendanceColRef(storeId?: string | null) {
+    if (storeId && storeId !== 'hub_warehouse') {
+        return collection(db, 'stores', storeId, 'attendance');
+    }
+    return collection(db, 'attendance');
+}
+
+function getAttendanceDocRef(attendanceId: string, storeId?: string | null) {
+    if (storeId && storeId !== 'hub_warehouse') {
+        return doc(db, 'stores', storeId, 'attendance', attendanceId);
+    }
+    return doc(db, 'attendance', attendanceId);
+}
+
 /**
  * Get today's attendance record for a user
  */
 export async function getTodayAttendance(
-    userId: string
+    userId: string,
+    storeId?: string | null
 ): Promise<Attendance | null> {
     try {
         const today = formatDate(new Date());
 
         // Query by userId and date to reliably find today's record
         const q = query(
-            collection(db, 'attendance'),
+            getAttendanceColRef(storeId),
             where('userId', '==', userId),
             where('date', '==', today),
             limit(1)
@@ -45,15 +60,15 @@ export async function getTodayAttendance(
             return null;
         }
 
-        const doc = querySnapshot.docs[0];
+        const docSnap = querySnapshot.docs[0];
 
-        if (!doc) {
+        if (!docSnap) {
             return null;
         }
 
-        const data = doc.data();
+        const data = docSnap.data();
         return {
-            id: doc.id,
+            id: docSnap.id,
             userId: data.userId,
             userName: data.userName,
             checkInTime: data.checkInTime.toDate(),
@@ -89,11 +104,12 @@ export async function checkIn(
     userName: string,
     latitude: number | null,
     longitude: number | null,
-    distanceFromShop: number
+    distanceFromShop: number,
+    storeId?: string | null
 ): Promise<{ success: boolean; message: string; attendanceId?: string }> {
     try {
         // Check if already checked in today (either currently checked in OR already checked out)
-        const existingAttendance = await getTodayAttendance(userId);
+        const existingAttendance = await getTodayAttendance(userId, storeId);
         if (existingAttendance) {
             if (existingAttendance.status === 'checked-in') {
                 return {
@@ -135,7 +151,7 @@ export async function checkIn(
             isOnLunch: false,
         };
 
-        const docRef = await addDoc(collection(db, 'attendance'), attendanceData);
+        const docRef = await addDoc(getAttendanceColRef(storeId), attendanceData);
 
         // Send notification to all owners about check-in
         try {
@@ -165,10 +181,11 @@ export async function checkIn(
 export async function checkOut(
     userId: string,
     latitude: number | null,
-    longitude: number | null
+    longitude: number | null,
+    storeId?: string | null
 ): Promise<{ success: boolean; message: string; workHours?: number }> {
     try {
-        const attendance = await getTodayAttendance(userId);
+        const attendance = await getTodayAttendance(userId, storeId);
         if (!attendance) {
             return {
                 success: false,
@@ -207,7 +224,7 @@ export async function checkOut(
             checkOutLocation = { latitude, longitude };
         }
 
-        await updateDoc(doc(db, 'attendance', attendance.id!), {
+        await updateDoc(getAttendanceDocRef(attendance.id!, storeId), {
             checkOutTime: Timestamp.now(),
             checkOutLocation,
             status: 'checked-out',
@@ -242,14 +259,15 @@ export async function checkOut(
 export async function getAttendanceHistory(
     userId: string,
     startDate?: Date,
-    endDate?: Date
+    endDate?: Date,
+    storeId?: string | null
 ): Promise<Attendance[]> {
     try {
         // Query only by userId to avoid complex index requirements
         // We fetch all records for the user and filter in memory
         // This avoids the "FirebaseError: The query requires an index" error
         const q = query(
-            collection(db, 'attendance'),
+            getAttendanceColRef(storeId),
             where('userId', '==', userId)
         );
 
@@ -302,13 +320,13 @@ export async function getAttendanceHistory(
 /**
  * Get all attendance records for a specific date
  */
-export async function getAttendanceByDate(date: Date): Promise<Attendance[]> {
+export async function getAttendanceByDate(date: Date, storeId?: string | null): Promise<Attendance[]> {
     try {
         const dateStr = formatDate(date);
         console.log('Fetching attendance for date:', dateStr); // Debug log
 
         const q = query(
-            collection(db, 'attendance'),
+            getAttendanceColRef(storeId),
             where('date', '==', dateStr)
         );
 
@@ -364,9 +382,9 @@ export function calculateTotalHours(attendanceRecords: Attendance[]): number {
 /**
  * Start a break
  */
-export async function startBreak(userId: string): Promise<{ success: boolean; message: string }> {
+export async function startBreak(userId: string, storeId?: string | null): Promise<{ success: boolean; message: string }> {
     try {
-        const attendance = await getTodayAttendance(userId);
+        const attendance = await getTodayAttendance(userId, storeId);
         if (!attendance) {
             return {
                 success: false,
@@ -400,7 +418,7 @@ export async function startBreak(userId: string): Promise<{ success: boolean; me
             endTime: null,
         };
 
-        await updateDoc(doc(db, 'attendance', attendance.id!), {
+        await updateDoc(getAttendanceDocRef(attendance.id!, storeId), {
             breaks: [...attendance.breaks.map(b => ({
                 startTime: Timestamp.fromDate(b.startTime),
                 endTime: b.endTime ? Timestamp.fromDate(b.endTime) : null,
@@ -424,9 +442,9 @@ export async function startBreak(userId: string): Promise<{ success: boolean; me
 /**
  * End a break
  */
-export async function endBreak(userId: string): Promise<{ success: boolean; message: string }> {
+export async function endBreak(userId: string, storeId?: string | null): Promise<{ success: boolean; message: string }> {
     try {
-        const attendance = await getTodayAttendance(userId);
+        const attendance = await getTodayAttendance(userId, storeId);
         if (!attendance || !attendance.isOnBreak) {
             return {
                 success: false,
@@ -457,7 +475,7 @@ export async function endBreak(userId: string): Promise<{ success: boolean; mess
             }
         });
 
-        await updateDoc(doc(db, 'attendance', attendance.id!), {
+        await updateDoc(getAttendanceDocRef(attendance.id!, storeId), {
             breaks: updatedBreaks,
             totalBreakTime: Math.round(totalBreakMinutes),
             isOnBreak: false,
@@ -479,9 +497,9 @@ export async function endBreak(userId: string): Promise<{ success: boolean; mess
 /**
  * Start lunch break (once per day only)
  */
-export async function startLunch(userId: string): Promise<{ success: boolean; message: string }> {
+export async function startLunch(userId: string, storeId?: string | null): Promise<{ success: boolean; message: string }> {
     try {
-        const attendance = await getTodayAttendance(userId);
+        const attendance = await getTodayAttendance(userId, storeId);
         if (!attendance) {
             return {
                 success: false,
@@ -517,7 +535,7 @@ export async function startLunch(userId: string): Promise<{ success: boolean; me
             };
         }
 
-        await updateDoc(doc(db, 'attendance', attendance.id!), {
+        await updateDoc(getAttendanceDocRef(attendance.id!, storeId), {
             lunchStartTime: Timestamp.now(),
             isOnLunch: true,
         });
@@ -538,9 +556,9 @@ export async function startLunch(userId: string): Promise<{ success: boolean; me
 /**
  * End lunch break
  */
-export async function endLunch(userId: string): Promise<{ success: boolean; message: string }> {
+export async function endLunch(userId: string, storeId?: string | null): Promise<{ success: boolean; message: string }> {
     try {
-        const attendance = await getTodayAttendance(userId);
+        const attendance = await getTodayAttendance(userId, storeId);
         if (!attendance || !attendance.isOnLunch) {
             return {
                 success: false,
@@ -552,7 +570,7 @@ export async function endLunch(userId: string): Promise<{ success: boolean; mess
         const lunchEnd = new Date();
         const lunchMinutes = (lunchEnd.getTime() - lunchStart.getTime()) / (1000 * 60);
 
-        await updateDoc(doc(db, 'attendance', attendance.id!), {
+        await updateDoc(getAttendanceDocRef(attendance.id!, storeId), {
             lunchEndTime: Timestamp.now(),
             lunchDuration: Math.round(lunchMinutes),
             isOnLunch: false,

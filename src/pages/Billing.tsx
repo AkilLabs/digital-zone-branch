@@ -17,6 +17,7 @@ import { updateLocalProductQuantities } from '../utils/productSyncCache';
 import { generateInvoice } from '../utils/pdfGenerator';
 import { generateUPIQRCode } from '../utils/qrcode';
 import { openRazorpayCheckout } from '../utils/razorpay';
+import { resolveShopDetails } from '../utils/shopDetails';
 import type { BillingItem, ShopDetails } from '../types';
 import Lottie from 'lottie-react';
 import OrderProcessingAnim from '../assets/Orderprocessing.json';
@@ -876,6 +877,11 @@ function Billing() {
   useEffect(() => {
     const fetchShopDetails = async () => {
       try {
+        const resolved = await resolveShopDetails(currentStore);
+        if (resolved && resolved.shopName) {
+          setShopDetails(resolved);
+          return;
+        }
         const shopDetailsRef = getDocRef('settings', 'shopDetails');
         const shopDetailsSnap = await getDoc(shopDetailsRef);
 
@@ -3301,7 +3307,10 @@ function Billing() {
                                     email: customerEmail.trim(),
                                     gstNo: customerGstNo.trim(),
                                     address: customerAddress.trim(),
+                                    homeStoreId: currentStore?.id || '',
+                                    homeStoreName: currentStore?.name || '',
                                     createdAt: Timestamp.now(),
+                                    updatedAt: serverTimestamp(),
                                     createdBy: currentUser?.displayName || currentUser?.email || 'Unknown User',
                                   };
 
@@ -3516,7 +3525,10 @@ function Billing() {
                                   name: creditCustomerName.trim(),
                                   phone: creditCustomerPhone.trim(),
                                   email: creditCustomerEmail.trim(),
+                                  homeStoreId: currentStore?.id || '',
+                                  homeStoreName: currentStore?.name || '',
                                   createdAt: Timestamp.now(),
+                                  updatedAt: serverTimestamp(),
                                   createdBy: currentUser?.displayName || currentUser?.email || 'Unknown User',
                                 };
 

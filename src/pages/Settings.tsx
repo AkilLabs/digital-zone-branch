@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useStore } from '../context/StoreContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import shopLogo from '../assets/logo.png';
 import { getCurrentPosition } from '../utils/geolocation';
+import { shopDetailsFromStore } from '../utils/shopDetails';
 import { useToastContext } from '../context/ToastContext';
 import type { User } from '../types';
 import { cn } from '../lib/utils';
@@ -41,6 +43,7 @@ type TabType = 'project' | 'shop' | 'users';
 
 const Settings: React.FC = () => {
   const { currentUser } = useAuth();
+  const { currentStore, refreshCurrentStore } = useStore();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { success, error } = useToastContext();
@@ -76,6 +79,9 @@ const Settings: React.FC = () => {
   // TAB 1: Project Settings (Recharge Toggle)
   // ==========================================
   const [rechargeEnabled, setRechargeEnabled] = useState<boolean>(() => {
+    if (typeof currentStore?.rechargeEnabled === 'boolean') {
+      return currentStore.rechargeEnabled;
+    }
     const cached = localStorage.getItem('recharge_enabled');
     return cached !== null ? cached === 'true' : true;
   });
@@ -83,6 +89,11 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     const fetchProjectSettings = async () => {
+      if (typeof currentStore?.rechargeEnabled === 'boolean') {
+        setRechargeEnabled(currentStore.rechargeEnabled);
+        localStorage.setItem('recharge_enabled', String(currentStore.rechargeEnabled));
+        return;
+      }
       try {
         const docRef = doc(db, 'settings', 'projectSettings');
         const snap = await getDoc(docRef);
@@ -98,7 +109,7 @@ const Settings: React.FC = () => {
       }
     };
     fetchProjectSettings();
-  }, []);
+  }, [currentStore?.id, currentStore?.rechargeEnabled]);
 
   const handleToggleRecharge = async () => {
     const nextVal = !rechargeEnabled;
@@ -112,13 +123,21 @@ const Settings: React.FC = () => {
         detail: { rechargeEnabled: nextVal }
       }));
 
-      // Persist in Firestore
-      const docRef = doc(db, 'settings', 'projectSettings');
-      await setDoc(docRef, {
-        rechargeEnabled: nextVal,
-        updatedAt: serverTimestamp(),
-        updatedBy: currentUser?.displayName || currentUser?.email || 'admin'
-      }, { merge: true });
+      // Persist on stores/{currentStore.id} when in a branch, otherwise global projectSettings
+      if (currentStore?.id) {
+        await setDoc(doc(db, 'stores', currentStore.id), {
+          rechargeEnabled: nextVal,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+        await refreshCurrentStore();
+      } else {
+        const docRef = doc(db, 'settings', 'projectSettings');
+        await setDoc(docRef, {
+          rechargeEnabled: nextVal,
+          updatedAt: serverTimestamp(),
+          updatedBy: currentUser?.displayName || currentUser?.email || 'admin'
+        }, { merge: true });
+      }
 
       success(nextVal ? 'Recharge section enabled in sidebar!' : 'Recharge section hidden from sidebar.');
     } catch (err: any) {
@@ -155,11 +174,33 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     fetchShopDetails();
-  }, []);
+  }, [currentStore?.id]);
 
   const fetchShopDetails = async () => {
     try {
       setLoadingShop(true);
+      if (currentStore?.id) {
+        const storeSnap = await getDoc(doc(db, 'stores', currentStore.id));
+        if (storeSnap.exists()) {
+          const sData = storeSnap.data();
+          setShopDetails({
+            shopName: sData.name || currentStore.name || '',
+            ownerName: sData.ownerName || sData.managerName || '',
+            address: sData.address || '',
+            phone: sData.phone || '',
+            email: sData.email || '',
+            gst: sData.gst || '',
+            description: sData.description || '',
+            latitude: sData.latitude,
+            longitude: sData.longitude,
+            upiId: sData.upiId || '',
+            merchantName: sData.merchantName || sData.name || '',
+          });
+          return;
+        }
+        setShopDetails(shopDetailsFromStore(currentStore));
+        return;
+      }
       const docRef = doc(db, 'settings', 'shopDetails');
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
@@ -196,8 +237,26 @@ const Settings: React.FC = () => {
   const handleSaveShop = async () => {
     setSavingShop(true);
     try {
-      const docRef = doc(db, 'settings', 'shopDetails');
-      await setDoc(docRef, shopDetails, { merge: true });
+      if (currentStore?.id) {
+        await setDoc(doc(db, 'stores', currentStore.id), {
+          name: shopDetails.shopName || currentStore.name,
+          ownerName: shopDetails.ownerName || '',
+          address: shopDetails.address || '',
+          phone: shopDetails.phone || '',
+          email: shopDetails.email || '',
+          gst: shopDetails.gst || '',
+          description: shopDetails.description || '',
+          latitude: shopDetails.latitude ?? null,
+          longitude: shopDetails.longitude ?? null,
+          upiId: shopDetails.upiId || '',
+          merchantName: shopDetails.merchantName || shopDetails.shopName || '',
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+        await refreshCurrentStore();
+      } else {
+        const docRef = doc(db, 'settings', 'shopDetails');
+        await setDoc(docRef, shopDetails, { merge: true });
+      }
       setIsEditingShop(false);
       success('Shop details updated successfully!');
     } catch (err: any) {

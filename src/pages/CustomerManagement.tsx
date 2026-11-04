@@ -34,8 +34,6 @@ import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
 import {
   getDocs,
-  getDoc,
-  doc,
   addDoc,
   updateDoc,
   deleteDoc,
@@ -43,9 +41,10 @@ import {
   where,
   orderBy,
   Timestamp,
+  serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '../config/firebase';
 import type { Customer, BillingItem, ShopDetails } from '../types';
+import { resolveShopDetails } from '../utils/shopDetails';
 import { generateInvoice } from '../utils/pdfGenerator';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -108,25 +107,25 @@ function CustomerManagement() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch shop details
+  // Fetch shop details from currentStore first (0 reads) with fallback to settings/shopDetails
   useEffect(() => {
     const fetchShopDetails = async () => {
       try {
-        const shopDoc = await getDoc(doc(db, 'settings', 'shopDetails'));
-        if (shopDoc.exists()) {
-          setShopDetails(shopDoc.data() as ShopDetails);
+        const resolved = await resolveShopDetails(currentStore);
+        if (resolved) {
+          setShopDetails(resolved);
         }
       } catch (error) {
         console.error('Error fetching shop details:', error);
       }
     };
     fetchShopDetails();
-  }, []);
+  }, [currentStore]);
 
   const effectiveShopDetails: ShopDetails = useMemo(() => {
     return shopDetails || {
       shopName: currentStore?.name || 'The Legend Mobiles',
-      ownerName: 'Owner',
+      ownerName: currentStore?.ownerName || 'Owner',
       address: currentStore?.address || 'Main Road',
       phone: currentStore?.phone || '',
       email: currentStore?.email || '',
@@ -148,6 +147,8 @@ function CustomerManagement() {
         phone: docSnap.data().phone || '',
         email: docSnap.data().email || '',
         address: docSnap.data().address || '',
+        homeStoreId: docSnap.data().homeStoreId || '',
+        homeStoreName: docSnap.data().homeStoreName || '',
         createdAt: docSnap.data().createdAt?.toDate ? docSnap.data().createdAt.toDate() : new Date(docSnap.data().createdAt || Date.now()),
         createdBy: docSnap.data().createdBy,
         createdByName: docSnap.data().createdByName,
@@ -601,7 +602,10 @@ function CustomerManagement() {
         phone: customerPhone.trim(),
         email: customerEmail.trim() || '',
         address: customerAddress.trim() || '',
+        homeStoreId: currentStore?.id || '',
+        homeStoreName: currentStore?.name || '',
         createdAt: Timestamp.now(),
+        updatedAt: serverTimestamp(),
         createdBy: currentUser?.uid,
         createdByName: displayName,
       });
@@ -613,6 +617,8 @@ function CustomerManagement() {
         phone: customerPhone.trim(),
         email: customerEmail.trim(),
         address: customerAddress.trim(),
+        homeStoreId: currentStore?.id || '',
+        homeStoreName: currentStore?.name || '',
         createdAt: new Date(),
         createdBy: currentUser?.uid,
         createdByName: displayName,
@@ -644,6 +650,7 @@ function CustomerManagement() {
         phone: customerPhone.trim(),
         email: customerEmail.trim() || '',
         address: customerAddress.trim() || '',
+        updatedAt: serverTimestamp(),
       });
 
       // Update local state

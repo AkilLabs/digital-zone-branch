@@ -46,14 +46,14 @@ service cloud.firestore {
     
     // ─── Root-Level Collections (Global/Shared Data) ───────────────────
     
-    // Users collection
+    // Users collection (shared HO + branch employee directory)
     match /users/{userId} {
-      // Allow reading own profile, or if owner/admin
-      allow read: if isSignedIn() && (request.auth.uid == userId || isOwnerOrAdmin());
+      // Signed-in users can read the directory (branch salesperson lists, HO employee management)
+      allow read: if isSignedIn();
       allow create: if isOwnerOrAdmin();
       // Allow user to update their own allowedDeviceToken (for binding)
-      // Otherwise only Owner can update/delete
-      allow update: if isOwner() || (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedDeviceToken']));
+      // Owner / hub-admin can update any user (e.g. HO "Assign / Transfer Branch")
+      allow update: if isOwner() || isHubAdmin() || (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['allowedDeviceToken']));
       allow delete: if isOwner();
     }
     
@@ -215,10 +215,10 @@ service cloud.firestore {
       allow delete: if isOwnerOrAdmin();
     }
     
-    // Recharge Providers collection - owners can add/edit/delete, employees/admins can refill
+    // Recharge Providers collection (shared root) - owners/admins can add/delete, employees/admins can refill
     match /rechargeProviders/{providerId} {
       allow read: if isSignedIn();
-      allow create, delete: if isOwner();
+      allow create, delete: if isOwnerOrAdmin();
       allow update: if isSignedIn(); // Allow any signed in user to update (needed for refill/recharge)
     }
     
@@ -247,10 +247,30 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
     
-    // Store documents (stores/{storeId})
+    // Store documents (stores/{storeId}) — also hold per-branch settings managed by HO
     match /stores/{storeId} {
       allow read: if true;
-      allow write: if isOwnerOrAdmin();
+      allow create, delete: if isOwnerOrAdmin();
+      // Admins edit branch settings; any signed-in biller may only bump the cumulative counters
+      // written atomically by the Billing batch (lifetimeRevenue, lifetimeBills, totalStockUnits).
+      allow update: if isOwnerOrAdmin() || (
+        isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['lifetimeRevenue', 'lifetimeBills', 'totalStockUnits', 'updatedAt'])
+      );
+    }
+
+    // HO daily summaries: overallSales/{YYYY-MM-DD}_{storeId} (1 doc per branch per day)
+    match /overallSales/{summaryId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
+    }
+
+    // Stock transfers between HO warehouse and branches (shared root)
+    match /stockTransfers/{transferId} {
+      allow read, create, update: if isSignedIn();
+      allow delete: if isOwnerOrAdmin();
     }
     
     // Billing sequential counters

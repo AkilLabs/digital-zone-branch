@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useStore } from '../context/StoreContext';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import { doc, getDoc } from 'firebase/firestore';
@@ -13,9 +14,11 @@ import { MapPin, Clock, LogIn, LogOut, Calendar, TrendingUp, Coffee, Utensils } 
 
 const EmployeeDashboard: React.FC = () => {
     const { currentUser } = useAuth();
+    const { currentStore } = useStore();
     const navigate = useNavigate();
     const { success, error } = useToastContext();
     const { refreshAttendance } = useAttendance();
+    const activeStoreId = currentStore?.id || currentUser?.storeId || null;
 
     const [shopLocation, setShopLocation] = useState<{ latitude: number; longitude: number } | null>(null);
     const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -41,7 +44,7 @@ const EmployeeDashboard: React.FC = () => {
         fetchShopLocation();
         fetchTodayAttendance();
         fetchEmployeeSettings();
-    }, [currentUser, navigate]);
+    }, [currentUser, currentStore?.id, navigate]);
 
     useEffect(() => {
         // Update location every 30 seconds
@@ -56,10 +59,25 @@ const EmployeeDashboard: React.FC = () => {
 
     useEffect(() => {
         fetchAttendanceHistory();
-    }, [filterStartDate, filterEndDate, currentUser]);
+    }, [filterStartDate, filterEndDate, currentUser, activeStoreId]);
 
     const fetchShopLocation = async () => {
         try {
+            // Read branch GPS coordinates directly from currentStore (0 reads) when available
+            if (currentStore?.latitude && currentStore?.longitude) {
+                setShopLocation({ latitude: currentStore.latitude, longitude: currentStore.longitude });
+                return;
+            }
+            if (currentUser?.storeId) {
+                const storeSnap = await getDoc(doc(db, 'stores', currentUser.storeId));
+                if (storeSnap.exists()) {
+                    const sData = storeSnap.data();
+                    if (sData.latitude && sData.longitude) {
+                        setShopLocation({ latitude: sData.latitude, longitude: sData.longitude });
+                        return;
+                    }
+                }
+            }
             const docRef = doc(db, 'settings', 'shopDetails');
             const docSnap = await getDoc(docRef);
 
@@ -94,7 +112,7 @@ const EmployeeDashboard: React.FC = () => {
         if (!currentUser) return;
 
         try {
-            const attendance = await getTodayAttendance(currentUser.uid);
+            const attendance = await getTodayAttendance(currentUser.uid, activeStoreId);
             setTodayAttendance(attendance);
         } catch (err) {
             console.error('Error fetching today\'s attendance:', err);
@@ -119,7 +137,7 @@ const EmployeeDashboard: React.FC = () => {
                 end = new Date(y, m - 1, d);
             }
 
-            const history = await getAttendanceHistory(currentUser.uid, start, end);
+            const history = await getAttendanceHistory(currentUser.uid, start, end, activeStoreId);
             setAttendanceHistory(history);
         } catch (err) {
             console.error('Error fetching attendance history:', err);
@@ -221,7 +239,8 @@ const EmployeeDashboard: React.FC = () => {
                 currentUser.displayName || currentUser.email || 'Employee',
                 currentLoc ? currentLoc.latitude : null,
                 currentLoc ? currentLoc.longitude : null,
-                distanceFromShop
+                distanceFromShop,
+                activeStoreId
             );
 
             if (response.success) {
@@ -278,7 +297,8 @@ const EmployeeDashboard: React.FC = () => {
             const response = await checkOut(
                 currentUser.uid,
                 currentLoc ? currentLoc.latitude : null,
-                currentLoc ? currentLoc.longitude : null
+                currentLoc ? currentLoc.longitude : null,
+                activeStoreId
             );
 
             if (response.success) {
@@ -300,7 +320,7 @@ const EmployeeDashboard: React.FC = () => {
         if (!currentUser) return;
         setActionLoading(true);
         try {
-            const response = await startBreak(currentUser.uid);
+            const response = await startBreak(currentUser.uid, activeStoreId);
             if (response.success) {
                 success(response.message);
                 await fetchTodayAttendance();
@@ -318,7 +338,7 @@ const EmployeeDashboard: React.FC = () => {
         if (!currentUser) return;
         setActionLoading(true);
         try {
-            const response = await endBreak(currentUser.uid);
+            const response = await endBreak(currentUser.uid, activeStoreId);
             if (response.success) {
                 success(response.message);
                 await fetchTodayAttendance();
@@ -336,7 +356,7 @@ const EmployeeDashboard: React.FC = () => {
         if (!currentUser) return;
         setActionLoading(true);
         try {
-            const response = await startLunch(currentUser.uid);
+            const response = await startLunch(currentUser.uid, activeStoreId);
             if (response.success) {
                 success(response.message);
                 await fetchTodayAttendance();
@@ -354,7 +374,7 @@ const EmployeeDashboard: React.FC = () => {
         if (!currentUser) return;
         setActionLoading(true);
         try {
-            const response = await endLunch(currentUser.uid);
+            const response = await endLunch(currentUser.uid, activeStoreId);
             if (response.success) {
                 success(response.message);
                 await fetchTodayAttendance();

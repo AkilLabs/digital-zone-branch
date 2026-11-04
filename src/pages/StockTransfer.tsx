@@ -103,34 +103,17 @@ const StockTransferPage: React.FC = () => {
     if (!currentHub?.id) return;
     setLoadingTransfers(true);
     try {
-      const allTransfers: StockTransfer[] = [];
-      // Query all stores AND the hub warehouse for transfer history
-      const locationIds = [
-        currentHub.id, // Hub warehouse transfer records
-        ...stores.filter(s => s.id).map(s => s.id!),
-      ];
-      const uniqueLocationIds = [...new Set(locationIds)];
-
-      for (const locId of uniqueLocationIds) {
-        try {
-          const q = query(
-            collection(db, 'stores', locId, 'stockTransfers'),
-            orderBy('createdAt', 'desc')
-          );
-          const snap = await getDocs(q);
-          snap.docs.forEach(d => {
-            allTransfers.push({
-              id: d.id,
-              ...d.data(),
-              createdAt: d.data().createdAt?.toDate() || new Date(),
-              completedAt: d.data().completedAt?.toDate(),
-            } as StockTransfer);
-          });
-        } catch {
-          // collection may not exist yet for this location
-        }
-      }
-      // Sort combined results by date
+      const q = query(
+        collection(db, 'stockTransfers'),
+        orderBy('createdAt', 'desc')
+      );
+      const snap = await getDocs(q);
+      const allTransfers: StockTransfer[] = snap.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+        createdAt: d.data().createdAt?.toDate() || new Date(),
+        completedAt: d.data().completedAt?.toDate(),
+      } as StockTransfer));
       allTransfers.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
       setTransfers(allTransfers);
     } catch {
@@ -223,8 +206,8 @@ const StockTransferPage: React.FC = () => {
       const batch = writeBatch(db);
       const nowTs = Timestamp.now();
 
-      // Store the transfer record inside the batch for atomicity
-      const transferDocRef = doc(collection(db, 'stores', fromStoreId, 'stockTransfers'));
+      // Store the transfer record inside the shared root stockTransfers collection for atomicity
+      const transferDocRef = doc(collection(db, 'stockTransfers'));
       batch.set(transferDocRef, transferData);
 
       const sourceQuantityChanges: Array<{ productId: string; quantityDelta: number }> = [];

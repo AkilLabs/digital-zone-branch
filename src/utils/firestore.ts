@@ -10,24 +10,60 @@ import { collection, doc, CollectionReference, DocumentReference } from 'firebas
 import { db } from '../config/firebase';
 
 // ─────────────────────────────────────────────
+//  Shared root collections (HO + all branches)
+// ─────────────────────────────────────────────
+
+/**
+ * Collections shared between the Head Office app and every Branch app.
+ * These always live at the Firestore root, regardless of the current store.
+ * High-volume operational data (products, billingItems, creditSales, expenses,
+ * attendance, serviceRequests, purchases, ...) stays under stores/{storeId}/.
+ */
+export const SHARED_ROOT_COLLECTIONS = [
+  'users',
+  'customers',
+  'creditCustomers',
+  'brands',
+  'categories',
+  'financeProviders',
+  'suppliers',
+  'rechargeProviders',
+  'stores',
+  'hubs',
+  'overallSales',
+  'stockTransfers',
+] as const;
+
+const SHARED_ROOT_SET = new Set<string>(SHARED_ROOT_COLLECTIONS);
+
+/** Whether a collection is shared at the Firestore root. */
+export const isSharedRootCollection = (collectionName: string): boolean =>
+  SHARED_ROOT_SET.has(collectionName);
+
+// ─────────────────────────────────────────────
 //  Store-scoped helpers  (primary data path)
 // ─────────────────────────────────────────────
 
 /**
  * Get a Firestore collection reference scoped to a specific store.
  * Path: stores/{storeId}/{collectionName}
+ * Shared collections (see SHARED_ROOT_COLLECTIONS) resolve to the root: {collectionName}
  */
 export const getStoreCollectionRef = (
   _hubId: string,          // kept for API compatibility – no longer used in path
   storeId: string,
   collectionName: string
 ): CollectionReference => {
+  if (SHARED_ROOT_SET.has(collectionName)) {
+    return collection(db, collectionName);
+  }
   return collection(db, 'stores', storeId, collectionName);
 };
 
 /**
  * Get a Firestore document reference scoped to a specific store.
  * Path: stores/{storeId}/{collectionName}/{docId}
+ * Shared collections (see SHARED_ROOT_COLLECTIONS) resolve to the root: {collectionName}/{docId}
  */
 export const getStoreDocRef = (
   _hubId: string,          // kept for API compatibility – no longer used in path
@@ -35,6 +71,9 @@ export const getStoreDocRef = (
   collectionName: string,
   docId: string
 ): DocumentReference => {
+  if (SHARED_ROOT_SET.has(collectionName)) {
+    return doc(db, collectionName, docId);
+  }
   return doc(db, 'stores', storeId, collectionName, docId);
 };
 
@@ -103,13 +142,10 @@ export const STORE_COLLECTIONS = [
   'billingItems',
   'expenses',
   'expensePresets',
-  'customers',
-  'creditCustomers',
   'creditSales',
   'stockRequirements',
   'serviceRequests',
   'attendance',
-  'rechargeProviders',
   'rechargeTransactions',
   'providerTransactions',
   'purchases',
@@ -121,12 +157,22 @@ export const STORE_COLLECTIONS = [
   'razorpayQRCodes',
   'notifications',
   'defectProducts',
+  'settings',
+] as const;
+
+/**
+ * Collections that used to live under stores/{storeId}/ but are now shared at the root.
+ * Used by the one-time migration utility (Migration page) to copy legacy data.
+ */
+export const LEGACY_STORE_SCOPED_SHARED_COLLECTIONS = [
+  'customers',
+  'creditCustomers',
+  'suppliers',
+  'rechargeProviders',
+  'stockTransfers',
+  'users',
   'brands',
   'categories',
-  'users',       // store-level users (employees, store-admins)
-  'settings',
-  'stockTransfers',
-  'suppliers',
 ] as const;
 
 /**

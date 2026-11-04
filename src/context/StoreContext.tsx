@@ -3,7 +3,7 @@ import { collection, doc, getDoc, getDocs, query, where, CollectionReference, Do
 import { db } from '../config/firebase';
 import { useAuth } from './AuthContext';
 import type { Hub, Store } from '../types';
-import { getStoreCollectionRef, getStoreDocRef, getHubCollectionRef, getHubDocRef } from '../utils/firestore';
+import { getStoreCollectionRef, getStoreDocRef, getHubCollectionRef, getHubDocRef, isSharedRootCollection } from '../utils/firestore';
 
 interface StoreContextType {
   currentHub: Hub | null;
@@ -23,6 +23,8 @@ interface StoreContextType {
   isHubUser: boolean;
   /** Refresh stores list */
   refreshStores: () => Promise<void>;
+  /** Re-read the current store document (branch settings) */
+  refreshCurrentStore: () => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType>({} as StoreContextType);
@@ -144,15 +146,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [currentUser?.hubId]);
 
+  /** Re-read stores/{currentStoreId} (1 read) after branch settings are edited. */
+  const refreshCurrentStore = useCallback(async () => {
+    if (!currentStore?.id) return;
+    const storeDoc = await getDoc(doc(db, 'stores', currentStore.id));
+    if (storeDoc.exists()) {
+      const updated = {
+        id: storeDoc.id,
+        ...storeDoc.data(),
+        createdAt: storeDoc.data().createdAt?.toDate() || new Date(),
+        updatedAt: storeDoc.data().updatedAt?.toDate(),
+      } as Store;
+      setCurrentStoreState(updated);
+      setStores(prev => prev.map(s => (s.id === updated.id ? updated : s)));
+    }
+  }, [currentStore?.id]);
+
   // ─── Scoped Firestore references ──────────────────────────────────────────
   /**
    * Returns a CollectionReference for the current store.
    * Path: stores/{storeId}/{collectionName}
+   * Shared HO collections (users, customers, suppliers, ...) always resolve to the root.
    * Falls back to a root-level collection if no store is in context.
    */
   const getCollectionRef = useCallback((collectionName: string): CollectionReference => {
-    if (!currentStore?.id) {
-      // No store context: fall back to a root-level collection (safe for hub-only pages)
+    if (!currentStore?.id || isSharedRootCollection(collectionName)) {
+      // No store context or shared collection: root-level collection
       return collection(db, collectionName);
     }
     // Pass empty string for hubId; the new helper ignores it
@@ -162,9 +181,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   /**
    * Returns a DocumentReference for the current store.
    * Path: stores/{storeId}/{collectionName}/{docId}
+   * Shared HO collections always resolve to the root.
    */
   const getDocRef = useCallback((collectionName: string, docId: string): DocumentReference => {
-    if (!currentStore?.id) {
+    if (!currentStore?.id || isSharedRootCollection(collectionName)) {
       return doc(db, collectionName, docId);
     }
     return getStoreDocRef('', currentStore.id, collectionName, docId);
@@ -196,6 +216,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     getHubDoc,
     isHubUser,
     refreshStores,
+    refreshCurrentStore,
   };
 
   return (

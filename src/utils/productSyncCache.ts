@@ -250,3 +250,13 @@ export async function removeLocalProducts(
   }
   await writeLocalCatalog(storeId, lastSyncMs || Date.now(), productMap);
 }
+
+/**
+ * Returns the locally cached product catalog for a store straight from IndexedDB.
+ * Performs 0 Firestore reads — used to refresh React Query after local mutations
+ * (billing, stock edits, transfers) without a redundant network round-trip.
+ */
+export async function getCachedStoreProductsOnly(storeId?: string | null): Promise<Product[]> {
+  const { productMap } = await readLocalCatalog(storeId);
+  return Object.values(productMap);
+}

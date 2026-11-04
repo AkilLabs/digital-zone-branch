@@ -37,8 +37,6 @@ import {
 } from '../utils/productSyncCache';
 import {
   deleteDoc,
-  doc,
-  getDoc,
   updateDoc,
   writeBatch,
   serverTimestamp
@@ -46,6 +44,7 @@ import {
 import { db } from '../config/firebase';
 
 import { generateProductCode, generateIMEIProductCode } from '../utils/productCode';
+import { resolveShopDetails } from '../utils/shopDetails';
 import { encodePrice } from '../utils/secretCode';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -209,9 +208,9 @@ const Products: React.FC = () => {
 
   const fetchShopDetails = async () => {
     try {
-      const shopDoc = await getDoc(doc(db, 'settings', 'shopDetails'));
-      if (shopDoc.exists()) {
-        setShopDetails(shopDoc.data() as ShopDetails);
+      const resolved = await resolveShopDetails(currentStore);
+      if (resolved) {
+        setShopDetails(resolved);
       }
     } catch (error) {
       console.error('Error fetching shop details:', error);

@@ -21,7 +21,7 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const refreshAttendance = useCallback(async () => {
         if (currentUser?.role === 'employee') {
             try {
-                const data = await getTodayAttendance(currentUser.uid);
+                const data = await getTodayAttendance(currentUser.uid, currentUser.storeId);
                 setAttendance(data);
             } catch (error) {
                 console.error('Error fetching attendance in context:', error);

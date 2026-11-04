@@ -75,13 +75,22 @@ const Navbar: React.FC = () => {
     return hasRouteAccess(currentUser.role, path);
   }, [currentUser]);
 
-  // Recharge toggle state - synced with Firestore and localStorage
+  // Recharge toggle state - synced with currentStore (0 reads) or Firestore/localStorage fallback
   const [rechargeEnabled, setRechargeEnabled] = useState<boolean>(() => {
+    if (typeof currentStore?.rechargeEnabled === 'boolean') {
+      return currentStore.rechargeEnabled;
+    }
     const cached = localStorage.getItem('recharge_enabled');
     return cached !== null ? cached === 'true' : true;
   });
 
   useEffect(() => {
+    if (typeof currentStore?.rechargeEnabled === 'boolean') {
+      setRechargeEnabled(currentStore.rechargeEnabled);
+      localStorage.setItem('recharge_enabled', String(currentStore.rechargeEnabled));
+      return;
+    }
+
     const unsub = onSnapshot(doc(db, 'settings', 'projectSettings'), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -110,7 +119,7 @@ const Navbar: React.FC = () => {
       unsub();
       window.removeEventListener('recharge-setting-changed', handleCustomEvent);
     };
-  }, []);
+  }, [currentStore?.id, currentStore?.rechargeEnabled]);
 
   // Close sidebar when clicking outside
   useEffect(() => {

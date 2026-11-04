@@ -12,7 +12,7 @@ import {
 } from 'firebase/firestore';
 import { isExpenseItem, type BillingItem } from '../types';
 import { useStore } from '../context/StoreContext';
-import { syncStoreProducts } from '../utils/productSyncCache';
+import { syncStoreProducts, getCachedStoreProductsOnly } from '../utils/productSyncCache';
 
 // Cache times
 const CACHE_TIME = {
@@ -391,6 +391,7 @@ export const useCreditSales = (
 // Hook to invalidate caches after mutations
 export const useInvalidateCache = () => {
   const queryClient = useQueryClient();
+  const { currentStore } = useStore();
   
   return {
     invalidateBillingItems: () => {
@@ -404,8 +405,19 @@ export const useInvalidateCache = () => {
     invalidateCreditSales: () => {
       queryClient.invalidateQueries({ queryKey: ['creditSales'] });
     },
-    invalidateProducts: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
+    /**
+     * Zero-read product refresh: callers update IndexedDB first
+     * (updateLocalProductQuantities / upsertLocalProducts / removeLocalProducts),
+     * then this pushes the local catalog into React Query without a Firestore query.
+     */
+    invalidateProducts: async () => {
+      try {
+        const localData = await getCachedStoreProductsOnly(currentStore?.id);
+        queryClient.setQueryData(['products', 'catalog', currentStore?.id], localData);
+      } catch (err) {
+        console.warn('Local product cache refresh failed, falling back to refetch:', err);
+        queryClient.invalidateQueries({ queryKey: ['products'] });
+      }
     },
     invalidateAll: () => {
       queryClient.invalidateQueries();

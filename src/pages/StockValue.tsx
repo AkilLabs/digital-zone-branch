@@ -20,11 +20,7 @@ import {
 import type { Product, ShopDetails } from '../types';
 import { useStore } from '../context/StoreContext';
 import { syncStoreProducts } from '../utils/productSyncCache';
-import {
-    doc,
-    getDoc,
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { resolveShopDetails } from '../utils/shopDetails';
 import {
     exportStockExcelReport,
     exportStockPDFReport,
@@ -91,18 +87,17 @@ const StockValue: React.FC = () => {
     // Modals
     const [productForDetails, setProductForDetails] = useState<Product | null>(null);
 
-    // Fetch Shop Details for report headers
+    // Fetch Shop Details for report headers from currentStore first (0 reads)
     const fetchShopDetails = useCallback(async () => {
         try {
-            const docRef = doc(db, 'settings', 'shopDetails');
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                setShopDetails(docSnap.data() as ShopDetails);
+            const resolved = await resolveShopDetails(currentStore);
+            if (resolved) {
+                setShopDetails(resolved);
             }
         } catch (error) {
             console.error('Error fetching shop details:', error);
         }
-    }, []);
+    }, [currentStore]);
 
     // Fetch in-stock products using local Delta-Sync product cache (0-5 reads instead of 2,000+)
     const fetchProducts = useCallback(async (isRefresh = false) => {
