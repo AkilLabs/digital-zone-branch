@@ -5,8 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToast } from '../hooks/useToast';
 import Navbar from '../components/Navbar';
-import { Package, DollarSign, Plus, Trash2, ShoppingCart, User, Receipt, Save } from 'lucide-react';
-import type { Purchase, PurchaseItem, Supplier, PaymentMode, PaymentSplit, Product, Brand, Category } from '../types';
+import { Package, DollarSign, Plus, Trash2, ShoppingCart, Receipt, Save, Building } from 'lucide-react';
+import type { Purchase, PurchaseItem, PaymentMode, PaymentSplit, Product, Brand, Category } from '../types';
 import { collection, addDoc, getDocs, query, where, updateDoc, doc, increment, Timestamp, orderBy, limit, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateProductCode } from '../utils/productCode';
@@ -25,9 +25,8 @@ const AddPurchase: React.FC = () => {
   const [originalPurchase, setOriginalPurchase] = useState<any>(null);
   const { showToast } = useToast();
 
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
-  const [selectedSupplierName, setSelectedSupplierName] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState('hq-hub');
+  const [selectedSupplierName, setSelectedSupplierName] = useState('HQ Central Hub');
 
   const [brands, setBrands] = useState<Brand[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -65,7 +64,6 @@ const AddPurchase: React.FC = () => {
   const [nextProductCodeNumber, setNextProductCodeNumber] = useState<number | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showSupplierForm, setShowSupplierForm] = useState(false);
 
   // Multi-step loader state
   const [multiStepLoading, setMultiStepLoading] = useState(false);
@@ -86,23 +84,12 @@ const AddPurchase: React.FC = () => {
   const [searching, setSearching] = useState(false);
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
 
-  // New supplier form
-  const [newSupplier, setNewSupplier] = useState({
-    name: '',
-    contactPerson: '',
-    phone: '',
-    email: '',
-    address: '',
-    gstNumber: ''
-  });
-
   // Draft auto-save state
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [activeCell, setActiveCell] = useState<{ rowIndex: number; field: string; value: string } | null>(null);
 
 
   useEffect(() => {
-    fetchSuppliers();
     fetchBrandsAndCategories();
 
     if (isEditMode) {
@@ -333,76 +320,6 @@ const AddPurchase: React.FC = () => {
     if (nextProductCodeNumber === null) return '00000001';
     const codeNumber = nextProductCodeNumber + index;
     return String(codeNumber).padStart(8, '0');
-  };
-
-  const fetchSuppliers = async () => {
-    try {
-      const suppliersRef = collection(db, 'suppliers');
-      const q = query(suppliersRef, where('isActive', '==', true));
-      const snapshot = await getDocs(q);
-      const suppliersList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Supplier[];
-      // Sort by name in JavaScript to avoid needing composite index
-      suppliersList.sort((a, b) => a.name.localeCompare(b.name));
-      setSuppliers(suppliersList);
-    } catch (error) {
-      console.error('Error fetching suppliers:', error);
-      showToast('Failed to load suppliers', 'error');
-    }
-  };
-
-  const handleSupplierChange = (supplierId: string) => {
-    setSelectedSupplierId(supplierId);
-    const supplier = suppliers.find(s => s.id === supplierId);
-    setSelectedSupplierName(supplier?.name || '');
-  };
-
-  const addNewSupplier = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSupplier.name.trim() || !newSupplier.phone.trim()) {
-      showToast('Supplier name and phone are required', 'error');
-      return;
-    }
-
-    try {
-      const supplierData: Omit<Supplier, 'id'> = {
-        name: newSupplier.name,
-        contactPerson: newSupplier.contactPerson,
-        phone: newSupplier.phone,
-        email: newSupplier.email,
-        address: newSupplier.address,
-        gstNumber: newSupplier.gstNumber,
-        totalPurchaseAmount: 0,
-        totalPaid: 0,
-        totalPending: 0,
-        isActive: true,
-        createdAt: new Date(),
-        createdBy: currentUser?.uid || '',
-        createdByName: currentUser?.displayName || ''
-      };
-
-      const docRef = await addDoc(collection(db, 'suppliers'), supplierData);
-
-      showToast('Supplier added successfully!', 'success');
-      setShowSupplierForm(false);
-      setNewSupplier({
-        name: '',
-        contactPerson: '',
-        phone: '',
-        email: '',
-        address: '',
-        gstNumber: ''
-      });
-
-      await fetchSuppliers();
-      setSelectedSupplierId(docRef.id);
-      setSelectedSupplierName(supplierData.name);
-    } catch (error) {
-      console.error('Error adding supplier:', error);
-      showToast('Failed to add supplier', 'error');
-    }
   };
 
   const applyHcsCodeToAllRows = (sourceRowIndex: number) => {
@@ -1135,10 +1052,8 @@ const AddPurchase: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedSupplierId) {
-      showToast('Please select a supplier', 'error');
-      return;
-    }
+    const effectiveSupplierId = selectedSupplierId || 'hq-hub';
+    const effectiveSupplierName = selectedSupplierName || 'HQ Central Hub';
 
     if (items.some(item => !item.brand.trim() || !item.category.trim() || item.quantity <= 0 || item.costPerUnit <= 0)) {
       showToast('Please fill in all item details correctly', 'error');
@@ -1197,13 +1112,19 @@ const AddPurchase: React.FC = () => {
         states.push({ text: 'Reverting previous purchase data...' });
         setLoadingStates([...states]);
         
-        // Revert supplier totals
-        const supplierRef = doc(db, 'suppliers', originalPurchase.supplierId);
-        await updateDoc(supplierRef, {
-          totalPurchaseAmount: increment(-originalPurchase.totalAmount),
-          totalPaid: increment(-originalPurchase.paidAmount),
-          totalPending: increment(-originalPurchase.pendingAmount)
-        });
+        // Revert supplier totals if tied to an external supplier
+        if (originalPurchase.supplierId && originalPurchase.supplierId !== 'hq-hub') {
+          try {
+            const supplierRef = doc(db, 'suppliers', originalPurchase.supplierId);
+            await updateDoc(supplierRef, {
+              totalPurchaseAmount: increment(-originalPurchase.totalAmount),
+              totalPaid: increment(-originalPurchase.paidAmount),
+              totalPending: increment(-originalPurchase.pendingAmount)
+            });
+          } catch (e) {
+            console.warn('Could not revert external supplier totals:', e);
+          }
+        }
 
         // Revert inventory quantities
         for (const origItem of originalPurchase.items) {
@@ -1249,8 +1170,8 @@ const AddPurchase: React.FC = () => {
 
       const purchaseData: any = {
         purchaseNumber,
-        supplierId: selectedSupplierId,
-        supplierName: selectedSupplierName,
+        supplierId: effectiveSupplierId,
+        supplierName: effectiveSupplierName,
         hubId: currentHub?.id || 'digital_zone_hq',
         items: items.map((item, index) => {
           const cost = Number(item.costPerUnit) || 0;
@@ -1344,16 +1265,21 @@ const AddPurchase: React.FC = () => {
         await addDoc(collection(db, 'supplierPayments'), paymentRecord);
       }
 
-      // Update supplier totals (Root)
-      const supplierRef = doc(db, 'suppliers', selectedSupplierId);
-      const updateData: any = {
-        totalPurchaseAmount: increment(totalAmount),
-        totalPaid: increment(paid),
-        totalPending: increment(pending),
-        updatedAt: Timestamp.now()
-      };
-
-      await updateDoc(supplierRef, updateData);
+      // Update supplier totals (Root) only if an external supplier is associated (Hub procurement)
+      if (effectiveSupplierId && effectiveSupplierId !== 'hq-hub') {
+        try {
+          const supplierRef = doc(db, 'suppliers', effectiveSupplierId);
+          const updateData: any = {
+            totalPurchaseAmount: increment(totalAmount),
+            totalPaid: increment(paid),
+            totalPending: increment(pending),
+            updatedAt: Timestamp.now()
+          };
+          await updateDoc(supplierRef, updateData);
+        } catch (e) {
+          console.warn('Could not update external supplier totals:', e);
+        }
+      }
 
       // Add products to HQ Hub inventory (Root master catalog) - Never directly write to branch inventory
       const savedProductDocIds: string[] = [];
@@ -1552,137 +1478,44 @@ const AddPurchase: React.FC = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Supplier Selection */}
+          {/* Procurement Source (Central Hub) */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <User className="w-5 h-5 text-blue-600" />
-                Supplier Information
+                <Building className="w-5 h-5 text-blue-600" />
+                Procurement Source
               </h2>
-              <button
-                type="button"
-                onClick={() => setShowSupplierForm(!showSupplierForm)}
-                className="text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1"
-              >
-                <Plus className="w-4 h-4" />
-                {showSupplierForm ? 'Cancel' : 'New Supplier'}
-              </button>
+              <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-medium border border-blue-200">
+                HQ Hub Procurement
+              </span>
             </div>
 
-            {showSupplierForm ? (
-              <div className="space-y-4 border-t pt-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Supplier Name *
-                    </label>
-                    <input
-                      type="text"
-                      value={newSupplier.name}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, name: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Contact Person
-                    </label>
-                    <input
-                      type="text"
-                      value={newSupplier.contactPerson}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, contactPerson: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Phone Number *
-                    </label>
-                    <input
-                      type="tel"
-                      value={newSupplier.phone}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      value={newSupplier.email}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, email: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      GST Number
-                    </label>
-                    <input
-                      type="text"
-                      value={newSupplier.gstNumber}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, gstNumber: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Address
-                    </label>
-                    <input
-                      type="text"
-                      value={newSupplier.address}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, address: e.target.value })}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Supplier / Procurement Origin
+                </label>
+                <div className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-800 font-medium flex items-center justify-between">
+                  <span>HQ Central Hub</span>
+                  <span className="text-xs text-blue-600 bg-white px-2 py-0.5 rounded border border-gray-200">Centralized</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={addNewSupplier}
-                  className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                  Add Supplier
-                </button>
+                <p className="text-xs text-gray-500 mt-1">
+                  External vendors and suppliers are exclusively managed at HQ Hub.
+                </p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Select Supplier *
-                  </label>
-                  <select
-                    value={selectedSupplierId}
-                    onChange={(e) => handleSupplierChange(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    required
-                  >
-                    <option value="">Choose a supplier</option>
-                    {suppliers.map(supplier => (
-                      <option key={supplier.id} value={supplier.id}>
-                        {supplier.name} - {supplier.phone}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Invoice Number
-                  </label>
-                  <input
-                    type="text"
-                    value={invoiceNumber}
-                    onChange={(e) => setInvoiceNumber(e.target.value)}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Supplier's invoice number"
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Invoice / Reference Number
+                </label>
+                <input
+                  type="text"
+                  value={invoiceNumber}
+                  onChange={(e) => setInvoiceNumber(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Invoice or challan number"
+                />
               </div>
-            )}
+            </div>
           </div>
 
           {/* Product Items - Excel-like Table */}
@@ -2478,28 +2311,12 @@ const AddPurchase: React.FC = () => {
                     </div>
                     <div className="flex-1">
                       <h4 className="text-sm font-semibold text-amber-900 mb-1">Credit Purchase</h4>
-                      {selectedSupplierId ? (
-                        <>
-                          <p className="text-sm text-amber-800 mb-2">
-                            This purchase will be recorded as credit. The full amount of <strong>₹{totalAmount.toFixed(2)}</strong> will be added to the supplier's outstanding balance.
-                          </p>
-                          <p className="text-sm text-amber-900 font-medium mb-3">
-                            💡 To make a payment for this credit purchase, go to the <strong>Suppliers page</strong> and update the paid amount there.
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => navigate('/suppliers')}
-                            className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-600 text-white text-sm font-medium rounded-md hover:bg-amber-700 transition-colors"
-                          >
-                            <User className="w-4 h-4" />
-                            Go to Suppliers Page
-                          </button>
-                        </>
-                      ) : (
-                        <p className="text-sm text-amber-800">
-                          This purchase will be recorded as credit. <strong>Please select a supplier first</strong> to proceed with credit purchase. You can manage payments later from the Suppliers page.
-                        </p>
-                      )}
+                      <p className="text-sm text-amber-800 mb-2">
+                        This purchase will be recorded as credit. The full amount of <strong>₹{totalAmount.toFixed(2)}</strong> will be recorded for central accounting.
+                      </p>
+                      <p className="text-sm text-amber-900 font-medium">
+                        💡 External supplier ledger and settlements are centrally managed at HQ Hub.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2537,14 +2354,14 @@ const AddPurchase: React.FC = () => {
               </div>
 
               {/* Pending Payment Helper */}
-              {pendingAmount > 0 && paymentMode !== 'credit' && selectedSupplierId && (
+              {pendingAmount > 0 && paymentMode !== 'credit' && (
                 <div className="pt-3 mt-2 border-t border-blue-200">
                   <div className="flex items-start gap-2 text-sm text-blue-800 bg-blue-100 p-3 rounded-lg">
                     <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                     </svg>
                     <p className="flex-1">
-                      You can manage the remaining payment of <strong>₹{pendingAmount.toFixed(2)}</strong> from the <button type="button" onClick={() => navigate('/suppliers')} className="underline font-semibold hover:text-blue-900">Suppliers page</button> after saving this purchase.
+                      Remaining pending balance of <strong>₹{pendingAmount.toFixed(2)}</strong> is tracked centrally at HQ Hub.
                     </p>
                   </div>
                 </div>

@@ -61,7 +61,6 @@ export const ROUTE_PERMISSIONS: Record<string, UserRole[]> = {
   '/purchases':                 BRANCH_MANAGER_ROLES,
   '/add-purchase':              BRANCH_MANAGER_ROLES,
   '/add-purchase-imei':         BRANCH_MANAGER_ROLES,
-  '/suppliers':                 BRANCH_MANAGER_ROLES,
   '/master':                    BRANCH_MANAGER_ROLES,
 };
 
@@ -95,7 +94,7 @@ const OWNER_PERMISSIONS: FeaturePermissions = {
   canViewProfit: true,
   canManageEmployees: true,
   canManageUsers: false, // User creation is HQ only
-  canManageSuppliers: true,
+  canManageSuppliers: false, // Suppliers are exclusive to HQ Hub procurement
   canAddPurchase: true,
   canAddExpense: true,
   canViewReports: true,
@@ -116,7 +115,7 @@ const BRANCH_ADMIN_PERMISSIONS: FeaturePermissions = {
   canViewProfit: true,
   canManageEmployees: false, // Controlled from HQ
   canManageUsers: false,     // Controlled from HQ
-  canManageSuppliers: true,
+  canManageSuppliers: false, // Suppliers are exclusive to HQ Hub procurement
   canAddPurchase: true,
   canAddExpense: true,
   canViewReports: true,

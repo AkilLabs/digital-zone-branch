@@ -16,7 +16,6 @@ import Purchases from './pages/Purchases';
 import PurchaseDetail from './pages/PurchaseDetail';
 import AddPurchase from './pages/AddPurchase';
 import AddPurchaseIMEI from './pages/AddPurchaseIMEI';
-import Suppliers from './pages/Suppliers';
 import Billing from './pages/Billing';
 import StockRequirement from './pages/StockRequirement';
 import ServiceManagement from './pages/ServiceManagement';
@@ -282,15 +281,10 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
+                {/* Branch does not manage external suppliers — redirect to dashboard */}
                 <Route
                   path="/suppliers"
-                  element={
-                    <ProtectedRoute>
-                      <PurchaseFeatureGuard>
-                        <Suppliers />
-                      </PurchaseFeatureGuard>
-                    </ProtectedRoute>
-                  }
+                  element={<Navigate to="/dashboard" replace />}
                 />
                 <Route
                   path="/master"
