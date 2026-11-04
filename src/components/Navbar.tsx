@@ -1,20 +1,69 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useAttendance } from '@/context/AttendanceContext';
 import { useStore } from '../context/StoreContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { hasRouteAccess } from '../config/rolePermissions';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import logo from '../assets/logo.png';
+import {
+  Menu,
+  X,
+  Search,
+  LayoutDashboard,
+  Receipt,
+  FileText,
+  Wallet,
+  Users,
+  Package,
+  Boxes,
+  TrendingUp,
+  ShoppingBag,
+  PlusCircle,
+  Smartphone,
+  Tag,
+  AlertTriangle,
+  Truck,
+  Sliders,
+  Wrench,
+  Plus,
+  Zap,
+  Radio,
+  BarChart3,
+  UserCheck,
+  UserPlus,
+  Settings,
+  Clock,
+  User,
+  Building2,
+  Store,
+  ArrowLeftRight,
+  LogOut
+} from 'lucide-react';
+
+interface MenuItem {
+  title: string;
+  path: string;
+  icon: React.ComponentType<{ className?: string }>;
+  keywords?: string[];
+  badge?: string;
+}
+
+interface MenuSection {
+  title: string;
+  items: MenuItem[];
+}
 
 const Navbar: React.FC = () => {
   const { currentUser, logout } = useAuth();
   const { isCheckedIn } = useAttendance();
   const { currentStore, stores, setCurrentStore, isHubUser, currentHub } = useStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showSidebar, setShowSidebar] = useState(false);
   const [showStoreSwitcher, setShowStoreSwitcher] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const sidebarRef = useRef<HTMLDivElement>(null);
   const storeSwitcherRef = useRef<HTMLDivElement>(null);
 
@@ -103,7 +152,10 @@ const Navbar: React.FC = () => {
   useEffect(() => {
     const handleEscKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        if (showSidebar) setShowSidebar(false);
+        if (showSidebar) {
+          setShowSidebar(false);
+          setSearchQuery('');
+        }
         if (showStoreSwitcher) setShowStoreSwitcher(false);
       }
     };
@@ -127,17 +179,142 @@ const Navbar: React.FC = () => {
   const handleNavigation = (path: string) => {
     navigate(path);
     setShowSidebar(false);
+    setSearchQuery('');
   };
+
+  const isActiveRoute = useCallback((path: string) => {
+    if (path === '/dashboard') {
+      return location.pathname === '/dashboard' || location.pathname === '/';
+    }
+    return location.pathname === path || (path !== '/' && location.pathname.startsWith(path + '/'));
+  }, [location.pathname]);
+
+  // Memoized sidebar navigation sections based on roles and permissions
+  const menuSections: MenuSection[] = useMemo(() => {
+    const sections: MenuSection[] = [];
+
+    // Hub Management (for hub-level users)
+    if (isHubUser) {
+      const hubItems: MenuItem[] = [
+        { title: 'Hub Dashboard', path: '/hub-dashboard', icon: Building2, keywords: ['hub', 'branch', 'warehouse', 'overview'] },
+        { title: 'Manage Stores', path: '/store-management', icon: Store, keywords: ['stores', 'outlets', 'branch'] },
+        { title: 'Stock Transfer', path: '/stock-transfer', icon: ArrowLeftRight, keywords: ['transfer', 'dispatch', 'move', 'stock'] },
+      ];
+      sections.push({ title: 'Hub Management', items: hubItems });
+    }
+
+    // Main Workspace
+    if (!isEmployee) {
+      const mainItems: MenuItem[] = [
+        ...(canAccess('/dashboard') ? [{ title: 'Home', path: '/dashboard', icon: LayoutDashboard, keywords: ['dashboard', 'home', 'main', 'overview'] }] : []),
+        ...(canAccess('/billing') ? [{ title: 'Billing & POS', path: '/billing', icon: Receipt, keywords: ['bill', 'invoice', 'pos', 'cashier', 'checkout', 'sale'] }] : []),
+        ...(canAccess('/quotations') ? [{ title: 'Quotations', path: '/quotations', icon: FileText, keywords: ['quote', 'estimate', 'price estimate'] }] : []),
+        ...(canAccess('/add-expense') ? [{ title: 'Add Expense', path: '/add-expense', icon: Wallet, keywords: ['expense', 'spending', 'cost', 'cash out'] }] : []),
+        ...(canAccess('/customers') ? [{ title: 'Customers', path: '/customers', icon: Users, keywords: ['client', 'directory', 'phone', 'customer details'] }] : []),
+      ];
+      if (mainItems.length > 0) sections.push({ title: 'Workspace', items: mainItems });
+    }
+
+    // Inventory & Stock
+    const inventoryItems: MenuItem[] = [
+      ...(!isEmployee ? [{ title: 'Products', path: '/products', icon: Package, keywords: ['items', 'inventory', 'catalog', 'stock'] }] : []),
+      { title: 'Stock Requirement', path: '/stock-requirement', icon: Boxes, keywords: ['low stock', 'order', 'requirement'] },
+      ...(!isEmployee && canAccess('/stock-value') ? [{ title: 'Stock Value', path: '/stock-value', icon: TrendingUp, keywords: ['valuation', 'worth', 'cost', 'assets'] }] : []),
+      ...(!isEmployee && canAccess('/purchases') ? [{ title: 'Purchases', path: '/purchases', icon: ShoppingBag, keywords: ['buy', 'vendor', 'purchase bills'] }] : []),
+      ...(!isEmployee && canAccess('/add-purchase') ? [{ title: 'Add Purchase', path: '/add-purchase', icon: PlusCircle, keywords: ['new purchase', 'stock in'] }] : []),
+      ...(!isEmployee && canAccess('/add-purchase-imei') ? [{ title: 'Add Purchase (IMEI)', path: '/add-purchase-imei', icon: Smartphone, keywords: ['phone purchase', 'imei', 'serial'] }] : []),
+      ...(!isEmployee ? [{ title: 'Tamper Box Labels', path: '/tamper-labels', icon: Tag, keywords: ['barcode', 'label', 'qr', 'print', 'tamper'] }] : []),
+      ...(!isEmployee && canAccess('/defect-management') ? [{ title: 'Defect & Damage', path: '/defect-management', icon: AlertTriangle, keywords: ['faulty', 'damaged', 'broken', 'return'] }] : []),
+      ...(!isEmployee && canAccess('/suppliers') ? [{ title: 'Suppliers', path: '/suppliers', icon: Truck, keywords: ['vendor', 'dealer', 'distributor'] }] : []),
+      ...(!isEmployee && canAccess('/master') ? [{ title: 'Master Settings', path: '/master', icon: Sliders, keywords: ['brand', 'category', 'configuration', 'master'] }] : []),
+    ];
+    if (inventoryItems.length > 0) sections.push({ title: 'Inventory & Stock', items: inventoryItems });
+
+    // Services
+    const serviceItems: MenuItem[] = [
+      ...(canAccess('/service-management') ? [{ title: 'Service Management', path: '/service-management', icon: Wrench, keywords: ['repair', 'job sheet', 'device service', 'fix'] }] : []),
+      ...(canAccess('/service-management/create') ? [{ title: 'New Service Job', path: '/service-management/create', icon: Plus, keywords: ['create job', 'receive device', 'new repair'] }] : []),
+    ];
+    if (serviceItems.length > 0) sections.push({ title: 'Services & Repairs', items: serviceItems });
+
+    // Recharge (if enabled)
+    if (!isEmployee && rechargeEnabled) {
+      const rechargeItems: MenuItem[] = [
+        { title: 'Recharge Accounts', path: '/recharge-accounts', icon: Smartphone, keywords: ['mobile', 'dth', 'balance', 'recharge'] },
+        { title: 'Bulk Recharge', path: '/bulk-recharge', icon: Zap, keywords: ['quick recharge', 'topup', 'fast'] },
+        ...(canAccess('/recharge-report') ? [{ title: 'Recharge Report', path: '/recharge-report', icon: FileText, keywords: ['history', 'recharge log', 'transactions'] }] : []),
+        ...(canAccess('/provider-management') ? [{ title: 'Providers', path: '/provider-management', icon: Radio, keywords: ['airtel', 'jio', 'vi', 'bsnl', 'operator'] }] : []),
+      ];
+      if (rechargeItems.length > 0) sections.push({ title: 'Recharge Operations', items: rechargeItems });
+    }
+
+    // Reports & Turnover
+    if (!isEmployee && (canAccess('/overall-sales') || canAccess('/settlement'))) {
+      sections.push({
+        title: 'Turnover & Reports',
+        items: [
+          { title: 'Sales Report & Settlement', path: '/overall-sales', icon: BarChart3, keywords: ['revenue', 'turnover', 'profit', 'daily report', 'closing', 'settlement'] }
+        ]
+      });
+    }
+
+    // Administration
+    if (!isEmployee) {
+      const adminItems: MenuItem[] = [
+        ...(canAccess('/employee-management') ? [{ title: 'Employees', path: '/employee-management', icon: UserCheck, keywords: ['staff', 'workers', 'team', 'attendance'] }] : []),
+        ...(canAccess('/add-employee') ? [{ title: 'Add User', path: '/add-employee', icon: UserPlus, keywords: ['create employee', 'new staff', 'register user'] }] : []),
+        ...(canAccess('/settings') ? [{ title: 'System Settings', path: '/settings', icon: Settings, keywords: ['config', 'shop details', 'preferences', 'system'] }] : []),
+      ];
+      if (adminItems.length > 0) sections.push({ title: 'Administration', items: adminItems });
+    }
+
+    // Employee Workspace
+    if (isEmployee) {
+      sections.push({
+        title: 'My Workspace',
+        items: [
+          { title: 'My Attendance', path: '/employee-dashboard', icon: Clock, keywords: ['check in', 'check out', 'time', 'attendance'] },
+          { title: 'My Profile', path: '/employee-profile', icon: User, keywords: ['account', 'details', 'my info'] },
+        ]
+      });
+    }
+
+    return sections;
+  }, [isHubUser, isEmployee, rechargeEnabled, canAccess]);
+
+  const filteredSections = useMemo(() => {
+    if (!searchQuery.trim()) return menuSections;
+    const q = searchQuery.toLowerCase().trim();
+    return menuSections
+      .map(section => ({
+        ...section,
+        items: section.items.filter(item =>
+          item.title.toLowerCase().includes(q) ||
+          item.path.toLowerCase().includes(q) ||
+          item.keywords?.some(k => k.toLowerCase().includes(q))
+        )
+      }))
+      .filter(section => section.items.length > 0);
+  }, [menuSections, searchQuery]);
 
   return (
     <>
       <header className="bg-slate-50/95 text-gray-900 border-b border-slate-200/80 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w mx-auto px-3 sm:px-4 md:px-6">
           <div className="flex justify-between items-center py-2 sm:py-2.5">
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-1.5 sm:gap-2.5">
               <button
                 onClick={() => showNavigation && setShowSidebar(!showSidebar)}
-                className={`h-8 sm:h-9 flex items-center justify-center ${showNavigation ? 'cursor-pointer hover:opacity-80 active:scale-95' : 'cursor-default'} transition-all duration-150`}
+                className={`p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 active:scale-95 ${showNavigation ? 'cursor-pointer' : 'cursor-default opacity-40'} transition-all duration-150`}
+                title={showNavigation ? "Toggle Navigation Menu" : "Check in to enable navigation"}
+                disabled={!showNavigation}
+                aria-label="Toggle navigation"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => showNavigation && setShowSidebar(!showSidebar)}
+                className={`h-8 sm:h-9 flex items-center justify-center ${showNavigation ? 'cursor-pointer hover:opacity-85 active:scale-95' : 'cursor-default'} transition-all duration-150`}
                 title={showNavigation ? "Open Navigation Menu" : "Check in to enable navigation"}
                 disabled={!showNavigation}
               >
@@ -234,455 +411,127 @@ const Navbar: React.FC = () => {
 
       {showSidebar && (
         <div
-          className="fixed inset-0 bg-transparent bg-opacity-50 z-[60] transition-opacity duration-300"
-          onClick={() => setShowSidebar(false)}
+          className="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-[60] transition-opacity duration-200"
+          onClick={() => {
+            setShowSidebar(false);
+            setSearchQuery('');
+          }}
         />
       )}
 
-      <div
+      <aside
         ref={sidebarRef}
-        className={`fixed top-0 left-0 h-full w-80 bg-white shadow-2xl z-[70] transform transition-transform duration-300 ease-in-out ${showSidebar ? 'translate-x-0' : '-translate-x-full'
-          }`}
+        aria-label="Navigation Sidebar"
+        className={`fixed top-0 left-0 h-[100dvh] w-72 max-w-[80vw] bg-white z-[70] transform transition-transform duration-200 ease-out flex flex-col border-r border-slate-100 shadow-xl ${
+          showSidebar ? 'translate-x-0' : '-translate-x-full'
+        }`}
       >
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200/80 bg-slate-50">
-          <div className="flex items-center gap-3">
-            <img src={logo} alt="Logo" className="h-9 w-auto object-contain" />
-            <div>
-              <h2 className="m-0 text-base font-bold text-gray-900 leading-tight">Digital Zone</h2>
-              <p className="m-0 text-xs text-gray-500">Navigation Menu</p>
-            </div>
+        {/* Simple Header */}
+        <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-100 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <img src={logo} alt="Logo" className="h-7 w-auto object-contain flex-shrink-0" />
+            <span className="text-xs font-semibold text-slate-800 truncate">
+              {currentStore ? currentStore.name : 'Digital Zone'}
+            </span>
           </div>
           <button
-            onClick={() => setShowSidebar(false)}
-            className="p-2 rounded-lg hover:bg-gray-200 transition-colors duration-200"
-            title="Close sidebar"
+            onClick={() => {
+              setShowSidebar(false);
+              setSearchQuery('');
+            }}
+            className="p-1 text-slate-400 hover:text-slate-600 rounded-md transition-colors cursor-pointer"
+            title="Close"
+            aria-label="Close navigation"
           >
-            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <nav className="p-4 overflow-y-auto h-[calc(100%-88px)] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] space-y-6">
-
-          {/* Hub Menu (for hub-level users) */}
-          {/* 
-          isHubUser && (
-            <div>
-              <h3 className="px-4 mb-2 text-xs font-semibold text-indigo-400 uppercase tracking-wider">Hub Management</h3>
-              <div className="space-y-1">
-                <button
-                  onClick={() => handleNavigation('/hub-dashboard')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                  </svg>
-                  <span className="text-sm">Hub Dashboard</span>
-                </button>
-                <button
-                  onClick={() => handleNavigation('/store-management')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                  </svg>
-                  <span className="text-sm">Manage Stores</span>
-                </button>
-                <button
-                  onClick={() => handleNavigation('/stock-transfer')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                  <span className="text-sm">Stock Transfer</span>
-                </button>
-              </div>
-            </div>
-          )
-          */}
-
-          {/* Main Menu */}
-          {!isEmployee && (
-            <div>
-              <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Main Menu</h3>
-              <div className="space-y-1">
-                {canAccess('/dashboard') && (
-                <button
-                  onClick={() => handleNavigation('/dashboard')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                  </svg>
-                  <span className="text-sm">Home</span>
-                </button>
-                )}
-
-                {canAccess('/billing') && (
-                <button
-                  onClick={() => handleNavigation('/billing')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  <span className="text-sm">Billing</span>
-                </button>
-                )}
-
-                {canAccess('/quotations') && (
-                <button
-                  onClick={() => handleNavigation('/quotations')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <span className="text-sm">Quotations</span>
-                </button>
-                )}
-
-                {canAccess('/add-expense') && (
-                <button
-                  onClick={() => handleNavigation('/add-expense')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
-                  <span className="text-sm">Add Expense</span>
-                </button>
-                )}
-
-                {canAccess('/customers') && (
-                <button
-                  onClick={() => handleNavigation('/customers')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                  </svg>
-                  <span className="text-sm">Customers</span>
-                </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Recharge Operations */}
-          {!isEmployee && rechargeEnabled && (
-            <div>
-              <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Recharge</h3>
-              <div className="space-y-1">
-                <button
-                  onClick={() => handleNavigation('/recharge-accounts')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  <span className="text-sm">Recharge Accounts</span>
-                </button>
-
-                <button
-                  onClick={() => handleNavigation('/bulk-recharge')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  <span className="text-sm">Bulk Recharge</span>
-                </button>
-
-                {canAccess('/recharge-report') && (
-                <button
-                  onClick={() => handleNavigation('/recharge-report')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  <span className="text-sm">Recharge Report</span>
-                </button>
-                )}
-
-                {canAccess('/provider-management') && (
-                  <button
-                    onClick={() => handleNavigation('/provider-management')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                    </svg>
-                    <span className="text-sm">Providers</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Inventory & Stock */}
-          <div>
-            <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Inventory</h3>
-            <div className="space-y-1">
-              {!isEmployee && (
-                <>
-                  <button
-                    onClick={() => handleNavigation('/products')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                    </svg>
-                    <span className="text-sm">Products</span>
-                  </button>
-
-                  
-                  <button
-                    onClick={() => handleNavigation('/tamper-labels')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2zM9 16h6m-6-4h6m-6-4h6" />
-                    </svg>
-                    <span className="text-sm">Tamper Box Labels</span>
-                  </button>
-
-
-                  {canAccess('/master') && (
-                  <button
-                    onClick={() => handleNavigation('/master')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                    <span className="text-sm">Master Settings</span>
-                  </button>
-                  )}
-
-                  {canAccess('/purchases') && (
-                  <button
-                    onClick={() => handleNavigation('/purchases')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                    <span className="text-sm">Purchases</span>
-                  </button>
-                  )}
-
-                  {canAccess('/add-purchase') && (
-                  <button
-                    onClick={() => handleNavigation('/add-purchase')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9" />
-                    </svg>
-                    <span className="text-sm">Add Purchase</span>
-                  </button>
-                  )}
-
-                  {canAccess('/add-purchase-imei') && (
-                  <button
-                    onClick={() => handleNavigation('/add-purchase-imei')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                    </svg>
-                    <span className="text-sm">Add Purchase (IMEI)</span>
-                  </button>
-                  )}
-                </>
-              )}
-
+        {/* Minimal Search */}
+        <div className="px-3 pt-2.5 pb-1 flex-shrink-0">
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search..."
+              className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 focus:bg-white text-slate-800 placeholder-slate-400 rounded-md border border-slate-100 focus:border-slate-300 focus:outline-none transition-colors"
+            />
+            {searchQuery && (
               <button
-                onClick={() => handleNavigation('/stock-requirement')}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
-                <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                </svg>
-                <span className="text-sm">Stock Requirement</span>
+                <X className="w-3 h-3" />
               </button>
-
-              {canAccess('/service-management') && (
-              <button
-                onClick={() => handleNavigation('/service-management')}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-              >
-                <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <span className="text-sm">Service Management</span>
-              </button>
-              )}
-
-              {canAccess('/service-management/create') && (
-              <button
-                onClick={() => handleNavigation('/service-management/create')}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-              >
-                <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                <span className="text-sm">New Service Job</span>
-              </button>
-              )}
-
-              {!isEmployee && (
-                <>
-                  {canAccess('/suppliers') && (
-                  <button
-                    onClick={() => handleNavigation('/suppliers')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                    <span className="text-sm">Suppliers</span>
-                  </button>
-                  )}
-                  {canAccess('/stock-value') && (
-                    <button
-                      onClick={() => handleNavigation('/stock-value')}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                    >
-                      <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span className="text-sm">Stock Value</span>
-                    </button>
-                  )}
-
-                  {canAccess('/defect-management') && (
-                    <button
-                      onClick={() => handleNavigation('/defect-management')}
-                      className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                    >
-                      <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span className="text-sm">Defect & Damage</span>
-                    </button>
-                  )}
-                </>
-              )}
-
-            </div>
+            )}
           </div>
+        </div>
 
-          {/* Finance & Reports (Unified Sales Report & Settlement) */}
-          {!isEmployee && (canAccess('/overall-sales') || canAccess('/settlement')) && (
-          <div>
-            <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Turnover & Reports</h3>
-            <div className="space-y-1">
-              {(canAccess('/overall-sales') || canAccess('/settlement')) && (
+        {/* Clean Navigation Body */}
+        <nav className="flex-1 overflow-y-auto px-2 py-1 space-y-3 [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-slate-200">
+          {filteredSections.length === 0 ? (
+            <div className="py-10 text-center px-4 text-slate-400">
+              <p className="text-xs">No matching items</p>
               <button
-                onClick={() => handleNavigation('/overall-sales')}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
+                onClick={() => setSearchQuery('')}
+                className="mt-2 text-xs text-blue-600 hover:underline cursor-pointer"
               >
-                <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span className="text-sm">Sales Report & Settlement</span>
+                Clear
               </button>
-              )}
             </div>
-          </div>
-          )}
-
-          {/* Administration */}
-
-          {!isEmployee && (canAccess('/employee-management') || canAccess('/users') || canAccess('/add-employee')) && (
-            <div>
-              <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Administration</h3>
-              <div className="space-y-1">
-
-                {canAccess('/employee-management') && (
-                <button
-                  onClick={() => handleNavigation('/employee-management')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                  </svg>
-                  <span className="text-sm">Employees</span>
-                </button>
-                )}
-
-                {canAccess('/add-employee') && (
-                  <button
-                    onClick={() => handleNavigation('/add-employee')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                  >
-                    <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-                    </svg>
-                    <span className="text-sm">Add User</span>
-                  </button>
-                )}
+          ) : (
+            filteredSections.map((section) => (
+              <div key={section.title}>
+                <p className="px-2.5 pt-2 pb-1 text-[10px] font-medium text-slate-400 uppercase tracking-wider">
+                  {section.title}
+                </p>
+                <div className="space-y-0.5">
+                  {section.items.map((item) => {
+                    const active = isActiveRoute(item.path);
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.path}
+                        onClick={() => handleNavigation(item.path)}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs transition-colors cursor-pointer text-left ${
+                          active
+                            ? 'bg-blue-50 text-blue-600 font-medium'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                        }`}
+                      >
+                        <Icon className={`w-4 h-4 flex-shrink-0 ${active ? 'text-blue-600' : 'text-slate-400'}`} />
+                        <span className="truncate">{item.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          )}
-
-
-          {/* Settings */}
-          {!isEmployee && canAccess('/settings') && (
-            <div>
-              <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">System</h3>
-              <div className="space-y-1">
-                <button
-                  onClick={() => handleNavigation('/settings')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  <span className="text-sm">Settings</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-
-          {/* Employee Specific */}
-          {isEmployee && (
-            <div>
-              <h3 className="px-4 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">My Workspace</h3>
-              <div className="space-y-1">
-                <button
-                  onClick={() => handleNavigation('/employee-dashboard')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                  <span className="text-sm">My Attendance</span>
-                </button>
-
-                <button
-                  onClick={() => handleNavigation('/employee-profile')}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 font-medium transition-all duration-200 rounded-xl group"
-                >
-                  <svg className="w-5 h-5 transition-transform duration-200 group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  <span className="text-sm">My Profile</span>
-                </button>
-              </div>
-            </div>
+            ))
           )}
         </nav>
-      </div>
+
+        {/* Simple Footer */}
+        <div className="border-t border-slate-100 px-3.5 py-2.5 flex items-center justify-between gap-2 flex-shrink-0">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-slate-800 truncate">
+              {currentUser?.displayName || 'User'}
+            </p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wide truncate">
+              {currentUser?.role}
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="p-1.5 text-slate-400 hover:text-red-500 rounded-md transition-colors cursor-pointer flex-shrink-0"
+            title="Sign out"
+            aria-label="Logout"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+      </aside>
 
       {showNavigation && isEmployee && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-50">
