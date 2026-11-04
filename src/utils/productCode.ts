@@ -43,7 +43,33 @@ export const generateProductCode = async (
 ): Promise<string> => {
   try {
     const storeId = productsCollectionRef.parent?.id || null;
-    const cachedProducts = await syncStoreProducts(storeId);
+    const productsMap = new Map<string, any>();
+
+    // 1. Scan root / HQ products catalog to maintain global sequence
+    try {
+      const rootProds = await syncStoreProducts(null);
+      rootProds.forEach((p) => {
+        const key = p.productCode || p.id;
+        if (key) productsMap.set(key, p);
+      });
+    } catch {
+      // non-blocking
+    }
+
+    // 2. Also scan target store catalog if store-scoped
+    if (storeId && storeId !== 'hub_warehouse') {
+      try {
+        const storeProds = await syncStoreProducts(storeId);
+        storeProds.forEach((p) => {
+          const key = p.productCode || p.id;
+          if (key) productsMap.set(key, p);
+        });
+      } catch {
+        // non-blocking
+      }
+    }
+
+    const cachedProducts = Array.from(productsMap.values());
     let highestCodeNumber = 0;
 
     if (isIMEI) {

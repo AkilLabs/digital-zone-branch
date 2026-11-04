@@ -16,6 +16,7 @@ import { useStore } from '../context/StoreContext';
 import { useToast } from '../context/ToastContext';
 import Navbar from '../components/Navbar';
 import { upsertLocalProducts } from '../utils/productSyncCache';
+import { generateProductCode } from '../utils/productCode';
 import type { StockTransfer, StockTransferItem } from '../types';
 import {
   PackageCheck,
@@ -98,6 +99,7 @@ const StockReceived: React.FC = () => {
    * Check & receive a single product from an HQ dispatch.
    * If stock was not yet added to the branch (status !== 'completed'),
    * it adds the product quantity to stores/{branchId}/products and increments totalStockUnits.
+   * Strictly prevents duplicate product documents by matching by code and name.
    */
   const handleReceiveSingleItem = async (transfer: StockTransfer, itemIndex: number) => {
     if (!currentStore?.id || !currentUser) return;
@@ -117,21 +119,60 @@ const StockReceived: React.FC = () => {
 
       if (!stockAlreadyCreditedByHq) {
         const destProductsRef = collection(db, 'stores', currentStore.id, 'products');
-        const destQuery = query(destProductsRef, where('productCode', '==', targetItem.productCode));
-        const destSnap = await getDocs(destQuery);
+        const cleanCode = (targetItem.productCode || '').trim();
+        const cleanName = (targetItem.productName || '').trim();
 
-        if (!destSnap.empty) {
-          const existingDoc = destSnap.docs[0];
-          const existingData = existingDoc.data();
-          const newQty = (Number(existingData.quantity) || 0) + Number(targetItem.quantity);
-          batch.update(existingDoc.ref, {
+        let matchedDocSnap: any = null;
+        let duplicateDocsToDelete: any[] = [];
+
+        // 1. Search by clean productCode first
+        if (cleanCode) {
+          const destQuery = query(destProductsRef, where('productCode', '==', cleanCode));
+          const destSnap = await getDocs(destQuery);
+          if (!destSnap.empty) {
+            matchedDocSnap = destSnap.docs[0];
+            if (destSnap.docs.length > 1) {
+              duplicateDocsToDelete = destSnap.docs.slice(1);
+            }
+          }
+        }
+
+        // 2. If not found by code, match by exact product name in destination store
+        if (!matchedDocSnap && cleanName) {
+          const nameQuery = query(destProductsRef, where('name', '==', cleanName));
+          const nameSnap = await getDocs(nameQuery);
+          if (!nameSnap.empty) {
+            matchedDocSnap = nameSnap.docs[0];
+            if (nameSnap.docs.length > 1) {
+              duplicateDocsToDelete = nameSnap.docs.slice(1);
+            }
+          }
+        }
+
+        if (matchedDocSnap) {
+          const existingData = matchedDocSnap.data();
+          let baseQty = Number(existingData.quantity) || 0;
+
+          // Consolidate quantities from duplicate docs if any existed prior
+          for (const dupDoc of duplicateDocsToDelete) {
+            baseQty += Number(dupDoc.data().quantity) || 0;
+            batch.delete(dupDoc.ref);
+          }
+
+          const newQty = baseQty + Number(targetItem.quantity);
+          const finalCode = cleanCode || existingData.productCode || '';
+
+          batch.update(matchedDocSnap.ref, {
             quantity: newQty,
             isAvailable: newQty > 0,
+            productCode: finalCode,
             updatedAt: now,
           });
+
           updatedLocalProduct = {
-            id: existingDoc.id,
+            id: matchedDocSnap.id,
             ...existingData,
+            productCode: finalCode,
             quantity: newQty,
             isAvailable: newQty > 0,
             updatedAt: new Date(),
@@ -146,11 +187,16 @@ const StockReceived: React.FC = () => {
             }
           }
 
+          const resolvedCode =
+            cleanCode ||
+            sourceData.productCode ||
+            (await generateProductCode(destProductsRef, false));
+
           const newProdRef = doc(destProductsRef);
           const newProdPayload = {
             ...sourceData,
             name: targetItem.productName || sourceData.name || '',
-            productCode: targetItem.productCode || sourceData.productCode || '',
+            productCode: resolvedCode,
             brand: targetItem.brand || sourceData.brand || '',
             category: targetItem.category || sourceData.category || '',
             cost: targetItem.cost ?? sourceData.cost ?? 0,
@@ -244,17 +290,179 @@ const StockReceived: React.FC = () => {
   };
 
   /**
-   * Receive all remaining unreceived products in a dispatch.
+   * Receive all remaining unreceived products in a single atomic batch,
+   * completely preventing duplicate product creations or race conditions.
    */
   const handleReceiveAllRemaining = async (transfer: StockTransfer) => {
-    const pendingIndices = transfer.items
-      .map((it, idx) => (!it.received ? idx : -1))
-      .filter((idx) => idx !== -1);
+    if (!currentStore?.id || !currentUser) return;
+    const pendingItems = transfer.items
+      .map((it, idx) => ({ ...it, originalIndex: idx }))
+      .filter((it) => !it.received);
 
-    for (const idx of pendingIndices) {
-      // Re-find latest transfer state
-      const currentTransfer = transfers.find((t) => t.id === transfer.id) || transfer;
-      await handleReceiveSingleItem(currentTransfer, idx);
+    if (pendingItems.length === 0) return;
+
+    try {
+      setProcessingKey(`${transfer.id}-all`);
+      const batch = writeBatch(db);
+      const now = Timestamp.now();
+      const destProductsRef = collection(db, 'stores', currentStore.id, 'products');
+      const upsertedLocalProducts: any[] = [];
+      let totalUnitsAdded = 0;
+
+      // Group unreceived items by productCode (or name) to eliminate duplicate writes
+      const grouped = new Map<string, { item: StockTransferItem; totalQty: number }>();
+      for (const p of pendingItems) {
+        const key = (p.productCode || p.productName || '').trim();
+        const cur = grouped.get(key);
+        if (cur) {
+          cur.totalQty += Number(p.quantity) || 0;
+        } else {
+          grouped.set(key, { item: p, totalQty: Number(p.quantity) || 0 });
+        }
+      }
+
+      const stockAlreadyCreditedByHq = transfer.status === 'completed' && !transfer.transferType;
+
+      if (!stockAlreadyCreditedByHq) {
+        for (const { item, totalQty } of grouped.values()) {
+          totalUnitsAdded += totalQty;
+          const cleanCode = (item.productCode || '').trim();
+          const cleanName = (item.productName || '').trim();
+
+          let matchedDocSnap: any = null;
+          let dupDocs: any[] = [];
+
+          if (cleanCode) {
+            const snap = await getDocs(query(destProductsRef, where('productCode', '==', cleanCode)));
+            if (!snap.empty) {
+              matchedDocSnap = snap.docs[0];
+              if (snap.docs.length > 1) dupDocs = snap.docs.slice(1);
+            }
+          }
+
+          if (!matchedDocSnap && cleanName) {
+            const snap = await getDocs(query(destProductsRef, where('name', '==', cleanName)));
+            if (!snap.empty) {
+              matchedDocSnap = snap.docs[0];
+              if (snap.docs.length > 1) dupDocs = snap.docs.slice(1);
+            }
+          }
+
+          if (matchedDocSnap) {
+            const exData = matchedDocSnap.data();
+            let base = Number(exData.quantity) || 0;
+            for (const d of dupDocs) {
+              base += Number(d.data().quantity) || 0;
+              batch.delete(d.ref);
+            }
+            const nextQty = base + totalQty;
+            const finalCode = cleanCode || exData.productCode || '';
+            batch.update(matchedDocSnap.ref, {
+              quantity: nextQty,
+              isAvailable: nextQty > 0,
+              productCode: finalCode,
+              updatedAt: now,
+            });
+            upsertedLocalProducts.push({
+              id: matchedDocSnap.id,
+              ...exData,
+              productCode: finalCode,
+              quantity: nextQty,
+              isAvailable: nextQty > 0,
+              updatedAt: new Date(),
+            });
+          } else {
+            let srcData: Record<string, any> = {};
+            if (item.productId) {
+              const srcSnap = await getDoc(doc(db, 'products', item.productId));
+              if (srcSnap.exists()) srcData = srcSnap.data();
+            }
+
+            const finalCode =
+              cleanCode ||
+              srcData.productCode ||
+              (await generateProductCode(destProductsRef, false));
+
+            const newDocRef = doc(destProductsRef);
+            const payload = {
+              ...srcData,
+              name: item.productName || srcData.name || '',
+              productCode: finalCode,
+              brand: item.brand || srcData.brand || '',
+              category: item.category || srcData.category || '',
+              cost: item.cost ?? srcData.cost ?? 0,
+              mrp: item.mrp ?? srcData.mrp ?? 0,
+              mop: srcData.mop ?? item.mrp ?? 0,
+              quantity: totalQty,
+              isAvailable: totalQty > 0,
+              storeId: currentStore.id,
+              hubId: currentStore.hubId || currentHub?.id || '',
+              createdAt: now,
+              updatedAt: now,
+              createdBy: currentUser.uid,
+              createdByName: currentUser.displayName || currentUser.email || 'Branch Receiver',
+            };
+            batch.set(newDocRef, payload);
+            upsertedLocalProducts.push({
+              id: newDocRef.id,
+              ...payload,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            });
+          }
+        }
+
+        batch.update(doc(db, 'stores', currentStore.id), {
+          totalStockUnits: increment(totalUnitsAdded),
+          updatedAt: now,
+        });
+      }
+
+      const updatedItems = transfer.items.map((it) => ({
+        ...it,
+        received: true,
+        receivedAt: now.toDate(),
+        receivedBy: currentUser.uid,
+        receivedByName: currentUser.displayName || currentUser.email || 'Staff',
+      }));
+
+      batch.update(doc(db, 'stockTransfers', transfer.id!), {
+        items: updatedItems.map((it) => ({
+          ...it,
+          receivedAt: it.receivedAt ? Timestamp.fromDate(new Date(it.receivedAt)) : null,
+        })),
+        status: 'received',
+        receivedAt: now,
+        receivedBy: currentUser.uid,
+        receivedByName: currentUser.displayName || currentUser.email || 'Staff',
+        completedAt: now,
+      });
+
+      await batch.commit();
+
+      if (upsertedLocalProducts.length > 0) {
+        await upsertLocalProducts(currentStore.id, upsertedLocalProducts);
+      }
+
+      setTransfers((prev) =>
+        prev.map((t) =>
+          t.id === transfer.id
+            ? {
+                ...t,
+                items: updatedItems,
+                status: 'received',
+                receivedAt: new Date(),
+              }
+            : t
+        )
+      );
+
+      showToast(`All ${pendingItems.length} products received and stock updated!`, 'success');
+    } catch (error) {
+      console.error('Error receiving all items:', error);
+      showToast('Failed to receive products. Please try again.', 'error');
+    } finally {
+      setProcessingKey(null);
     }
   };
 

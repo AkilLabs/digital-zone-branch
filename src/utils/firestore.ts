@@ -27,11 +27,14 @@ export const SHARED_ROOT_COLLECTIONS = [
   'categories',
   'financeProviders',
   'suppliers',
+  'supplierPayments',
   'rechargeProviders',
   'stores',
   'hubs',
   'overallSales',
   'stockTransfers',
+  'purchases',
+  'imeiPurchases',
 ] as const;
 
 const SHARED_ROOT_SET = new Set<string>(SHARED_ROOT_COLLECTIONS);

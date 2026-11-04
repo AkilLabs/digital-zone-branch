@@ -16,6 +16,7 @@ import { useStore } from '../context/StoreContext';
 import { useToast } from '../context/ToastContext';
 import Navbar from '../components/Navbar';
 import { updateLocalProductQuantities, upsertLocalProducts } from '../utils/productSyncCache';
+import { generateProductCode } from '../utils/productCode';
 import type { StockTransfer } from '../types';
 import {
   ArrowLeftRight,
@@ -225,25 +226,74 @@ const BranchStockTransfer: React.FC = () => {
       const upsertedProducts: any[] = [];
       let totalUnitsReceived = 0;
 
+      // Group transfer items by productCode (or productName) to prevent duplicate document writes
+      const groupedItems = new Map<string, { item: any; totalQty: number }>();
       for (const item of transfer.items) {
-        const qty = Number(item.quantity) || 0;
-        totalUnitsReceived += qty;
+        const key = (item.productCode || item.productName || '').trim();
+        const cur = groupedItems.get(key);
+        if (cur) {
+          cur.totalQty += Number(item.quantity) || 0;
+        } else {
+          groupedItems.set(key, { item, totalQty: Number(item.quantity) || 0 });
+        }
+      }
 
-        const destQuery = query(destProductsRef, where('productCode', '==', item.productCode));
-        const destSnap = await getDocs(destQuery);
+      for (const { item, totalQty } of groupedItems.values()) {
+        totalUnitsReceived += totalQty;
+        const cleanCode = (item.productCode || '').trim();
+        const cleanName = (item.productName || '').trim();
 
-        if (!destSnap.empty) {
-          const existingDoc = destSnap.docs[0];
-          const existingData = existingDoc.data();
-          const nextQty = (Number(existingData.quantity) || 0) + qty;
-          batch.update(existingDoc.ref, {
+        let matchedDocSnap: any = null;
+        let duplicateDocsToDelete: any[] = [];
+
+        // 1. Search by clean productCode first
+        if (cleanCode) {
+          const destQuery = query(destProductsRef, where('productCode', '==', cleanCode));
+          const destSnap = await getDocs(destQuery);
+          if (!destSnap.empty) {
+            matchedDocSnap = destSnap.docs[0];
+            if (destSnap.docs.length > 1) {
+              duplicateDocsToDelete = destSnap.docs.slice(1);
+            }
+          }
+        }
+
+        // 2. If not found by code, match by exact name in destination store
+        if (!matchedDocSnap && cleanName) {
+          const nameQuery = query(destProductsRef, where('name', '==', cleanName));
+          const nameSnap = await getDocs(nameQuery);
+          if (!nameSnap.empty) {
+            matchedDocSnap = nameSnap.docs[0];
+            if (nameSnap.docs.length > 1) {
+              duplicateDocsToDelete = nameSnap.docs.slice(1);
+            }
+          }
+        }
+
+        if (matchedDocSnap) {
+          const existingData = matchedDocSnap.data();
+          let baseQty = Number(existingData.quantity) || 0;
+
+          // Consolidate duplicate docs if any existed
+          for (const dupDoc of duplicateDocsToDelete) {
+            baseQty += Number(dupDoc.data().quantity) || 0;
+            batch.delete(dupDoc.ref);
+          }
+
+          const nextQty = baseQty + totalQty;
+          const finalCode = cleanCode || existingData.productCode || '';
+
+          batch.update(matchedDocSnap.ref, {
             quantity: nextQty,
             isAvailable: nextQty > 0,
+            productCode: finalCode,
             updatedAt: now,
           });
+
           upsertedProducts.push({
-            id: existingDoc.id,
+            id: matchedDocSnap.id,
             ...existingData,
+            productCode: finalCode,
             quantity: nextQty,
             isAvailable: nextQty > 0,
             updatedAt: new Date(),
@@ -260,18 +310,23 @@ const BranchStockTransfer: React.FC = () => {
             }
           }
 
+          const resolvedCode =
+            cleanCode ||
+            sourceMeta.productCode ||
+            (await generateProductCode(destProductsRef, false));
+
           const newDocRef = doc(destProductsRef);
           const payload = {
             ...sourceMeta,
             name: item.productName || sourceMeta.name || '',
-            productCode: item.productCode || sourceMeta.productCode || '',
+            productCode: resolvedCode,
             brand: item.brand || sourceMeta.brand || '',
             category: item.category || sourceMeta.category || '',
             cost: item.cost ?? sourceMeta.cost ?? 0,
             mrp: item.mrp ?? sourceMeta.mrp ?? 0,
             mop: sourceMeta.mop ?? item.mrp ?? 0,
-            quantity: qty,
-            isAvailable: qty > 0,
+            quantity: totalQty,
+            isAvailable: totalQty > 0,
             storeId: currentStore.id,
             hubId: currentStore.hubId || currentHub?.id || '',
             createdAt: now,
