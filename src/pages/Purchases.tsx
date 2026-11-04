@@ -610,10 +610,17 @@ const Purchases: React.FC = () => {
                     <div className="flex-1">
                       <div className="flex items-start justify-between mb-3">
                         <div>
-                          <div className="flex items-center gap-3 mb-2">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
                             <h3 className="text-lg font-semibold text-gray-900">{purchase.purchaseNumber}</h3>
                             <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${getStatusBadge(purchase.paymentStatus)}`}>
                               {purchase.paymentStatus.toUpperCase()}
+                            </span>
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${
+                              (purchase as any).destinationBranchName && !(purchase as any).destinationBranchName.includes('Central')
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}>
+                              {(purchase as any).destinationBranchName || 'HQ Central'}
                             </span>
                           </div>
                           <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -701,6 +708,7 @@ const Purchases: React.FC = () => {
                   <tr>
                     <th className="text-left px-4 py-3">Purchase #</th>
                     <th className="text-left px-4 py-3">Supplier</th>
+                    <th className="text-left px-4 py-3">Destination</th>
                     <th className="text-right px-4 py-3">Amount</th>
                     <th className="text-right px-4 py-3">Paid</th>
                     <th className="text-right px-4 py-3">Pending</th>
@@ -714,6 +722,15 @@ const Purchases: React.FC = () => {
                     <tr key={p.id} className="border-t border-gray-100 hover:bg-gray-50">
                       <td className="px-4 py-3 font-medium text-gray-900">{p.purchaseNumber}</td>
                       <td className="px-4 py-3">{p.supplierName || 'Unknown'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${
+                          (p as any).destinationBranchName && !(p as any).destinationBranchName.includes('Central')
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
+                        }`}>
+                          {(p as any).destinationBranchName || 'HQ Central'}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-right">₹{p.totalAmount.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right text-green-600">₹{p.paidAmount.toFixed(2)}</td>
                       <td className="px-4 py-3 text-right text-red-600">₹{p.pendingAmount.toFixed(2)}</td>

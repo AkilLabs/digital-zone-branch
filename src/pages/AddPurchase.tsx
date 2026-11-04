@@ -18,7 +18,7 @@ import * as XLSX from 'xlsx';
 
 const AddPurchase: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, getDocRef, currentStore, currentHub } = useStore();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = !!id;
@@ -1228,13 +1228,13 @@ const AddPurchase: React.FC = () => {
         }
       }
 
-      // Check if products already exist and get their codes
+      // Check if products already exist in HQ Hub master catalog and get their codes
       const finalProductCodes: string[] = [];
+      const rootProductsRef = collection(db, 'products');
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
         const productName = `${item.brand} ${item.model} ${item.category}`.trim();
-        const productsRef = getCollectionRef('products');
-        const q = query(productsRef, where('name', '==', productName));
+        const q = query(rootProductsRef, where('name', '==', productName));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
@@ -1246,11 +1246,16 @@ const AddPurchase: React.FC = () => {
       }
 
       const purchaseNumber = await generatePurchaseNumber();
+      const targetStoreName = currentStore?.name || 'Branch';
 
       const purchaseData: any = {
         purchaseNumber,
         supplierId: selectedSupplierId,
         supplierName: selectedSupplierName,
+        hubId: currentHub?.id || 'digital_zone_hq',
+        destinationBranchId: currentStore?.id || null,
+        destinationBranchName: targetStoreName,
+        isBranchTransferInitiated: !!currentStore?.id,
         items: items.map((item, index) => {
           const cost = Number(item.costPerUnit) || 0;
           const tax = isGstPurchase ? (Number(item.taxPercent) || 0) : 0;
@@ -1294,26 +1299,23 @@ const AddPurchase: React.FC = () => {
 
       let purchaseRefId = '';
       if (isEditMode && id) {
-        // Update purchase in Firestore
+        // Update purchase in Firestore (Always stored in HQ Hub)
         const purchaseRef = doc(db, 'purchases', id);
         purchaseData.updatedAt = new Date();
-        // keep original createdAt and createdBy
         purchaseData.createdAt = originalPurchase.createdAt;
         purchaseData.createdBy = originalPurchase.createdBy;
         purchaseData.createdByName = originalPurchase.createdByName;
-        
-        // ensure purchaseNumber stays the same
         purchaseData.purchaseNumber = originalPurchase.purchaseNumber;
         
         await updateDoc(purchaseRef, purchaseData);
         purchaseRefId = id;
       } else {
-        // Add purchase to Firestore
-        const purchaseRef = await addDoc(getCollectionRef('purchases'), purchaseData);
+        // Add purchase to Firestore (Always HQ Hub Root)
+        const purchaseRef = await addDoc(collection(db, 'purchases'), purchaseData);
         purchaseRefId = purchaseRef.id;
       }
 
-      // Record purchase transaction in supplier history
+      // Record purchase transaction in supplier history (Root)
       await addDoc(collection(db, 'supplierPayments'), {
         supplierId: selectedSupplierId,
         supplierName: selectedSupplierName,
@@ -1346,7 +1348,7 @@ const AddPurchase: React.FC = () => {
         await addDoc(collection(db, 'supplierPayments'), paymentRecord);
       }
 
-      // Update supplier totals
+      // Update supplier totals (Root)
       const supplierRef = doc(db, 'suppliers', selectedSupplierId);
       const updateData: any = {
         totalPurchaseAmount: increment(totalAmount),
@@ -1357,7 +1359,8 @@ const AddPurchase: React.FC = () => {
 
       await updateDoc(supplierRef, updateData);
 
-      // Add products to inventory
+      // Add products to HQ Hub inventory (Root master catalog) - Never directly write to branch inventory
+      const savedProductDocIds: string[] = [];
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
         const productName = `${item.brand} ${item.model} ${item.category}`.trim();
@@ -1366,14 +1369,14 @@ const AddPurchase: React.FC = () => {
         const costWithGst = baseCost + (baseCost * tax / 100);
         const effectiveCost = isGstPurchase && tax > 0 ? costWithGst : baseCost;
 
-        // Check if product already exists by name
-        const productsRef = getCollectionRef('products');
-        const q = query(productsRef, where('name', '==', productName));
+        // Check if product already exists in root catalog
+        const q = query(rootProductsRef, where('name', '==', productName));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
           // Update existing product: increment quantity and update price fields
           const productDoc = snapshot.docs[0];
+          savedProductDocIds.push(productDoc.id);
           const existingData: any = productDoc.data();
 
           const updateData: any = {
@@ -1389,23 +1392,20 @@ const AddPurchase: React.FC = () => {
           };
 
           if (item.hcsCode) updateData.hcsCode = item.hcsCode;
-          // If existing product lacks brand/model/category, fill from the item
           if (!existingData.brand && item.brand) updateData.brand = item.brand;
           if (!existingData.model && item.model) updateData.model = item.model;
           if (!existingData.category && item.category) updateData.category = item.category;
-
-          // If productCode is missing in existing doc but we generated one, set it
           if (!existingData.productCode && finalProductCodes[index]) updateData.productCode = finalProductCodes[index];
 
-          await updateDoc(getDocRef('products', productDoc.id), updateData);
+          await updateDoc(doc(db, 'products', productDoc.id), updateData);
         } else {
-          // Create new product with sensible defaults for missing fields
+          // Create new product in HQ master catalog
           const brand = item.brand && item.brand.trim() ? item.brand : 'Unknown Brand';
           const model = item.model && item.model.trim() ? item.model : 'N/A';
           const category = item.category && item.category.trim() ? item.category : 'General';
           const code = finalProductCodes[index] || getNextProductCodeForItem(index);
 
-          await addDoc(getCollectionRef('products'), {
+          const newDocRef = await addDoc(rootProductsRef, {
             productCode: code,
             name: productName || `${brand} ${model} ${category}`.trim(),
             model,
@@ -1429,10 +1429,62 @@ const AddPurchase: React.FC = () => {
             createdBy: currentUser?.uid || '',
             createdByName: currentUser?.displayName || ''
           });
+          savedProductDocIds.push(newDocRef.id);
         }
       }
 
-      showToast(`Purchase ${purchaseNumber} ${isEditMode ? 'updated' : 'added'} successfully!`, 'success');
+      // Automatically create a Stock Transfer dispatch to this branch so staff can verify and receive it in Stock Received!
+      if (currentStore?.id) {
+        await addDoc(collection(db, 'stockTransfers'), {
+          hubId: currentHub?.id || 'digital_zone_hq',
+          transferType: 'hq_to_branch',
+          fromStoreId: 'hub_warehouse',
+          fromStoreName: 'HQ Central Warehouse',
+          toStoreId: currentStore.id,
+          toStoreName: targetStoreName,
+          status: 'dispatched',
+          flowStep: 'triggered',
+          relatedPurchaseId: purchaseRefId,
+          purchaseNumber: purchaseNumber,
+          invoiceNumber: invoiceNumber.trim() || undefined,
+          items: items.map((item, index) => {
+            const baseCost = Number(item.costPerUnit) || 0;
+            const tax = isGstPurchase ? (Number(item.taxPercent) || 0) : 0;
+            const costWithGst = baseCost + (baseCost * tax / 100);
+            const effectiveCost = isGstPurchase && tax > 0 ? costWithGst : baseCost;
+            return {
+              productId: savedProductDocIds[index] || '',
+              productCode: finalProductCodes[index] || '',
+              productName: `${item.brand} ${item.model} ${item.category}`.trim() || item.productName,
+              brand: item.brand,
+              model: item.model,
+              category: item.category,
+              quantity: Number(item.quantity) || 1,
+              cost: effectiveCost,
+              baseCost: baseCost,
+              mrp: Number(item.mrp) || effectiveCost,
+              mop: Number(item.mop) || 0,
+              taxPercent: tax,
+              hcsCode: item.hcsCode || '',
+              received: false,
+            };
+          }),
+          totalItems: items.length,
+          totalQuantity: totalQuantity,
+          totalValue: totalAmount,
+          notes: notes.trim()
+            ? `Purchase #${purchaseNumber}: ${notes.trim()}`
+            : `Branch purchase #${purchaseNumber} recorded in HQ Hub and dispatched to ${targetStoreName}`,
+          createdAt: Timestamp.now(),
+          createdBy: currentUser?.uid || '',
+          createdByName: currentUser?.displayName || currentUser?.email || 'Branch Staff',
+          dispatchedAt: Timestamp.now(),
+          dispatchedBy: currentUser?.uid || '',
+          dispatchedByName: currentUser?.displayName || currentUser?.email || 'Branch Staff',
+        });
+      }
+
+      showToast(`Purchase ${purchaseNumber} saved to HQ Hub! Auto-transfer dispatched to ${targetStoreName}. Please verify in Stock Received.`, 'success');
 
       // Keep loader visible for a moment to show final success message
       setTimeout(async () => {

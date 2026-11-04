@@ -136,6 +136,8 @@ export interface Store {
   hubId: string;
   shopName?: string;
   name: string;
+  code?: string;
+  branchId?: string;
   ownerName?: string;
   managerName?: string;
   managerId?: string;

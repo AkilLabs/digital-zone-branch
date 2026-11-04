@@ -43,7 +43,7 @@ const getInitialSupplierForm = () => ({
 
 const AddPurchaseIMEI: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, getDocRef, currentStore, currentHub } = useStore();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = !!id;
@@ -348,7 +348,7 @@ const AddPurchaseIMEI: React.FC = () => {
 
     setSearching(true);
     try {
-      const products = await syncStoreProducts(currentStore?.id);
+      const products = await syncStoreProducts(null);
       const qLower = queryText.toLowerCase();
 
       const filtered = products.filter(product => {
@@ -970,7 +970,7 @@ const AddPurchaseIMEI: React.FC = () => {
            generatedProductCodes.push(origItem.productCode);
         } else {
            if (nextProductCodeNumber === null) {
-             const nextCode = await generateIMEIProductCode(getCollectionRef('products'));
+             const nextCode = await generateIMEIProductCode(collection(db, 'products'));
              nextProductCodeNumber = parseInt(nextCode, 10);
            }
            generatedProductCodes.push(String(nextProductCodeNumber).padStart(8, '0'));
@@ -1056,8 +1056,14 @@ const AddPurchaseIMEI: React.FC = () => {
         createdAt: new Date(),
         createdBy: currentUser?.uid || '',
         createdByName: currentUser?.displayName || '',
-        isIMEIPurchase: true
+        isIMEIPurchase: true,
+        hubId: currentHub?.id || 'digital_zone_hq',
+        destinationBranchId: currentStore?.id || null,
+        destinationBranchName: currentStore?.name || 'Branch',
+        isBranchTransferInitiated: !!currentStore?.id
       };
+
+      const targetStoreName = currentStore?.name || 'Branch';
 
       if (paymentSplit) purchaseData.paymentSplit = paymentSplit;
       if (invoiceNumber.trim()) purchaseData.invoiceNumber = invoiceNumber.trim();
@@ -1065,19 +1071,12 @@ const AddPurchaseIMEI: React.FC = () => {
 
       let purchaseRefId = '';
       if (isEditMode && id) {
-        let purchaseRef = getDocRef('imeiPurchases', id);
+        let purchaseRef = doc(db, 'imeiPurchases', id);
         const checkSnap = await getDoc(purchaseRef);
         if (!checkSnap.exists()) {
-          const rootCheck = doc(db, 'imeiPurchases', id);
+          const rootCheck = doc(db, 'purchases', id);
           if ((await getDoc(rootCheck)).exists()) {
             purchaseRef = rootCheck;
-          } else {
-            const legacyStore = getDocRef('purchases', id);
-            if ((await getDoc(legacyStore)).exists()) {
-              purchaseRef = legacyStore;
-            } else {
-              purchaseRef = doc(db, 'purchases', id);
-            }
           }
         }
         purchaseData.updatedAt = new Date();
@@ -1088,7 +1087,8 @@ const AddPurchaseIMEI: React.FC = () => {
         await updateDoc(purchaseRef, purchaseData);
         purchaseRefId = id;
       } else {
-        const purchaseRef = await addDoc(getCollectionRef('imeiPurchases'), purchaseData);
+        // Save IMEI purchase directly into shared root HQ collection
+        const purchaseRef = await addDoc(collection(db, 'imeiPurchases'), purchaseData);
         purchaseRefId = purchaseRef.id;
       }
 
@@ -1132,6 +1132,10 @@ const AddPurchaseIMEI: React.FC = () => {
         updatedAt: Timestamp.now()
       });
 
+      // Save products to HQ Hub inventory (Root master catalog) - Never directly write to branch inventory
+      const savedProductDocIds: string[] = [];
+      const rootProductsRef = collection(db, 'products');
+
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const productCode = generatedProductCodes[i] || '';
@@ -1162,23 +1166,23 @@ const AddPurchaseIMEI: React.FC = () => {
           paymentType: 'cash'
         };
 
-        const productsRef = getCollectionRef('products');
-        // Check by both productCode and IMEI if the item has an IMEI, to prevent merging separate physical devices
+        // Check by both productCode and IMEI in root master catalog
         const q = item.imei?.trim()
-          ? query(productsRef, where('productCode', '==', productCode), where('imei', '==', item.imei.trim()))
-          : query(productsRef, where('productCode', '==', productCode));
+          ? query(rootProductsRef, where('productCode', '==', productCode), where('imei', '==', item.imei.trim()))
+          : query(rootProductsRef, where('productCode', '==', productCode));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
           const productDoc = snapshot.docs[0];
-          await updateDoc(getDocRef('products', productDoc.id), {
+          savedProductDocIds.push(productDoc.id);
+          await updateDoc(doc(db, 'products', productDoc.id), {
             ...productData,
             quantity: increment(Number(item.quantity) || 1),
             updatedAt: Timestamp.now(),
             updatedBy: currentUser?.uid || ''
           });
         } else {
-          await addDoc(getCollectionRef('products'), {
+          const newDocRef = await addDoc(rootProductsRef, {
             ...productData,
             quantity: Number(item.quantity) || 1,
             sourcePurchaseId: purchaseRefId,
@@ -1187,10 +1191,63 @@ const AddPurchaseIMEI: React.FC = () => {
             createdBy: currentUser?.uid || '',
             createdByName: currentUser?.displayName || ''
           });
+          savedProductDocIds.push(newDocRef.id);
         }
       }
 
-      showToast(`Purchase ${purchaseNumber} ${isEditMode ? 'updated' : 'added'} successfully!`, 'success');
+      // Automatically create a Stock Transfer dispatch to this branch so staff can verify and receive it in Stock Received!
+      if (currentStore?.id) {
+        await addDoc(collection(db, 'stockTransfers'), {
+          hubId: currentHub?.id || 'digital_zone_hq',
+          transferType: 'hq_to_branch',
+          fromStoreId: 'hub_warehouse',
+          fromStoreName: 'HQ Central Warehouse',
+          toStoreId: currentStore.id,
+          toStoreName: targetStoreName,
+          status: 'dispatched',
+          flowStep: 'triggered',
+          relatedPurchaseId: purchaseRefId,
+          purchaseNumber: purchaseNumber,
+          invoiceNumber: invoiceNumber.trim() || undefined,
+          items: items.map((item, index) => {
+            const qty = Number(item.quantity) || 1;
+            const baseCost = Number(item.costPerUnit) || 0;
+            const taxPct = Number(item.taxPercent) || 0;
+            const costWithGst = baseCost + (baseCost * taxPct / 100);
+            return {
+              productId: savedProductDocIds[index] || '',
+              productCode: generatedProductCodes[index] || '',
+              productName: item.productName?.trim() || `${item.brand} ${item.model} ${item.category}`.trim() || item.imei?.trim() || 'UNNAMED PRODUCT',
+              brand: item.brand,
+              model: item.model,
+              category: item.category,
+              quantity: qty,
+              cost: costWithGst,
+              baseCost: baseCost,
+              mrp: Number(item.mrp) || costWithGst,
+              mop: Number(item.mop) || 0,
+              taxPercent: taxPct,
+              hcsCode: item.hcsCode || '',
+              imei: item.imei || '',
+              received: false,
+            };
+          }),
+          totalItems: items.length,
+          totalQuantity: totalQuantity,
+          totalValue: totalAmount,
+          notes: notes.trim()
+            ? `IMEI Purchase #${purchaseNumber}: ${notes.trim()}`
+            : `Branch IMEI purchase #${purchaseNumber} recorded in HQ Hub and dispatched to ${targetStoreName}`,
+          createdAt: Timestamp.now(),
+          createdBy: currentUser?.uid || '',
+          createdByName: currentUser?.displayName || currentUser?.email || 'Branch Staff',
+          dispatchedAt: Timestamp.now(),
+          dispatchedBy: currentUser?.uid || '',
+          dispatchedByName: currentUser?.displayName || currentUser?.email || 'Branch Staff',
+        });
+      }
+
+      showToast(`IMEI Purchase ${purchaseNumber} saved to HQ Hub! Auto-transfer dispatched to ${targetStoreName}. Please verify in Stock Received.`, 'success');
       setTimeout(() => {
         setMultiStepLoading(false);
         localStorage.removeItem('addPurchaseIMEIDraft');

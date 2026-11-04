@@ -18,7 +18,7 @@ import * as XLSX from 'xlsx';
 
 const AddPurchase: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, currentStore } = useStore();
   const navigate = useNavigate();
   const { showToast } = useToast();
 
@@ -1052,7 +1052,7 @@ const AddPurchase: React.FC = () => {
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
         const productName = `${item.brand} ${item.model} ${item.category}`.trim();
-        const productsRef = getCollectionRef('products');
+        const productsRef = collection(db, 'products');
         const q = query(productsRef, where('name', '==', productName));
         const snapshot = await getDocs(q);
 
@@ -1150,8 +1150,8 @@ const AddPurchase: React.FC = () => {
         const item = items[index];
         const productName = `${item.brand} ${item.model} ${item.category}`.trim();
 
-        // Check if product already exists by name
-        const productsRef = getCollectionRef('products');
+        // Check if product already exists by name in HQ master catalog
+        const productsRef = collection(db, 'products');
         const q = query(productsRef, where('name', '==', productName));
         const snapshot = await getDocs(q);
 
@@ -1179,7 +1179,7 @@ const AddPurchase: React.FC = () => {
           // If productCode is missing in existing doc but we generated one, set it
           if (!existingData.productCode && finalProductCodes[index]) updateData.productCode = finalProductCodes[index];
 
-          await updateDoc(getDocRef('products', productDoc.id), updateData);
+          await updateDoc(doc(db, 'products', productDoc.id), updateData);
         } else {
           // Create new product with sensible defaults for missing fields
           const brand = item.brand && item.brand.trim() ? item.brand : 'Unknown Brand';
@@ -1187,7 +1187,7 @@ const AddPurchase: React.FC = () => {
           const category = item.category && item.category.trim() ? item.category : 'General';
           const code = finalProductCodes[index] || getNextProductCodeForItem(index);
 
-          await addDoc(getCollectionRef('products'), {
+          await addDoc(collection(db, 'products'), {
             productCode: code,
             name: productName || `${brand} ${model} ${category}`.trim(),
             model,
