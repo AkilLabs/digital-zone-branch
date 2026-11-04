@@ -36,9 +36,6 @@ import {
   Settings,
   Clock,
   User,
-  Building2,
-  Store,
-  ArrowLeftRight,
   LogOut
 } from 'lucide-react';
 
@@ -58,14 +55,12 @@ interface MenuSection {
 const Navbar: React.FC = () => {
   const { currentUser, logout } = useAuth();
   const { isCheckedIn } = useAttendance();
-  const { currentStore, stores, setCurrentStore, isHubUser, currentHub } = useStore();
+  const { currentStore } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [showSidebar, setShowSidebar] = useState(false);
-  const [showStoreSwitcher, setShowStoreSwitcher] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const storeSwitcherRef = useRef<HTMLDivElement>(null);
 
   const isOwner = currentUser?.role === 'owner';
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'store-admin' || currentUser?.role === 'hub-admin';
@@ -134,21 +129,6 @@ const Navbar: React.FC = () => {
     };
   }, [showSidebar]);
 
-  // Close store switcher when clicking outside
-  useEffect(() => {
-    const handleClickOutsideSwitcher = (event: MouseEvent) => {
-      if (storeSwitcherRef.current && !storeSwitcherRef.current.contains(event.target as Node)) {
-        setShowStoreSwitcher(false);
-      }
-    };
-    if (showStoreSwitcher) {
-      document.addEventListener('mousedown', handleClickOutsideSwitcher);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutsideSwitcher);
-    };
-  }, [showStoreSwitcher]);
-
   useEffect(() => {
     const handleEscKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -156,7 +136,6 @@ const Navbar: React.FC = () => {
           setShowSidebar(false);
           setSearchQuery('');
         }
-        if (showStoreSwitcher) setShowStoreSwitcher(false);
       }
     };
 
@@ -164,7 +143,7 @@ const Navbar: React.FC = () => {
     return () => {
       document.removeEventListener('keydown', handleEscKey);
     };
-  }, [showSidebar, showStoreSwitcher]);
+  }, [showSidebar]);
 
   const handleLogout = async () => {
     try {
@@ -192,16 +171,6 @@ const Navbar: React.FC = () => {
   // Memoized sidebar navigation sections based on roles and permissions
   const menuSections: MenuSection[] = useMemo(() => {
     const sections: MenuSection[] = [];
-
-    // Hub Management (for hub-level users)
-    if (isHubUser) {
-      const hubItems: MenuItem[] = [
-        { title: 'Hub Dashboard', path: '/hub-dashboard', icon: Building2, keywords: ['hub', 'branch', 'warehouse', 'overview'] },
-        { title: 'Manage Stores', path: '/store-management', icon: Store, keywords: ['stores', 'outlets', 'branch'] },
-        { title: 'Stock Transfer', path: '/stock-transfer', icon: ArrowLeftRight, keywords: ['transfer', 'dispatch', 'move', 'stock'] },
-      ];
-      sections.push({ title: 'Hub Management', items: hubItems });
-    }
 
     // Main Workspace
     if (!isEmployee) {
@@ -280,7 +249,7 @@ const Navbar: React.FC = () => {
     }
 
     return sections;
-  }, [isHubUser, isEmployee, rechargeEnabled, canAccess]);
+  }, [isEmployee, rechargeEnabled, canAccess]);
 
   const filteredSections = useMemo(() => {
     if (!searchQuery.trim()) return menuSections;
@@ -321,73 +290,15 @@ const Navbar: React.FC = () => {
                 <img src={logo} alt="Logo" className="h-full w-auto max-w-[120px] object-contain" />
               </button>
               <div>
-                <h1 className="m-0 text-sm sm:text-base md:text-xl font-bold text-gray-900 leading-tight">{currentHub?.name || 'Digital Zone'}</h1>
-                <div className="relative" ref={storeSwitcherRef}>
-                  {isHubUser && stores.length > 0 ? (
-                    <>
-                      <button
-                        onClick={() => setShowStoreSwitcher(!showStoreSwitcher)}
-                        className="m-0 text-[10px] sm:text-xs flex items-center gap-1 text-blue-600 cursor-pointer hover:text-blue-700 transition-colors"
-                      >
-                        {currentStore ? (
-                          <>
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
-                            {currentStore.name}
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>
-                            {currentHub?.name} (Warehouse)
-                          </>
-                        )}
-                        <svg className={`w-3 h-3 transition-transform ${showStoreSwitcher ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                      </button>
-                      {showStoreSwitcher && (
-                        <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-xl shadow-2xl border border-gray-200 z-[100] py-1 animate-in fade-in slide-in-from-top-1">
-                          <div className="px-3 py-2 border-b border-gray-100">
-                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Switch Location</p>
-                          </div>
-                          <button
-                            onClick={() => { setCurrentStore('hub_warehouse'); setShowStoreSwitcher(false); }}
-                            className={`w-full text-left px-3 py-2.5 text-xs hover:bg-indigo-50 transition-colors flex items-center gap-2 ${!currentStore ? 'text-indigo-600 font-semibold bg-indigo-50' : 'text-gray-700'}`}
-                          >
-                            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg>
-                            <span>{currentHub?.name} (Warehouse)</span>
-                            {!currentStore && <svg className="w-3.5 h-3.5 ml-auto text-indigo-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
-                          </button>
-                          <div className="border-t border-gray-100 my-0.5" />
-                          {stores.map(store => (
-                            <button
-                              key={store.id}
-                              onClick={() => { setCurrentStore(store.id!); setShowStoreSwitcher(false); }}
-                              className={`w-full text-left px-3 py-2.5 text-xs hover:bg-blue-50 transition-colors flex items-center gap-2 ${store.id === currentStore?.id ? 'text-blue-600 font-semibold bg-blue-50' : 'text-gray-700'}`}
-                            >
-                              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
-                              <span>{store.name}</span>
-                              {store.id === currentStore?.id && <svg className="w-3.5 h-3.5 ml-auto text-blue-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
-                            </button>
-                          ))}
-                          <div className="border-t border-gray-100 mt-1 pt-1">
-                            <button
-                              onClick={() => { setShowStoreSwitcher(false); navigate('/hub-dashboard'); }}
-                              className="w-full text-left px-3 py-2.5 text-xs text-indigo-600 hover:bg-indigo-50 font-medium transition-colors flex items-center gap-2"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6z" /></svg>
-                              Hub Dashboard
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  ) : currentStore ? (
-                    <p className="m-0 text-gray-500 text-[10px] sm:text-xs flex items-center gap-1">
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
-                      {currentStore.name}
-                    </p>
-                  ) : (
-                    <p className="m-0 text-gray-500 text-[10px] sm:text-xs hidden md:block">Billing System</p>
-                  )}
-                </div>
+                <h1 className="m-0 text-sm sm:text-base md:text-xl font-bold text-gray-900 leading-tight">Digital Zone</h1>
+                {currentStore ? (
+                  <p className="m-0 text-gray-500 text-[10px] sm:text-xs flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5" /></svg>
+                    {currentStore.name}
+                  </p>
+                ) : (
+                  <p className="m-0 text-gray-500 text-[10px] sm:text-xs hidden md:block">Billing System</p>
+                )}
               </div>
             </div>
 
@@ -597,17 +508,6 @@ const Navbar: React.FC = () => {
       {showNavigation && !isEmployee && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-50">
           <div className="flex justify-around items-center py-2">
-            {isHubUser && (
-              <button
-                onClick={() => handleNavigation('/hub-dashboard')}
-                className="flex flex-col items-center justify-center flex-1 py-2 px-1 text-gray-600 hover:text-indigo-600 active:text-indigo-600 transition-colors duration-200"
-              >
-                <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                </svg>
-                <span className="text-xs font-medium">Hub</span>
-              </button>
-            )}
             {canAccess('/dashboard') && (
             <button
               onClick={() => handleNavigation('/dashboard')}

@@ -31,11 +31,6 @@ export interface RoutePermission {
  * Used by ProtectedRoute component and Navbar for filtering.
  */
 export const ROUTE_PERMISSIONS: Record<string, UserRole[]> = {
-  // ── Hub Management (hub-level users only) ──
-  '/hub-dashboard':     ['owner', 'hub-admin'],
-  '/store-management':  ['owner', 'hub-admin'],
-  '/stock-transfer':    ['owner', 'hub-admin'],
-
   // ── Dashboard ──
   '/dashboard':         ['owner', 'hub-admin', 'store-admin', 'admin', 'employee'],
 

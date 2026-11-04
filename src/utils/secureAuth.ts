@@ -8,17 +8,14 @@
  * @param scope - The user's scope ('hub' or 'store')
  * @returns The path string to navigate to
  */
-export const getRoleBasedDestination = (role: string, scope?: string): string => {
+export const getRoleBasedDestination = (role: string, _scope?: string): string => {
     switch (role) {
         case 'employee':
             return '/employee-dashboard';
         case 'owner':
         case 'hub-admin':
-            // Hub-level users go to hub dashboard
-            return scope === 'hub' ? '/hub-dashboard' : '/dashboard';
         case 'store-admin':
         case 'admin':
-            return '/dashboard';
         default:
             return '/dashboard';
     }

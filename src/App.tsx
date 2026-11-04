@@ -42,9 +42,6 @@ import RechargeReport from './pages/RechargeReport';
 import Migration from './pages/Migration';
 import DefectManagement from './pages/DefectManagement';
 import SettlementPage from './pages/Settlement';
-import HubDashboard from './pages/HubDashboard';
-import StoreManagement from './pages/StoreManagement';
-import StockTransferPage from './pages/StockTransfer';
 import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
 
@@ -59,31 +56,10 @@ function App() {
               <Route path="/view-bill/*" element={<ViewBill />} />
               <Route path="/view-job/*" element={<ViewJobSheet />} />
               <Route path="/login" element={<Login />} />
-              {/* Hub-level routes */}
-              <Route
-                path="/hub-dashboard"
-                element={
-                  <ProtectedRoute hubOnly>
-                    <HubDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/store-management"
-                element={
-                  <ProtectedRoute hubOnly>
-                    <StoreManagement />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/stock-transfer"
-                element={
-                  <ProtectedRoute hubOnly>
-                    <StockTransferPage />
-                  </ProtectedRoute>
-                }
-              />
+              {/* Redirect legacy hub routes to dashboard */}
+              <Route path="/hub-dashboard" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/store-management" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/stock-transfer" element={<Navigate to="/dashboard" replace />} />
               {/* Store-level routes */}
               <Route
                 path="/dashboard"
