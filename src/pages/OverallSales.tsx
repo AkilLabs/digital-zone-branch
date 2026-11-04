@@ -23,6 +23,7 @@ import {
 } from '../utils/settlementPdfGenerator';
 import { encodePrice } from '../utils/secretCode';
 import { syncStoreProducts, updateLocalProductQuantities } from '../utils/productSyncCache';
+import { isEmployeeOfBranch } from '../utils/firestore';
 import {
   collection,
   doc,
@@ -658,8 +659,13 @@ const OverallSales: React.FC = () => {
         const usersSnap = await getDocs(query(getCollectionRef('users')));
         const users: AppUser[] = [];
         usersSnap.forEach((d) => {
-          users.push({ uid: d.id, ...d.data() } as AppUser);
+          const uData = { uid: d.id, ...d.data() } as AppUser;
+          // Only show employees of this current branch (exclude HQ roles and other branches)
+          if (isEmployeeOfBranch(uData, currentStore)) {
+            users.push(uData);
+          }
         });
+        users.sort((a, b) => ((a.displayName || a.name || a.email || '').localeCompare(b.displayName || b.name || b.email || '')));
         setEmployeesList(users);
       } catch (err) {
         console.error('Error loading employees:', err);

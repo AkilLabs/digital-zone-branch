@@ -4,6 +4,7 @@ import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
 import Navbar from '../components/Navbar';
 import type { User, BillingItem } from '../types';
+import { isEmployeeOfBranch } from '../utils/firestore';
 import {
   addDoc,
   Timestamp,
@@ -111,8 +112,12 @@ const AddExpense: React.FC = () => {
       const snapshot = await getDocs(q);
       const loaded: User[] = [];
       snapshot.forEach(d => {
-        loaded.push({ uid: d.id, ...d.data() } as User);
+        const uData = { uid: d.id, ...d.data() };
+        if (isEmployeeOfBranch(uData, currentStore)) {
+          loaded.push(uData as User);
+        }
       });
+      loaded.sort((a, b) => ((a.displayName || a.name || a.email || '').localeCompare(b.displayName || b.name || b.email || '')));
       setEmployees(loaded);
     } catch (err) {
       console.error('Error loading employees:', err);

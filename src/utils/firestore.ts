@@ -183,3 +183,44 @@ export const LEGACY_STORE_SCOPED_SHARED_COLLECTIONS = [
  * In practice these are effectively empty – all data lives in stores.
  */
 export const HUB_COLLECTIONS = [] as const;
+
+/**
+ * Checks whether an employee user record belongs strictly to the specified branch/store.
+ * Excludes global/HQ accounts (owner, hq-admin, hub-admin) and employees of other branches.
+ */
+export const isEmployeeOfBranch = (emp: any, currentStore: any): boolean => {
+  if (!emp || !currentStore) return false;
+  if (emp.isActive === false) return false;
+
+  const role = String(emp.role || '').toLowerCase().trim();
+  if (role === 'owner' || role === 'hq-admin' || role === 'hub-admin') {
+    return false;
+  }
+
+  const currentStoreId = String(currentStore.id || '').trim();
+  const currentBranchCode = String(currentStore.code || currentStore.branchId || '').trim();
+  const currentStoreName = String(currentStore.name || '').trim().toLowerCase();
+
+  const empStoreId = String(emp.storeId || emp.branchId || '').trim();
+  const empStoreName = String(emp.storeName || '').trim().toLowerCase();
+
+  // Match by Firestore store document ID
+  if (currentStoreId && empStoreId === currentStoreId) return true;
+
+  // Match by branch code or custom branchId
+  if (currentBranchCode && (empStoreId === currentBranchCode || (emp.branchId && emp.branchId === currentBranchCode))) {
+    return true;
+  }
+
+  // Match by branch name (if not generic Head Office)
+  if (
+    currentStoreName &&
+    empStoreName &&
+    empStoreName === currentStoreName &&
+    empStoreName !== 'head office'
+  ) {
+    return true;
+  }
+
+  return false;
+};

@@ -15,6 +15,7 @@ import { useToastContext } from '../context/ToastContext';
 import { useAvailableProducts, useInvalidateCache } from '../hooks/useFirestoreCache';
 import { updateLocalProductQuantities } from '../utils/productSyncCache';
 import { generateInvoice } from '../utils/pdfGenerator';
+import { isEmployeeOfBranch } from '../utils/firestore';
 import { generateUPIQRCode } from '../utils/qrcode';
 import { openRazorpayCheckout } from '../utils/razorpay';
 import { resolveShopDetails } from '../utils/shopDetails';
@@ -107,7 +108,8 @@ function Billing() {
     currentUser?.role === 'owner' ||
     currentUser?.role === 'hub-admin' ||
     currentUser?.role === 'store-admin' ||
-    currentUser?.role === 'admin';
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'manager';
   const fallbackSalesPersonName = currentUser?.displayName || currentUser?.name || currentUser?.email || 'Unknown User';
   // Billing date state – defaults to today (YYYY-MM-DD)
   const todayISO = useMemo(() => {
@@ -957,21 +959,21 @@ function Billing() {
         const usersSnapshot = await getDocs(usersQuery);
 
         const activeEmployees = usersSnapshot.docs
-          .map(doc => ({
-            id: doc.id,
-            name: doc.data().name || doc.data().displayName || doc.data().email || 'Employee',
-            email: doc.data().email || '',
-            isActive: doc.data().isActive,
-            storeId: doc.data().storeId || '',
-          }))
-          .filter(emp => emp.isActive !== false)
-          .filter(emp => {
-            // Include likely salesperson roles (if a role field exists and is not explicitly a non-sales role)
-            // If store assignment is present, match by store; otherwise include
-            if (!assignedStoreId) return true;
-            if (emp.storeId) return emp.storeId === assignedStoreId;
-            return true;
+          .map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              name: data.name || data.displayName || data.email || 'Employee',
+              email: data.email || '',
+              role: data.role || 'employee',
+              isActive: data.isActive,
+              storeId: data.storeId || '',
+              branchId: data.branchId || '',
+              storeName: data.storeName || '',
+            };
           })
+          // Only show employees assigned strictly to the current branch
+          .filter(emp => isEmployeeOfBranch(emp, currentStore))
           .map(({ id, name, email }) => ({ id, name, email }))
           .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1030,7 +1032,7 @@ function Billing() {
     fetchCreditCustomers();
     fetchSalesEmployees();
     fetchFinanceProviders();
-  }, [assignedStoreId, canSelectSalesPerson, currentUser?.uid, fallbackSalesPersonName, getCollectionRef, getDocRef]);
+  }, [currentStore?.id, assignedStoreId, canSelectSalesPerson, currentUser?.uid, fallbackSalesPersonName, getCollectionRef, getDocRef]);
 
   // Generate QR code when UPI payment is selected
   useEffect(() => {
