@@ -501,12 +501,12 @@ const Settings: React.FC = () => {
                 </div>
 
                 {/* Logo Section */}
-                <div className="flex items-center gap-6 pb-6 border-b border-slate-100">
-                  <div className="h-20 sm:h-24 w-36 sm:w-44 rounded-2xl border border-slate-200 bg-slate-50 p-3 flex items-center justify-center shadow-xs">
+                <div className="flex items-center gap-5 pb-6 border-b border-slate-100">
+                  <div className="h-16 w-32 rounded-xl border border-slate-200 bg-slate-50/70 p-2 flex items-center justify-center">
                     <img
                       src={shopLogo}
                       alt="Shop Logo"
-                      className="max-w-full max-h-full object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.35)]"
+                      className="max-w-full max-h-full object-contain"
                     />
                   </div>
                   <div>

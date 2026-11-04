@@ -131,17 +131,17 @@ const Navbar: React.FC = () => {
 
   return (
     <>
-      <header className="bg-slate-50/95 text-gray-900 shadow-xs border-b border-slate-200 sticky top-0 z-50 backdrop-blur-sm">
+      <header className="bg-slate-50/95 text-gray-900 border-b border-slate-200/80 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w mx-auto px-3 sm:px-4 md:px-6">
-          <div className="flex justify-between items-center py-2 sm:py-2.5 md:py-3">
-            <div className="flex items-center gap-2">
+          <div className="flex justify-between items-center py-2 sm:py-2.5">
+            <div className="flex items-center gap-2.5">
               <button
                 onClick={() => showNavigation && setShowSidebar(!showSidebar)}
-                className={`h-9 sm:h-10 w-auto flex items-center justify-center px-2 py-0.5 rounded-xl bg-slate-100/90 hover:bg-slate-200/80 border border-slate-200/90 shadow-xs ${showNavigation ? 'cursor-pointer' : 'cursor-default'} transition-all duration-200`}
+                className={`h-8 sm:h-9 flex items-center justify-center ${showNavigation ? 'cursor-pointer hover:opacity-80 active:scale-95' : 'cursor-default'} transition-all duration-150`}
                 title={showNavigation ? "Open Navigation Menu" : "Check in to enable navigation"}
                 disabled={!showNavigation}
               >
-                <img src={logo} alt="Logo" className="h-full w-auto max-w-[110px] object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.35)]" />
+                <img src={logo} alt="Logo" className="h-full w-auto max-w-[120px] object-contain" />
               </button>
               <div>
                 <h1 className="m-0 text-sm sm:text-base md:text-xl font-bold text-gray-900 leading-tight">{currentHub?.name || 'Digital Zone'}</h1>
@@ -244,14 +244,12 @@ const Navbar: React.FC = () => {
         className={`fixed top-0 left-0 h-full w-80 bg-white shadow-2xl z-[70] transform transition-transform duration-300 ease-in-out ${showSidebar ? 'translate-x-0' : '-translate-x-full'
           }`}
       >
-        <div className="flex items-center justify-between p-6 border-b border-slate-200 bg-gradient-to-r from-slate-100 via-slate-50 to-red-50/20">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200/80 bg-slate-50">
           <div className="flex items-center gap-3">
-            <div className="h-11 w-auto flex items-center p-1.5 rounded-xl bg-slate-100/90 border border-slate-200 shadow-xs">
-              <img src={logo} alt="Logo" className="h-full w-auto max-w-[110px] object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.35)]" />
-            </div>
+            <img src={logo} alt="Logo" className="h-9 w-auto object-contain" />
             <div>
-              <h2 className="m-0 text-lg font-bold text-gray-900">Digital Zone</h2>
-              <p className="m-0 text-xs text-gray-600">Navigation Menu</p>
+              <h2 className="m-0 text-base font-bold text-gray-900 leading-tight">Digital Zone</h2>
+              <p className="m-0 text-xs text-gray-500">Navigation Menu</p>
             </div>
           </div>
           <button
