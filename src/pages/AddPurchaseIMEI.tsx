@@ -43,7 +43,7 @@ const getInitialSupplierForm = () => ({
 
 const AddPurchaseIMEI: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore, currentHub } = useStore();
+  const { getCollectionRef, getDocRef, currentHub } = useStore();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = !!id;
@@ -1057,13 +1057,8 @@ const AddPurchaseIMEI: React.FC = () => {
         createdBy: currentUser?.uid || '',
         createdByName: currentUser?.displayName || '',
         isIMEIPurchase: true,
-        hubId: currentHub?.id || 'digital_zone_hq',
-        destinationBranchId: currentStore?.id || null,
-        destinationBranchName: currentStore?.name || 'Branch',
-        isBranchTransferInitiated: !!currentStore?.id
+        hubId: currentHub?.id || 'digital_zone_hq'
       };
-
-      const targetStoreName = currentStore?.name || 'Branch';
 
       if (paymentSplit) purchaseData.paymentSplit = paymentSplit;
       if (invoiceNumber.trim()) purchaseData.invoiceNumber = invoiceNumber.trim();
@@ -1195,59 +1190,7 @@ const AddPurchaseIMEI: React.FC = () => {
         }
       }
 
-      // Automatically create a Stock Transfer dispatch to this branch so staff can verify and receive it in Stock Received!
-      if (currentStore?.id) {
-        await addDoc(collection(db, 'stockTransfers'), {
-          hubId: currentHub?.id || 'digital_zone_hq',
-          transferType: 'hq_to_branch',
-          fromStoreId: 'hub_warehouse',
-          fromStoreName: 'HQ Central Warehouse',
-          toStoreId: currentStore.id,
-          toStoreName: targetStoreName,
-          status: 'dispatched',
-          flowStep: 'triggered',
-          relatedPurchaseId: purchaseRefId,
-          purchaseNumber: purchaseNumber,
-          invoiceNumber: invoiceNumber.trim() || undefined,
-          items: items.map((item, index) => {
-            const qty = Number(item.quantity) || 1;
-            const baseCost = Number(item.costPerUnit) || 0;
-            const taxPct = Number(item.taxPercent) || 0;
-            const costWithGst = baseCost + (baseCost * taxPct / 100);
-            return {
-              productId: savedProductDocIds[index] || '',
-              productCode: generatedProductCodes[index] || '',
-              productName: item.productName?.trim() || `${item.brand} ${item.model} ${item.category}`.trim() || item.imei?.trim() || 'UNNAMED PRODUCT',
-              brand: item.brand,
-              model: item.model,
-              category: item.category,
-              quantity: qty,
-              cost: costWithGst,
-              baseCost: baseCost,
-              mrp: Number(item.mrp) || costWithGst,
-              mop: Number(item.mop) || 0,
-              taxPercent: taxPct,
-              hcsCode: item.hcsCode || '',
-              imei: item.imei || '',
-              received: false,
-            };
-          }),
-          totalItems: items.length,
-          totalQuantity: totalQuantity,
-          totalValue: totalAmount,
-          notes: notes.trim()
-            ? `IMEI Purchase #${purchaseNumber}: ${notes.trim()}`
-            : `Branch IMEI purchase #${purchaseNumber} recorded in HQ Hub and dispatched to ${targetStoreName}`,
-          createdAt: Timestamp.now(),
-          createdBy: currentUser?.uid || '',
-          createdByName: currentUser?.displayName || currentUser?.email || 'Branch Staff',
-          dispatchedAt: Timestamp.now(),
-          dispatchedBy: currentUser?.uid || '',
-          dispatchedByName: currentUser?.displayName || currentUser?.email || 'Branch Staff',
-        });
-      }
-
-      showToast(`IMEI Purchase ${purchaseNumber} saved to HQ Hub! Auto-transfer dispatched to ${targetStoreName}. Please verify in Stock Received.`, 'success');
+      showToast(`IMEI Purchase ${purchaseNumber} ${isEditMode ? 'updated' : 'added'} to HQ Central Warehouse successfully!`, 'success');
       setTimeout(() => {
         setMultiStepLoading(false);
         localStorage.removeItem('addPurchaseIMEIDraft');
