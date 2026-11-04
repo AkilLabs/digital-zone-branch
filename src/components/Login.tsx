@@ -41,18 +41,20 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-white p-4">
-      <div className="bg-white p-10 rounded-2xl shadow-md w-full max-w-md border border-gray-200">
+    <div className="flex justify-center items-center min-h-screen bg-slate-100/70 p-4">
+      <div className="bg-white p-8 sm:p-10 rounded-2xl shadow-xl w-full max-w-md border border-slate-200">
         {/* Logo and Business Name */}
         <div className="flex flex-col items-center mb-8">
-          <img
-            src={logo}
-            alt="Digital Zone Logo"
-            className="h-20 sm:h-24 w-auto max-w-[280px] mb-4 object-contain"
-          />
-          <h1 className="text-center text-gray-900 mb-1 text-3xl font-bold">Digital Zone</h1>
-          <p className="text-center text-gray-600 text-sm font-medium mb-4">Sales | Service | Accessory</p>
-          <h2 className="text-center text-gray-500 text-base font-normal">Login</h2>
+          <div className="p-3 mb-4 rounded-2xl bg-slate-50 border border-slate-200/90 shadow-xs flex items-center justify-center">
+            <img
+              src={logo}
+              alt="Digital Zone Logo"
+              className="h-16 sm:h-20 w-auto max-w-[260px] object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.35)]"
+            />
+          </div>
+          <h1 className="text-center text-slate-900 mb-1 text-3xl font-bold tracking-tight">Digital Zone</h1>
+          <p className="text-center text-slate-500 text-sm font-medium mb-3">Sales | Service | Accessory</p>
+          <h2 className="text-center text-slate-400 text-xs font-semibold uppercase tracking-wider">Login</h2>
         </div>
 
         {error && (

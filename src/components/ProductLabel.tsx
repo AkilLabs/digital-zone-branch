@@ -429,7 +429,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({ product, products, shopDeta
                           <img
                             src={logoDataUrl || logo}
                             alt="Logo"
-                            className="object-contain w-auto max-w-[28px] h-[19px]"
+                            className="object-contain w-auto max-w-[28px] h-[19px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
                           />
                           <div className="font-semibold text-[7.5px] uppercase truncate text-gray-700">
                             {shopDetails?.shopName || 'Digital Zone'}

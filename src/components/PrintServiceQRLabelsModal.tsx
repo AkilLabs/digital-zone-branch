@@ -680,7 +680,7 @@ export default function PrintServiceQRLabelsModal({
                       <img
                         src={logoDataUrl || logo}
                         alt="Logo"
-                        className="object-contain w-auto max-w-[28px] h-[18px]"
+                        className="object-contain w-auto max-w-[28px] h-[18px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]"
                       />
                       <div className="font-extrabold text-[9px] uppercase truncate text-slate-800">
                         {shopName}
