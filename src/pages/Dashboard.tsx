@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useStore } from '../context/StoreContext';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import CustomLoader from '../components/CustomLoader';
@@ -11,6 +12,7 @@ import { isExpenseItem } from '../types';
 import { getItemFinancials } from './OverallSales';
 const Dashboard: React.FC = () => {
   const { currentUser } = useAuth();
+  const { currentStore } = useStore();
   const navigate = useNavigate();
 
   // State for date filter
@@ -314,13 +316,13 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick Actions - Navigation Shortcuts */}
+        {/* Quick Actions - Mandatory Branch Navigation Shortcuts */}
         <div className="mb-4 md:mb-6">
           <h2 className="text-base md:text-lg font-bold text-gray-800 mb-3 px-1">Quick Actions</h2>
           <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-6 gap-2 md:gap-3">
             <button
               onClick={() => navigate('/billing')}
-              className="bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-blue-200 hover:border-blue-300 hover:shadow-md"
+              className="bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-blue-200 hover:border-blue-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-blue-500 rounded-lg flex items-center justify-center">
@@ -328,27 +330,13 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">New Sale</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/add-purchase')}
-              className="bg-gradient-to-br from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-purple-200 hover:border-purple-300 hover:shadow-md"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-purple-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Purchase</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Billing</span>
               </div>
             </button>
 
             <button
               onClick={() => navigate('/products')}
-              className="bg-gradient-to-br from-teal-50 to-teal-100 hover:from-teal-100 hover:to-teal-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-teal-200 hover:border-teal-300 hover:shadow-md"
+              className="bg-gradient-to-br from-teal-50 to-teal-100 hover:from-teal-100 hover:to-teal-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-teal-200 hover:border-teal-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-teal-500 rounded-lg flex items-center justify-center">
@@ -361,8 +349,36 @@ const Dashboard: React.FC = () => {
             </button>
 
             <button
+              onClick={() => navigate('/stock-received')}
+              className="bg-gradient-to-br from-indigo-50 to-indigo-100 hover:from-indigo-100 hover:to-indigo-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-indigo-200 hover:border-indigo-300 hover:shadow-md cursor-pointer"
+            >
+              <div className="flex flex-col items-center gap-1 md:gap-2">
+                <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-500 rounded-lg flex items-center justify-center">
+                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                </div>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Stock Received</span>
+              </div>
+            </button>
+
+            <button
+              onClick={() => navigate('/stock-transfer')}
+              className="bg-gradient-to-br from-violet-50 to-violet-100 hover:from-violet-100 hover:to-violet-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-violet-200 hover:border-violet-300 hover:shadow-md cursor-pointer"
+            >
+              <div className="flex flex-col items-center gap-1 md:gap-2">
+                <div className="w-8 h-8 md:w-12 md:h-12 bg-violet-500 rounded-lg flex items-center justify-center">
+                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                </div>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Stock Transfer</span>
+              </div>
+            </button>
+
+            <button
               onClick={() => navigate('/overall-sales')}
-              className="bg-gradient-to-br from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-green-200 hover:border-green-300 hover:shadow-md"
+              className="bg-gradient-to-br from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-green-200 hover:border-green-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-green-500 rounded-lg flex items-center justify-center">
@@ -370,13 +386,13 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Reports</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Sales Report</span>
               </div>
             </button>
 
             <button
               onClick={() => navigate('/defect-management')}
-              className="bg-gradient-to-br from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-orange-200 hover:border-orange-300 hover:shadow-md"
+              className="bg-gradient-to-br from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-orange-200 hover:border-orange-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-orange-500 rounded-lg flex items-center justify-center">
@@ -384,13 +400,13 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Defects</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Defect & Damage</span>
               </div>
             </button>
 
             <button
               onClick={() => navigate('/add-expense')}
-              className="bg-gradient-to-br from-red-50 to-red-100 hover:from-red-100 hover:to-red-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-red-200 hover:border-red-300 hover:shadow-md"
+              className="bg-gradient-to-br from-red-50 to-red-100 hover:from-red-100 hover:to-red-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-red-200 hover:border-red-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-red-500 rounded-lg flex items-center justify-center">
@@ -398,27 +414,13 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Expense</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate(currentUser?.role === 'employee' ? '/employee-dashboard' : '/employee-management')}
-              className="bg-gradient-to-br from-indigo-50 to-indigo-100 hover:from-indigo-100 hover:to-indigo-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-indigo-200 hover:border-indigo-300 hover:shadow-md"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Attendance</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Add Expense</span>
               </div>
             </button>
 
             <button
               onClick={() => navigate('/customers')}
-              className="bg-gradient-to-br from-pink-50 to-pink-100 hover:from-pink-100 hover:to-pink-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-pink-200 hover:border-pink-300 hover:shadow-md"
+              className="bg-gradient-to-br from-pink-50 to-pink-100 hover:from-pink-100 hover:to-pink-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-pink-200 hover:border-pink-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-pink-500 rounded-lg flex items-center justify-center">
@@ -426,13 +428,13 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Customers</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Customer</span>
               </div>
             </button>
 
             <button
               onClick={() => navigate('/service-management')}
-              className="bg-gradient-to-br from-cyan-50 to-cyan-100 hover:from-cyan-100 hover:to-cyan-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-cyan-200 hover:border-cyan-300 hover:shadow-md"
+              className="bg-gradient-to-br from-cyan-50 to-cyan-100 hover:from-cyan-100 hover:to-cyan-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-cyan-200 hover:border-cyan-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-cyan-500 rounded-lg flex items-center justify-center">
@@ -441,13 +443,27 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Service</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Service Mgmt</span>
+              </div>
+            </button>
+
+            <button
+              onClick={() => navigate('/service-management/create')}
+              className="bg-gradient-to-br from-sky-50 to-sky-100 hover:from-sky-100 hover:to-sky-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-sky-200 hover:border-sky-300 hover:shadow-md cursor-pointer"
+            >
+              <div className="flex flex-col items-center gap-1 md:gap-2">
+                <div className="w-8 h-8 md:w-12 md:h-12 bg-sky-500 rounded-lg flex items-center justify-center">
+                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Job Sheet</span>
               </div>
             </button>
 
             <button
               onClick={() => navigate('/stock-requirement')}
-              className="bg-gradient-to-br from-amber-50 to-amber-100 hover:from-amber-100 hover:to-amber-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-amber-200 hover:border-amber-300 hover:shadow-md"
+              className="bg-gradient-to-br from-amber-50 to-amber-100 hover:from-amber-100 hover:to-amber-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-amber-200 hover:border-amber-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
                 <div className="w-8 h-8 md:w-12 md:h-12 bg-amber-500 rounded-lg flex items-center justify-center">
@@ -455,37 +471,39 @@ const Dashboard: React.FC = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Req. Stock</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Stock Req.</span>
               </div>
             </button>
 
             <button
-              onClick={() => navigate('/recharge-accounts')}
-              className="bg-gradient-to-br from-violet-50 to-violet-100 hover:from-violet-100 hover:to-violet-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-violet-200 hover:border-violet-300 hover:shadow-md"
+              onClick={() => navigate('/employee-management')}
+              className="bg-gradient-to-br from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer"
             >
               <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-violet-500 rounded-lg flex items-center justify-center">
+                <div className="w-8 h-8 md:w-12 md:h-12 bg-slate-600 rounded-lg flex items-center justify-center">
                   <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Recharge</span>
+                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Employees</span>
               </div>
             </button>
 
-            <button
-              onClick={() => navigate('/recharge-report')}
-              className="bg-gradient-to-br from-rose-50 to-rose-100 hover:from-rose-100 hover:to-rose-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-rose-200 hover:border-rose-300 hover:shadow-md"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-rose-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
+            {currentStore?.purchaseEnabled && (
+              <button
+                onClick={() => navigate('/add-purchase')}
+                className="bg-gradient-to-br from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-purple-200 hover:border-purple-300 hover:shadow-md cursor-pointer"
+              >
+                <div className="flex flex-col items-center gap-1 md:gap-2">
+                  <div className="w-8 h-8 md:w-12 md:h-12 bg-purple-500 rounded-lg flex items-center justify-center">
+                    <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                    </svg>
+                  </div>
+                  <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Branch Purchase</span>
                 </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Rech. Report</span>
-              </div>
-            </button>
+              </button>
+            )}
           </div>
         </div>
 

@@ -5,11 +5,12 @@ import type { ShopDetails, Store } from '../types';
 /**
  * Build branch ShopDetails directly from the already-loaded store document
  * (stores/{storeId}) — 0 extra Firestore reads.
+ * Shop name is consistent across all branches ("Digital Zone"), while store.name is the branch area.
  */
 export const shopDetailsFromStore = (store: Store): ShopDetails => ({
-  shopName: store.name || '',
+  shopName: store.shopName || 'Digital Zone',
   ownerName: store.ownerName || store.managerName || '',
-  address: store.address || '',
+  address: store.address ? `${store.name} — ${store.address}` : store.name || '',
   phone: store.phone || '',
   email: store.email || '',
   gst: store.gst || '',
@@ -17,7 +18,7 @@ export const shopDetailsFromStore = (store: Store): ShopDetails => ({
   latitude: store.latitude,
   longitude: store.longitude,
   upiId: store.upiId || '',
-  merchantName: store.merchantName || store.name || '',
+  merchantName: store.merchantName || store.shopName || 'Digital Zone',
 });
 
 /**

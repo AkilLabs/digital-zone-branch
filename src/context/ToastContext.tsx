@@ -61,3 +61,6 @@ export const useToastContext = () => {
   return context;
 };
 
+export const useToast = useToastContext;
+
+

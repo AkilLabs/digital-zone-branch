@@ -19,7 +19,7 @@ interface StoreContextType {
   getHubCollection: (collectionName: string) => CollectionReference;
   /** Get a hub-level document ref */
   getHubDoc: (collectionName: string, docId: string) => DocumentReference;
-  /** Whether the current user is a hub-level user (owner, hub-admin) */
+  /** Whether the current user is a hub-level user (owner, hq-admin, hub-admin) */
   isHubUser: boolean;
   /** Refresh stores list */
   refreshStores: () => Promise<void>;
@@ -33,6 +33,8 @@ export const useStore = () => {
   return useContext(StoreContext);
 };
 
+const ENV_BRANCH_ID = (import.meta.env.VITE_BRANCH_ID || import.meta.env.VITE_STORE_ID || '').trim();
+
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
   const [currentHub, setCurrentHub] = useState<Hub | null>(null);
@@ -43,43 +45,97 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const isHubUser =
     currentUser?.scope === 'hub' ||
     currentUser?.role === 'owner' ||
+    currentUser?.role === 'hq-admin' ||
     currentUser?.role === 'hub-admin';
 
-  // ─── Load hub metadata + stores ───────────────────────────────────────────
+  const loadStores = useCallback(async (hubId?: string, preferredStoreId?: string) => {
+    try {
+      const storesRef = collection(db, 'stores');
+      let snapshot = hubId
+        ? await getDocs(query(storesRef, where('hubId', '==', hubId)))
+        : await getDocs(storesRef);
+
+      if (snapshot.empty && hubId) {
+        snapshot = await getDocs(storesRef);
+      }
+
+      const storesList: Store[] = snapshot.docs
+        .map(docSnap => ({
+          id: docSnap.id,
+          ...docSnap.data(),
+          shopName: docSnap.data().shopName || 'Digital Zone',
+          createdAt: docSnap.data().createdAt?.toDate() || new Date(),
+          updatedAt: docSnap.data().updatedAt?.toDate(),
+        } as Store))
+        .filter(s => s.isActive !== false || s.id === preferredStoreId);
+
+      storesList.sort((a, b) => a.name.localeCompare(b.name));
+      setStores(storesList);
+
+      const targetStoreId = preferredStoreId || ENV_BRANCH_ID || currentUser?.storeId;
+      if (targetStoreId) {
+        const matched = storesList.find(s => s.id === targetStoreId);
+        if (matched) {
+          setCurrentStoreState(matched);
+          return;
+        }
+      }
+
+      if (storesList.length > 0) {
+        const savedStoreId = localStorage.getItem('selectedStoreId');
+        const saved = storesList.find(s => s.id === savedStoreId);
+        setCurrentStoreState(saved || storesList[0]);
+      }
+    } catch (error) {
+      console.error('Error loading stores:', error);
+    }
+  }, [currentUser?.storeId]);
+
   useEffect(() => {
     const loadHubAndStore = async () => {
-      if (!currentUser?.hubId) {
+      if (!currentUser) {
         setLoading(false);
         return;
       }
 
       try {
-        // 1. Load hub metadata (hubs/{hubId})
-        const hubDoc = await getDoc(doc(db, 'hubs', currentUser.hubId));
-        if (hubDoc.exists()) {
-          setCurrentHub({
-            id: hubDoc.id,
-            ...hubDoc.data(),
-            createdAt: hubDoc.data().createdAt?.toDate() || new Date(),
-            updatedAt: hubDoc.data().updatedAt?.toDate(),
-          } as Hub);
-        }
+        const targetBranchId = ENV_BRANCH_ID || currentUser.storeId;
+        let resolvedHubId = currentUser.hubId;
 
-        // 2. Load stores from the flat stores/ collection, filtered by hubId
-        await loadStores(currentUser.hubId);
-
-        // 3. If user has a specific store assigned, set it from stores/ collection
-        if (currentUser.storeId) {
-          const storeDoc = await getDoc(doc(db, 'stores', currentUser.storeId));
+        // 1. If VITE_BRANCH_ID or user storeId is present, load that branch directly
+        if (targetBranchId) {
+          const storeDoc = await getDoc(doc(db, 'stores', targetBranchId));
           if (storeDoc.exists()) {
-            setCurrentStoreState({
+            const storeData = storeDoc.data();
+            const resolvedStore: Store = {
               id: storeDoc.id,
-              ...storeDoc.data(),
-              createdAt: storeDoc.data().createdAt?.toDate() || new Date(),
-              updatedAt: storeDoc.data().updatedAt?.toDate(),
-            } as Store);
+              ...storeData,
+              shopName: storeData.shopName || 'Digital Zone',
+              createdAt: storeData.createdAt?.toDate() || new Date(),
+              updatedAt: storeData.updatedAt?.toDate(),
+            } as Store;
+            setCurrentStoreState(resolvedStore);
+            if (!resolvedHubId && storeData.hubId) {
+              resolvedHubId = storeData.hubId;
+            }
           }
         }
+
+        // 2. Load hub metadata if available
+        if (resolvedHubId) {
+          const hubDoc = await getDoc(doc(db, 'hubs', resolvedHubId));
+          if (hubDoc.exists()) {
+            setCurrentHub({
+              id: hubDoc.id,
+              ...hubDoc.data(),
+              createdAt: hubDoc.data().createdAt?.toDate() || new Date(),
+              updatedAt: hubDoc.data().updatedAt?.toDate(),
+            } as Hub);
+          }
+        }
+
+        // 3. Load stores list for branch context / transfers
+        await loadStores(resolvedHubId, targetBranchId);
       } catch (error) {
         console.error('Error loading hub/store data:', error);
       } finally {
@@ -88,72 +144,34 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     loadHubAndStore();
-  }, [currentUser?.hubId, currentUser?.storeId]);
-
-  /**
-   * Load all stores belonging to this hub.
-   * New path: stores/ (flat collection) filtered by hubId field.
-   */
-  const loadStores = async (hubId: string) => {
-    try {
-      const storesRef = collection(db, 'stores');
-      const q = query(storesRef, where('hubId', '==', hubId), where('isActive', '==', true));
-      const snapshot = await getDocs(q);
-
-      const storesList: Store[] = snapshot.docs.map(docSnap => ({
-        id: docSnap.id,
-        ...docSnap.data(),
-        createdAt: docSnap.data().createdAt?.toDate() || new Date(),
-        updatedAt: docSnap.data().updatedAt?.toDate(),
-      } as Store));
-
-      // Sort by name in memory (avoids needing a composite Firestore index)
-      storesList.sort((a, b) => a.name.localeCompare(b.name));
-      setStores(storesList);
-
-      // Restore previously selected store for hub-level users
-      if (!currentUser?.storeId && storesList.length > 0) {
-        const savedStoreId = localStorage.getItem('selectedStoreId');
-        if (savedStoreId === 'hub_warehouse') {
-          setCurrentStoreState(null);
-        } else {
-          const saved = storesList.find(s => s.id === savedStoreId);
-          setCurrentStoreState(saved || storesList[0]);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading stores:', error);
-    }
-  };
+  }, [currentUser, loadStores]);
 
   const setCurrentStore = useCallback((storeId: string) => {
-    if (storeId === 'hub_warehouse') {
-      setCurrentStoreState(null);
-      if (isHubUser) localStorage.setItem('selectedStoreId', 'hub_warehouse');
+    // If VITE_BRANCH_ID is hard-configured for this deployment, keep the branch locked
+    if (ENV_BRANCH_ID && storeId !== ENV_BRANCH_ID) {
       return;
     }
 
     const store = stores.find(s => s.id === storeId);
     if (store) {
       setCurrentStoreState(store);
-      if (isHubUser) localStorage.setItem('selectedStoreId', storeId);
+      localStorage.setItem('selectedStoreId', storeId);
     }
-  }, [stores, isHubUser]);
+  }, [stores]);
 
   const refreshStores = useCallback(async () => {
-    if (currentUser?.hubId) {
-      await loadStores(currentUser.hubId);
-    }
-  }, [currentUser?.hubId]);
+    await loadStores(currentUser?.hubId || currentHub?.id, ENV_BRANCH_ID || currentUser?.storeId);
+  }, [currentUser?.hubId, currentUser?.storeId, currentHub?.id, loadStores]);
 
-  /** Re-read stores/{currentStoreId} (1 read) after branch settings are edited. */
   const refreshCurrentStore = useCallback(async () => {
-    if (!currentStore?.id) return;
-    const storeDoc = await getDoc(doc(db, 'stores', currentStore.id));
+    const idToRefresh = ENV_BRANCH_ID || currentStore?.id;
+    if (!idToRefresh) return;
+    const storeDoc = await getDoc(doc(db, 'stores', idToRefresh));
     if (storeDoc.exists()) {
       const updated = {
         id: storeDoc.id,
         ...storeDoc.data(),
+        shopName: storeDoc.data().shopName || 'Digital Zone',
         createdAt: storeDoc.data().createdAt?.toDate() || new Date(),
         updatedAt: storeDoc.data().updatedAt?.toDate(),
       } as Store;
@@ -162,32 +180,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [currentStore?.id]);
 
-  // ─── Scoped Firestore references ──────────────────────────────────────────
-  /**
-   * Returns a CollectionReference for the current store.
-   * Path: stores/{storeId}/{collectionName}
-   * Shared HO collections (users, customers, suppliers, ...) always resolve to the root.
-   * Falls back to a root-level collection if no store is in context.
-   */
   const getCollectionRef = useCallback((collectionName: string): CollectionReference => {
-    if (!currentStore?.id || isSharedRootCollection(collectionName)) {
-      // No store context or shared collection: root-level collection
+    const activeStoreId = ENV_BRANCH_ID || currentStore?.id;
+    if (!activeStoreId || isSharedRootCollection(collectionName)) {
       return collection(db, collectionName);
     }
-    // Pass empty string for hubId; the new helper ignores it
-    return getStoreCollectionRef('', currentStore.id, collectionName);
+    return getStoreCollectionRef('', activeStoreId, collectionName);
   }, [currentStore?.id]);
 
-  /**
-   * Returns a DocumentReference for the current store.
-   * Path: stores/{storeId}/{collectionName}/{docId}
-   * Shared HO collections always resolve to the root.
-   */
   const getDocRef = useCallback((collectionName: string, docId: string): DocumentReference => {
-    if (!currentStore?.id || isSharedRootCollection(collectionName)) {
+    const activeStoreId = ENV_BRANCH_ID || currentStore?.id;
+    if (!activeStoreId || isSharedRootCollection(collectionName)) {
       return doc(db, collectionName, docId);
     }
-    return getStoreDocRef('', currentStore.id, collectionName, docId);
+    return getStoreDocRef('', activeStoreId, collectionName, docId);
   }, [currentStore?.id]);
 
   const getHubCollection = useCallback((collectionName: string): CollectionReference => {

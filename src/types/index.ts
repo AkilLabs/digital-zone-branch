@@ -134,9 +134,11 @@ export interface Hub {
 export interface Store {
   id?: string;
   hubId: string;
+  shopName?: string;
   name: string;
   ownerName?: string;
   managerName?: string;
+  managerId?: string;
   address?: string;
   phone?: string;
   email?: string;
@@ -146,6 +148,8 @@ export interface Store {
   longitude?: number;
   upiId?: string;
   merchantName?: string;
+  /** Enables the Branch Purchase module (Purchases, Add Purchase, Add Purchase IMEI, Master Settings) for this branch */
+  purchaseEnabled?: boolean;
   /** Enables the Recharge module for this branch (managed from HO) */
   rechargeEnabled?: boolean;
   /** Cumulative counters maintained atomically by Billing (0 extra reads for HO) */
@@ -167,11 +171,29 @@ export interface StockTransferItem {
   quantity: number;
   cost: number;
   mrp: number;
+  imei?: string;
+  picked?: boolean;
+  pickedAt?: any;
+  received?: boolean;
+  receivedAt?: any;
+  receivedBy?: string;
+  receivedByName?: string;
 }
+
+export type TransferStatus =
+  | 'triggered'
+  | 'picked'
+  | 'received'
+  | 'dispatched'
+  | 'pending'
+  | 'in-transit'
+  | 'completed'
+  | 'cancelled';
 
 export interface StockTransfer {
   id?: string;
   hubId: string;
+  transferType?: 'hq_to_branch' | 'branch_to_branch';
   fromStoreId: string;
   fromStoreName: string;
   toStoreId: string;
@@ -180,11 +202,18 @@ export interface StockTransfer {
   totalItems: number;
   totalQuantity: number;
   totalValue: number; // total cost value of transferred items
-  status: 'pending' | 'in-transit' | 'completed' | 'cancelled';
+  status: TransferStatus;
   notes?: string;
   createdAt: Date;
   createdBy: string;
   createdByName?: string;
+  triggeredAt?: Date;
+  pickedAt?: Date;
+  pickedBy?: string;
+  pickedByName?: string;
+  receivedAt?: Date;
+  receivedBy?: string;
+  receivedByName?: string;
   completedAt?: Date;
   completedBy?: string;
   completedByName?: string;
@@ -196,6 +225,9 @@ export interface StockTransfer {
 export interface User {
   uid: string;
   email: string;
+  phone?: string;
+  address?: string;
+  joiningDate?: string;
   role: UserRole;
   displayName?: string;
   name?: string;
@@ -207,10 +239,22 @@ export interface User {
   // Multi-store fields
   hubId?: string; // The hub this user belongs to
   storeId?: string; // The store this user is assigned to (null for hub-level users)
+  storeName?: string;
   scope?: 'hub' | 'store'; // Whether user operates at hub or store level
 }
 
-export type UserRole = 'owner' | 'hub-admin' | 'store-admin' | 'employee' | 'qr' | 'admin';
+export type UserRole =
+  | 'owner'
+  | 'hq-admin'
+  | 'hub-admin'
+  | 'store-admin'
+  | 'admin'
+  | 'manager'
+  | 'sales_person'
+  | 'technician'
+  | 'cashier'
+  | 'employee'
+  | 'qr';
 
 export interface ShopDetails {
   shopName: string;

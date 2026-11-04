@@ -1,55 +1,40 @@
-
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useAuth } from './AuthContext';
-import { getTodayAttendance } from '../utils/attendance';
+import React, { createContext, useContext } from 'react';
 import type { Attendance } from '../types';
 
 interface AttendanceContextType {
-    attendance: Attendance | null;
-    loading: boolean;
-    refreshAttendance: () => Promise<void>;
-    isCheckedIn: boolean;
+  attendance: Attendance | null;
+  loading: boolean;
+  refreshAttendance: () => Promise<void>;
+  isCheckedIn: boolean;
 }
 
 const AttendanceContext = createContext<AttendanceContextType | undefined>(undefined);
 
+/**
+ * Employee check-in/check-out is handled externally via a dedicated APK.
+ * This provider remains as a lightweight compatibility shim with zero Firestore reads.
+ */
 export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { currentUser } = useAuth();
-    const [attendance, setAttendance] = useState<Attendance | null>(null);
-    const [loading, setLoading] = useState(true);
+  const refreshAttendance = async () => {};
 
-    const refreshAttendance = useCallback(async () => {
-        if (currentUser?.role === 'employee') {
-            try {
-                const data = await getTodayAttendance(currentUser.uid, currentUser.storeId);
-                setAttendance(data);
-            } catch (error) {
-                console.error('Error fetching attendance in context:', error);
-                setAttendance(null);
-            }
-        } else {
-            setAttendance(null);
-        }
-        setLoading(false);
-    }, [currentUser]);
-
-    useEffect(() => {
-        refreshAttendance();
-    }, [refreshAttendance]);
-
-    const isCheckedIn = attendance?.status === 'checked-in';
-
-    return (
-        <AttendanceContext.Provider value={{ attendance, loading, refreshAttendance, isCheckedIn }}>
-            {children}
-        </AttendanceContext.Provider>
-    );
+  return (
+    <AttendanceContext.Provider
+      value={{
+        attendance: null,
+        loading: false,
+        refreshAttendance,
+        isCheckedIn: true,
+      }}
+    >
+      {children}
+    </AttendanceContext.Provider>
+  );
 };
 
 export const useAttendance = () => {
-    const context = useContext(AttendanceContext);
-    if (context === undefined) {
-        throw new Error('useAttendance must be used within an AttendanceProvider');
-    }
-    return context;
+  const context = useContext(AttendanceContext);
+  if (context === undefined) {
+    throw new Error('useAttendance must be used within an AttendanceProvider');
+  }
+  return context;
 };
