@@ -12,7 +12,8 @@ import {
   DollarSign, Plus, Trash2, Save, 
   Check, ArrowRight, ArrowLeft, Clipboard, AlertCircle, X,
   CreditCard, Banknote, QrCode, Split, Calendar, FileText, UserPlus, Phone, Hash, Truck,
-  ChevronLeft, ChevronRight, CheckCircle2, ShieldCheck, Package, Receipt, Eye, EyeOff
+  ChevronLeft, ChevronRight, CheckCircle2, ShieldCheck, Package, Receipt, Eye, EyeOff,
+  AlertTriangle
 } from 'lucide-react';
 import type { Purchase, PurchaseItem, Supplier, PaymentMode, PaymentSplit, Product, Brand, Category } from '../types';
 import { collection, addDoc, getDocs, query, where, updateDoc, doc, increment, Timestamp, orderBy, limit, getDoc } from 'firebase/firestore';
@@ -313,6 +314,7 @@ const AddPurchaseIMEI: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [purchaseDate, setPurchaseDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [supplierForm, setSupplierForm] = useState({
     name: '',
@@ -407,14 +409,197 @@ const AddPurchaseIMEI: React.FC = () => {
     return nextData;
   };
 
-  // Immediate switch to Step 2 without pre-blocking
+  // Switch to Step 2 IMEI sub-step with product validation
   const handleProceedToStep2 = (e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
+
+    if (items.length === 0) {
+      showToast('Products Required: Please add at least one product line', 'error');
+      return;
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.brand?.trim()) {
+        showToast(`Product Line #${i + 1}: Please select a Brand`, 'error');
+        document.getElementById(`cell-${i}-0`)?.focus();
+        return;
+      }
+      if (!item.model?.trim()) {
+        showToast(`Product Line #${i + 1} (${item.brand}): Model is required`, 'error');
+        document.getElementById(`cell-${i}-1`)?.focus();
+        return;
+      }
+      if (!item.category?.trim()) {
+        showToast(`Product Line #${i + 1} (${item.brand}): Please select a Category`, 'error');
+        document.getElementById(`cell-${i}-2`)?.focus();
+        return;
+      }
+      if (!item.quantity || Number(item.quantity) < 1) {
+        showToast(`Product Line #${i + 1} (${item.brand}): Quantity must be at least 1 unit`, 'error');
+        document.getElementById(`cell-${i}-4`)?.focus();
+        return;
+      }
+      if (Number(item.costPerUnit) <= 0) {
+        showToast(`Product Line #${i + 1} (${item.brand}): Cost per unit must be greater than 0`, 'error');
+        document.getElementById(`cell-${i}-5`)?.focus();
+        return;
+      }
+      if (!item.mop || Number(item.mop) <= 0) {
+        showToast(`Product Line #${i + 1} (${item.brand} ${item.model}): MOP is required and must be greater than 0`, 'error');
+        document.getElementById(`cell-${i}-6`)?.focus();
+        return;
+      }
+      if (!item.mrp || Number(item.mrp) <= 0) {
+        showToast(`Product Line #${i + 1} (${item.brand} ${item.model}): MRP is required and must be greater than 0`, 'error');
+        document.getElementById(`cell-${i}-7`)?.focus();
+        return;
+      }
+    }
+
     setImeiData(prev => getEnsuredImeiData(items, prev));
     setCurrentStep(2);
+  };
+
+  // Validation: Moving from Step 1 (Supplier) to Step 2
+  const validateStep1 = (): boolean => {
+    if (!selectedSupplierId?.trim()) {
+      showToast('Supplier Required: Please select a Supplier in Step 1 to proceed', 'error');
+      const supplierInput = document.getElementById('supplier-search-select') || document.querySelector('select[name="supplierId"]');
+      (supplierInput as HTMLElement)?.focus();
+      return false;
+    }
+    return true;
+  };
+
+  // Validation: Moving from Step 2 (Products & IMEIs) to Step 3 (Payment)
+  const validateStep2 = (): boolean => {
+    if (!validateStep1()) {
+      setPageStep(1);
+      return false;
+    }
+
+    if (items.length === 0) {
+      showToast('Products Required: Please add at least one product line in Step 2', 'error');
+      setCurrentStep(1);
+      return false;
+    }
+
+    // Check basic details (Brand, Model, Category, Quantity, Cost, MOP, MRP)
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.brand?.trim()) {
+        showToast(`Missing Brand: Product Line #${i + 1} has no Brand selected`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-0`)?.focus(), 100);
+        return false;
+      }
+      if (!item.model?.trim()) {
+        showToast(`Missing Model: Product Line #${i + 1} (${item.brand}) has no Model entered`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-1`)?.focus(), 100);
+        return false;
+      }
+      if (!item.category?.trim()) {
+        showToast(`Missing Category: Product Line #${i + 1} (${item.brand}) has no Category selected`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-2`)?.focus(), 100);
+        return false;
+      }
+      if (!item.quantity || Number(item.quantity) < 1) {
+        showToast(`Invalid Quantity: Product Line #${i + 1} (${item.brand}) must have at least 1 unit`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-4`)?.focus(), 100);
+        return false;
+      }
+      if (Number(item.costPerUnit) <= 0) {
+        showToast(`Missing Cost: Product Line #${i + 1} (${item.brand}) cost per unit must be greater than 0`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-5`)?.focus(), 100);
+        return false;
+      }
+      if (!item.mop || Number(item.mop) <= 0) {
+        showToast(`Missing MOP: Product Line #${i + 1} (${item.brand} ${item.model}) MOP is required and must be greater than 0`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-6`)?.focus(), 100);
+        return false;
+      }
+      if (!item.mrp || Number(item.mrp) <= 0) {
+        showToast(`Missing MRP: Product Line #${i + 1} (${item.brand} ${item.model}) MRP is required and must be greater than 0`, 'error');
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-7`)?.focus(), 100);
+        return false;
+      }
+    }
+
+    // Check IMEIs and HSN Codes for every unit
+    const ensuredImei = getEnsuredImeiData(items, imeiData);
+    for (let pIdx = 0; pIdx < items.length; pIdx++) {
+      const item = items[pIdx];
+      const qty = Math.max(1, Number(item.quantity) || 1);
+      const units = ensuredImei[pIdx] || [];
+
+      for (let uIdx = 0; uIdx < qty; uIdx++) {
+        const imeiVal = units[uIdx]?.imei?.trim();
+        const overallIdx = getOverallUnitIndex(pIdx, uIdx);
+        if (!imeiVal) {
+          showToast(`IMEI Required: Unit #${uIdx + 1} of "${item.brand} ${item.model || ''}" is missing a serial IMEI.`, 'error');
+          setCurrentStep(2);
+          setTimeout(() => {
+            const inputEl = document.querySelector(`[data-overall-idx="${overallIdx}"]`) as HTMLInputElement | null;
+            inputEl?.focus();
+          }, 100);
+          return false;
+        }
+
+        const hsnVal = units[uIdx]?.hcsCode?.trim() || item.hcsCode?.trim();
+        if (!hsnVal) {
+          showToast(`HSN Code Required: Unit #${uIdx + 1} of "${item.brand} ${item.model || ''}" is missing an HSN Code.`, 'error');
+          setCurrentStep(2);
+          setTimeout(() => {
+            const inputEl = document.querySelector(`[data-hsn-idx="${overallIdx}"]`) as HTMLInputElement | null;
+            inputEl?.focus();
+          }, 100);
+          return false;
+        }
+      }
+    }
+
+    // Check duplicates
+    const { duplicates } = getDuplicateImeiInfo();
+    if (duplicates.size > 0) {
+      const dup = Array.from(duplicates)[0];
+      showToast(`Duplicate IMEI "${dup}": Each physical unit must have a unique serial IMEI.`, 'error');
+      setCurrentStep(2);
+      return false;
+    }
+
+    return true;
+  };
+
+  // Centralized Stepper Navigation Guard
+  const handleStepNavigation = (targetStep: 1 | 2 | 3) => {
+    if (targetStep === pageStep) return;
+
+    if (targetStep === 1) {
+      setPageStep(1);
+      return;
+    }
+
+    if (targetStep === 2) {
+      if (!validateStep1()) return;
+      setPageStep(2);
+      return;
+    }
+
+    if (targetStep === 3) {
+      if (!validateStep2()) return;
+      setPageStep(3);
+      return;
+    }
   };
 
   const handleUnitImeiChange = (productIndex: number, unitIndex: number, value: string) => {
@@ -741,11 +926,12 @@ const AddPurchaseIMEI: React.FC = () => {
     currentStep
   ]);
 
-  const clearDraft = () => {
+  const confirmClearDraft = () => {
     localStorage.removeItem('addPurchaseIMEIDraft');
     setLastSaved(null);
     resetForm();
-    showToast('Draft cleared', 'info');
+    setShowClearModal(false);
+    showToast('Purchase draft cleared successfully', 'info');
   };
 
   const fetchBrandsAndCategories = async () => {
@@ -1276,38 +1462,75 @@ const AddPurchaseIMEI: React.FC = () => {
 
   // Comprehensive validation when submitting/saving the purchase
   const validateForSave = () => {
-    
+    // 0. Supplier check
+    if (!selectedSupplierId?.trim()) {
+      showToast('Cannot Save Purchase: Please select a Supplier in Step 1', 'error');
+      setPageStep(1);
+      return false;
+    }
 
     if (items.length === 0) {
-      showToast('Please add at least one product unit', 'error');
+      showToast('Cannot Save Purchase: Please add at least one product line in Step 2', 'error');
+      setPageStep(2);
       setCurrentStep(1);
       return false;
     }
 
-    // Check basic product details
+    // Check basic product details (Brand, Model, Category, Quantity, Cost, MOP, MRP)
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       if (!item.brand?.trim()) {
-        showToast(`Product #${i + 1}: Please select a Brand`, 'error');
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} has no Brand selected`, 'error');
         setPageStep(2);
         setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-0`)?.focus(), 100);
+        return false;
+      }
+      if (!item.model?.trim()) {
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} (${item.brand}) Model is required`, 'error');
+        setPageStep(2);
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-1`)?.focus(), 100);
         return false;
       }
       if (!item.category?.trim()) {
-        showToast(`Product #${i + 1}: Please select a Category`, 'error');
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} (${item.brand}) has no Category selected`, 'error');
         setPageStep(2);
         setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-2`)?.focus(), 100);
+        return false;
+      }
+      if (!item.quantity || Number(item.quantity) < 1) {
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} (${item.brand}) quantity must be at least 1 unit`, 'error');
+        setPageStep(2);
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-4`)?.focus(), 100);
         return false;
       }
       if (Number(item.costPerUnit) <= 0) {
-        showToast(`Product #${i + 1}: Cost per unit must be greater than 0`, 'error');
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} (${item.brand}) Cost per unit must be greater than 0`, 'error');
         setPageStep(2);
         setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-5`)?.focus(), 100);
+        return false;
+      }
+      if (!item.mop || Number(item.mop) <= 0) {
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} (${item.brand} ${item.model}) MOP is required and must be greater than 0`, 'error');
+        setPageStep(2);
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-6`)?.focus(), 100);
+        return false;
+      }
+      if (!item.mrp || Number(item.mrp) <= 0) {
+        showToast(`Cannot Save Purchase: Product Line #${i + 1} (${item.brand} ${item.model}) MRP is required and must be greater than 0`, 'error');
+        setPageStep(2);
+        setCurrentStep(1);
+        setTimeout(() => document.getElementById(`cell-${i}-7`)?.focus(), 100);
         return false;
       }
     }
 
-    // Check IMEIs for every unit
+    // Check IMEIs and HSN Codes for every unit
     const ensuredImei = getEnsuredImeiData(items, imeiData);
     for (let pIdx = 0; pIdx < items.length; pIdx++) {
       const item = items[pIdx];
@@ -1316,12 +1539,25 @@ const AddPurchaseIMEI: React.FC = () => {
 
       for (let uIdx = 0; uIdx < qty; uIdx++) {
         const imeiVal = units[uIdx]?.imei?.trim();
+        const overallIdx = getOverallUnitIndex(pIdx, uIdx);
         if (!imeiVal) {
-          showToast(`Unit #${uIdx + 1} of "${item.productName || item.brand}" is missing an IMEI`, 'error');
+          showToast(`Cannot Save Purchase: Unit #${uIdx + 1} of "${item.brand} ${item.model || ''}" is missing an IMEI`, 'error');
           setPageStep(2);
           setCurrentStep(2);
           setTimeout(() => {
-            const inputEl = document.querySelector(`[data-overall-idx="${getOverallUnitIndex(pIdx, uIdx)}"]`) as HTMLInputElement | null;
+            const inputEl = document.querySelector(`[data-overall-idx="${overallIdx}"]`) as HTMLInputElement | null;
+            inputEl?.focus();
+          }, 100);
+          return false;
+        }
+
+        const hsnVal = units[uIdx]?.hcsCode?.trim() || item.hcsCode?.trim();
+        if (!hsnVal) {
+          showToast(`Cannot Save Purchase: Unit #${uIdx + 1} of "${item.brand} ${item.model || ''}" is missing an HSN Code`, 'error');
+          setPageStep(2);
+          setCurrentStep(2);
+          setTimeout(() => {
+            const inputEl = document.querySelector(`[data-hsn-idx="${overallIdx}"]`) as HTMLInputElement | null;
             inputEl?.focus();
           }, 100);
           return false;
@@ -1660,8 +1896,9 @@ const AddPurchaseIMEI: React.FC = () => {
             {!isEditMode && lastSaved && (
               <button
                 type="button"
-                onClick={clearDraft}
-                className="text-xs text-rose-600 hover:text-rose-700 font-semibold px-2 py-1 rounded hover:bg-rose-50 transition-colors"
+                onClick={() => setShowClearModal(true)}
+                className="text-xs text-rose-600 hover:text-rose-700 font-semibold px-2 py-1 rounded hover:bg-rose-50 transition-colors cursor-pointer"
+                title="Discard this auto-saved draft"
               >
                 Clear
               </button>
@@ -1719,7 +1956,7 @@ const AddPurchaseIMEI: React.FC = () => {
                 {/* Step 1 */}
                 <button
                   type="button"
-                  onClick={() => setPageStep(1)}
+                  onClick={() => handleStepNavigation(1)}
                   title="Step 1: Supplier"
                   className={`flex-1 lg:flex-initial flex items-center ${isSidebarCollapsed ? 'lg:justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2'} rounded-lg text-left transition-all cursor-pointer ${
                     pageStep === 1
@@ -1752,7 +1989,7 @@ const AddPurchaseIMEI: React.FC = () => {
                 {/* Step 2 */}
                 <button
                   type="button"
-                  onClick={() => setPageStep(2)}
+                  onClick={() => handleStepNavigation(2)}
                   title="Step 2: Products & IMEIs"
                   className={`flex-1 lg:flex-initial flex items-center ${isSidebarCollapsed ? 'lg:justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2'} rounded-lg text-left transition-all cursor-pointer ${
                     pageStep === 2
@@ -1785,7 +2022,7 @@ const AddPurchaseIMEI: React.FC = () => {
                 {/* Step 3 */}
                 <button
                   type="button"
-                  onClick={() => setPageStep(3)}
+                  onClick={() => handleStepNavigation(3)}
                   title="Step 3: Payment & Save"
                   className={`flex-1 lg:flex-initial flex items-center ${isSidebarCollapsed ? 'lg:justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2'} rounded-lg text-left transition-all cursor-pointer ${
                     pageStep === 3
@@ -1879,6 +2116,17 @@ const AddPurchaseIMEI: React.FC = () => {
                         ))}
                       </select>
                     </div>
+
+                    {/* Missing Supplier Warning Banner */}
+                    {!selectedSupplierId && (
+                      <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="font-semibold block">Supplier Selection Required</strong>
+                          <span>Please select a supplier from the list above or click "+ Add New Supplier" to unlock Step 2 (Products & IMEIs).</span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Selected Supplier Information Preview */}
                     {selectedSupplierId && (() => {
@@ -1987,12 +2235,13 @@ const AddPurchaseIMEI: React.FC = () => {
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (!selectedSupplierId) {
-                        showToast('Note: Remember to select a supplier before saving', 'info');
+                      if (validateStep1()) {
+                        setPageStep(2);
                       }
-                      setPageStep(2);
                     }}
-                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition-all cursor-pointer"
+                    className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-semibold text-white shadow-xs transition-all cursor-pointer ${
+                      selectedSupplierId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-400 hover:bg-slate-500'
+                    }`}
                   >
                     <span>Proceed to Step 2: Products & IMEIs</span>
                     <ArrowRight className="w-4 h-4" />
@@ -2188,7 +2437,7 @@ const AddPurchaseIMEI: React.FC = () => {
                             />
                           </div>
                           <div>
-                            <label className="text-[11px] text-slate-500 block mb-1">Model</label>
+                            <label className="text-[11px] text-slate-500 block mb-1">Model *</label>
                             <input
                               type="text"
                               value={item.model}
@@ -2261,7 +2510,7 @@ const AddPurchaseIMEI: React.FC = () => {
 
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="text-[11px] text-slate-500 block mb-1">MOP (₹)</label>
+                            <label className="text-[11px] text-slate-500 block mb-1">MOP (₹) *</label>
                             <input
                               type="number"
                               value={item.mop || ''}
@@ -2271,7 +2520,7 @@ const AddPurchaseIMEI: React.FC = () => {
                             />
                           </div>
                           <div>
-                            <label className="text-[11px] text-slate-500 block mb-1">MRP (₹)</label>
+                            <label className="text-[11px] text-slate-500 block mb-1">MRP (₹) *</label>
                             <input
                               type="number"
                               value={item.mrp || ''}
@@ -2310,13 +2559,13 @@ const AddPurchaseIMEI: React.FC = () => {
                       <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-600 font-medium">
                         <th className="px-3 py-2.5 w-10 text-center">#</th>
                         <th className="px-3 py-2.5 min-w-[130px]">Brand *</th>
-                        <th className="px-3 py-2.5 min-w-[110px]">Model</th>
+                        <th className="px-3 py-2.5 min-w-[110px]">Model *</th>
                         <th className="px-3 py-2.5 min-w-[130px]">Category *</th>
                         {showProductName && <th className="px-3 py-2.5 min-w-[190px]">Product Name</th>}
                         <th className="px-3 py-2.5 w-20 text-center font-semibold text-slate-900 bg-slate-100/70">Qty *</th>
                         <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">Cost *</th>
-                        <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MOP (₹)</th>
-                        <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MRP (₹)</th>
+                        <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MOP (₹) *</th>
+                        <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MRP (₹) *</th>
                         <th className="px-2 py-2.5 w-24 text-right text-slate-600 font-medium bg-slate-100/40">Cost+GST</th>
                         <th className="px-2 py-2.5 w-24 text-right font-medium text-slate-900">Total Cost</th>
                         <th className="px-2 py-2.5 w-20 text-right text-slate-500">Margin</th>
@@ -2616,13 +2865,13 @@ const AddPurchaseIMEI: React.FC = () => {
                               <tr className="border-b border-slate-200 text-slate-500 font-medium">
                                 <th className="px-3 py-2 w-10 text-center">#</th>
                                 <th className="px-3 py-2 min-w-[110px]">Brand</th>
-                                <th className="px-3 py-2 min-w-[100px]">Model</th>
+                                <th className="px-3 py-2 min-w-[100px]">Model *</th>
                                 <th className="px-3 py-2 min-w-[110px]">Category</th>
                                 {showProductName && <th className="px-3 py-2 min-w-[160px]">Product Name</th>}
                                 <th className="px-3 py-2 w-16 text-center font-bold text-slate-900 bg-slate-100/70">Qty</th>
                                 <th className="px-3 py-2 min-w-[130px] w-32 text-right">Cost</th>
-                                <th className="px-3 py-2 min-w-[130px] w-32 text-right">MOP</th>
-                                <th className="px-3 py-2 min-w-[130px] w-32 text-right">MRP</th>
+                                <th className="px-3 py-2 min-w-[130px] w-32 text-right">MOP *</th>
+                                <th className="px-3 py-2 min-w-[130px] w-32 text-right">MRP *</th>
                                 <th className="px-2 py-2 w-24 text-right text-slate-600 font-medium bg-slate-100/50">Cost+GST</th>
                                 <th className="px-2 py-2 w-24 text-right font-medium text-slate-900">Total Cost</th>
                                 <th className="px-2 py-2 w-20 text-right text-slate-500">Margin</th>
@@ -2665,7 +2914,7 @@ const AddPurchaseIMEI: React.FC = () => {
                         {/* Physical Unit IMEI & HSN Entry Rows */}
                         <div className="divide-y divide-slate-100 p-2 sm:p-3 bg-white">
                           <div className="text-[11px] font-semibold text-slate-500 px-3 py-1 mb-1">
-                            Assign IMEI & HSN for {qty} Physical Unit{qty === 1 ? '' : 's'}:
+                            Assign IMEI * & HSN Code * for {qty} Physical Unit{qty === 1 ? '' : 's'}:
                           </div>
                           {Array.from({ length: qty }).map((_, uIndex) => {
                             const u = units[uIndex] || { imei: '', hcsCode: '' };
@@ -2693,7 +2942,7 @@ const AddPurchaseIMEI: React.FC = () => {
                                     onChange={(e) => handleUnitImeiChange(pIndex, uIndex, e.target.value)}
                                     onKeyDown={(e) => handleStep2ImeiKeyDown(e, pIndex, uIndex)}
                                     data-overall-idx={overallUnitIndex}
-                                    placeholder={`Enter or scan IMEI for Unit #${uIndex + 1}`}
+                                    placeholder={`IMEI * (Unit #${uIndex + 1})`}
                                     className={`w-full px-3 py-1.5 text-xs font-mono uppercase rounded-lg border transition-colors outline-none ${
                                       isDuplicate
                                         ? 'border-rose-400 bg-rose-50/40 text-rose-900 focus:ring-1 focus:ring-rose-500'
@@ -2714,7 +2963,8 @@ const AddPurchaseIMEI: React.FC = () => {
                                     type="text"
                                     value={u.hcsCode}
                                     onChange={(e) => handleUnitHcsChange(pIndex, uIndex, e.target.value)}
-                                    placeholder="HSN Code"
+                                    data-hsn-idx={overallUnitIndex}
+                                    placeholder="HSN Code *"
                                     className="w-full px-3 py-1.5 text-xs font-mono uppercase rounded-lg border border-slate-200 bg-white text-slate-900 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
                                   />
                                   {uIndex === 0 && qty > 1 && (
@@ -2790,10 +3040,22 @@ const AddPurchaseIMEI: React.FC = () => {
 
                   <button
                     type="button"
-                    onClick={() => setPageStep(3)}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-2xs transition-all cursor-pointer"
+                    onClick={() => {
+                      if (validateStep2()) {
+                        setPageStep(3);
+                      }
+                    }}
+                    className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-xs font-semibold text-white shadow-2xs transition-all cursor-pointer ${
+                      filledImeisCount === totalQuantity && totalQuantity > 0 && duplicates.size === 0
+                        ? 'bg-blue-600 hover:bg-blue-700'
+                        : 'bg-amber-600 hover:bg-amber-700'
+                    }`}
                   >
-                    <span>Next: Payment Details ({totalQuantity} Units)</span>
+                    <span>
+                      {filledImeisCount === totalQuantity && totalQuantity > 0
+                        ? `Next: Payment Details (${totalQuantity} Units)`
+                        : `Next: Payment Details (${filledImeisCount}/${totalQuantity} IMEIs Scanned)`}
+                    </span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -3749,6 +4011,59 @@ const AddPurchaseIMEI: React.FC = () => {
         document.body
       )}
       
+
+      {/* Confirmation Modal for Clearing Draft */}
+      {showClearModal && createPortal(
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setShowClearModal(false)}
+        >
+          <div 
+            className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 relative animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-11 h-11 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center shrink-0 text-rose-600">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold text-slate-900 leading-snug">
+                  Clear Purchase Draft?
+                </h3>
+                <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                  Are you sure you want to discard this purchase draft? This will clear the selected supplier, 
+                  <strong> {items.length} product line{items.length === 1 ? '' : 's'}</strong>, and 
+                  <strong> {filledImeisCount} scanned IMEI{filledImeisCount === 1 ? '' : 's'}</strong>.
+                </p>
+
+                <div className="mt-3 p-2.5 bg-rose-50/80 rounded-lg border border-rose-100 text-[11px] text-rose-800 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>This action is permanent and cannot be undone.</span>
+                </div>
+
+                <div className="mt-5 flex items-center justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowClearModal(false)}
+                    className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    Keep Draft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmClearDraft}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Yes, Discard Draft</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Bulk Paste Modal */}
       {bulkPasteModal && createPortal(
