@@ -1,9 +1,9 @@
 /**
- * Role-Based Access Control (RBAC) Configuration — Branch Application
+ * Role-Based Access Control (RBAC) Configuration — Head Office (HQ)
  *
  * Roles:
- *   Owner / HQ: owner, hq-admin, hub-admin (owner credentials work on every branch)
- *   Branch:     admin, store-admin, manager, sales_person, technician, cashier, employee
+ *   HQ:     owner, hq-admin (alias: hub-admin)
+ *   Branch: admin (alias: store-admin), manager, sales_person, technician, cashier, employee
  */
 
 import type { UserRole } from '../types';
@@ -15,7 +15,7 @@ export interface RoutePermission {
   category?: string;
 }
 
-const ALL_BRANCH_ROLES: UserRole[] = [
+const ALL_ROLES: UserRole[] = [
   'owner',
   'hq-admin',
   'hub-admin',
@@ -28,7 +28,7 @@ const ALL_BRANCH_ROLES: UserRole[] = [
   'employee',
 ];
 
-const BRANCH_MANAGER_ROLES: UserRole[] = [
+const HQ_AND_ADMIN_ROLES: UserRole[] = [
   'owner',
   'hq-admin',
   'hub-admin',
@@ -38,30 +38,63 @@ const BRANCH_MANAGER_ROLES: UserRole[] = [
 ];
 
 export const ROUTE_PERMISSIONS: Record<string, UserRole[]> = {
-  // ── Mandatory Branch Routes ──
-  '/dashboard':                 ALL_BRANCH_ROLES,
-  '/billing':                   ALL_BRANCH_ROLES,
-  '/add-expense':               ALL_BRANCH_ROLES,
-  '/customers':                 ALL_BRANCH_ROLES,
-  '/products':                  ALL_BRANCH_ROLES,
-  '/add-product':               BRANCH_MANAGER_ROLES,
-  '/stock-received':            ALL_BRANCH_ROLES,
-  '/stock-transfer':            ALL_BRANCH_ROLES,
-  '/stock-requirement':         ALL_BRANCH_ROLES,
-  '/defect-management':         ALL_BRANCH_ROLES,
-  '/service-management':        ALL_BRANCH_ROLES,
-  '/service-management/create': ALL_BRANCH_ROLES,
-  '/overall-sales':             BRANCH_MANAGER_ROLES,
-  '/sales-report':              BRANCH_MANAGER_ROLES,
-  '/settlement':                BRANCH_MANAGER_ROLES,
-  '/employee-management':       ALL_BRANCH_ROLES,
-  '/employee-profile':          ALL_BRANCH_ROLES,
+  // ── Dashboard & Head Office ──
+  '/dashboard':         ALL_ROLES,
+  '/hub-dashboard':     ['owner', 'hq-admin', 'hub-admin'],
+  '/branches':          ['owner', 'hq-admin', 'hub-admin'],
+  '/branch-management': ['owner', 'hq-admin', 'hub-admin'],
+  '/store-management':  ['owner', 'hq-admin', 'hub-admin'],
+  '/stock-transfer':    ['owner', 'hq-admin', 'hub-admin'],
 
-  // ── Optional Branch Purchase Routes (Gated by store.purchaseEnabled) ──
-  '/purchases':                 BRANCH_MANAGER_ROLES,
-  '/add-purchase':              BRANCH_MANAGER_ROLES,
-  '/add-purchase-imei':         BRANCH_MANAGER_ROLES,
-  '/master':                    BRANCH_MANAGER_ROLES,
+  // ── Billing & Quotations (Quotations HQ only) ──
+  '/billing':           ALL_ROLES,
+  '/quotations':        ['owner', 'hq-admin', 'hub-admin'],
+  '/add-entry':         ALL_ROLES,
+
+  // ── Expenses ──
+  '/add-expense':       HQ_AND_ADMIN_ROLES,
+
+  // ── Products & Inventory ──
+  '/products':          ALL_ROLES,
+  '/add-product':       HQ_AND_ADMIN_ROLES,
+  '/delete-products-by-brand-category': ['owner', 'hq-admin', 'hub-admin'],
+  '/bulk-delete-products': ['owner', 'hq-admin', 'hub-admin'],
+  '/master':            HQ_AND_ADMIN_ROLES,
+  '/stock-value':       ['owner', 'hq-admin', 'hub-admin'],
+  '/defect-management': HQ_AND_ADMIN_ROLES,
+  '/stock-requirement': ALL_ROLES,
+
+  // ── Purchases & Suppliers ──
+  '/purchases':         HQ_AND_ADMIN_ROLES,
+  '/add-purchase':      HQ_AND_ADMIN_ROLES,
+  '/add-purchase-imei': HQ_AND_ADMIN_ROLES,
+  '/suppliers':            HQ_AND_ADMIN_ROLES,
+  '/suppliers/:id':        HQ_AND_ADMIN_ROLES,
+  '/supplier-ledger/:id':  HQ_AND_ADMIN_ROLES,
+
+  // ── Service Management ──
+  '/service-management': ALL_ROLES,
+  '/service-management/create': ALL_ROLES,
+
+  // ── Finance & Reports ──
+  '/overall-sales':     HQ_AND_ADMIN_ROLES,
+  '/settlement':        HQ_AND_ADMIN_ROLES,
+  '/sales-report':      HQ_AND_ADMIN_ROLES,
+
+  // ── Customer Management ──
+  '/customers':         ALL_ROLES,
+
+  // ── Employee & User Administration (HQ Only) ──
+  '/employee-management': ['owner', 'hq-admin', 'hub-admin', 'admin', 'store-admin', 'manager'],
+  '/employee-profile':    ALL_ROLES,
+  '/add-employee':        ['owner', 'hq-admin', 'hub-admin'],
+  '/create-employee':     ['owner', 'hq-admin', 'hub-admin'],
+  '/users':               ['owner', 'hq-admin', 'hub-admin'],
+
+  // ── Settings ──
+  '/settings':          ['owner', 'hq-admin', 'hub-admin'],
+  '/about':             ['owner', 'hq-admin', 'hub-admin'],
+  '/migration':         ['owner'],
 };
 
 export interface FeaturePermissions {
@@ -93,8 +126,8 @@ const OWNER_PERMISSIONS: FeaturePermissions = {
   canViewCost: true,
   canViewProfit: true,
   canManageEmployees: true,
-  canManageUsers: false, // User creation is HQ only
-  canManageSuppliers: false, // Suppliers are exclusive to HQ Hub procurement
+  canManageUsers: true,
+  canManageSuppliers: true,
   canAddPurchase: true,
   canAddExpense: true,
   canViewReports: true,
@@ -103,28 +136,28 @@ const OWNER_PERMISSIONS: FeaturePermissions = {
   canManageMaster: true,
   canViewStockValue: true,
   canManageDefects: true,
-  canManageProviders: false,
+  canManageProviders: true,
 };
 
-const BRANCH_ADMIN_PERMISSIONS: FeaturePermissions = {
+const ADMIN_PERMISSIONS: FeaturePermissions = {
   canEditProduct: true,
   canDeleteProduct: true,
   canAddProduct: true,
   canEditPrice: true,
   canViewCost: true,
   canViewProfit: true,
-  canManageEmployees: false, // Controlled from HQ
-  canManageUsers: false,     // Controlled from HQ
-  canManageSuppliers: false, // Suppliers are exclusive to HQ Hub procurement
+  canManageEmployees: true,
+  canManageUsers: true,
+  canManageSuppliers: true,
   canAddPurchase: true,
   canAddExpense: true,
   canViewReports: true,
   canExportData: true,
   canDeleteEntry: true,
   canManageMaster: true,
-  canViewStockValue: false,
+  canViewStockValue: true,
   canManageDefects: true,
-  canManageProviders: false,
+  canManageProviders: true,
 };
 
 const STAFF_PERMISSIONS: FeaturePermissions = {
@@ -138,23 +171,23 @@ const STAFF_PERMISSIONS: FeaturePermissions = {
   canManageUsers: false,
   canManageSuppliers: false,
   canAddPurchase: false,
-  canAddExpense: true,
+  canAddExpense: false,
   canViewReports: false,
   canExportData: false,
   canDeleteEntry: false,
   canManageMaster: false,
   canViewStockValue: false,
-  canManageDefects: true,
+  canManageDefects: false,
   canManageProviders: false,
 };
 
 const FEATURE_PERMISSIONS_MAP: Record<UserRole, FeaturePermissions> = {
   'owner': OWNER_PERMISSIONS,
-  'hq-admin': BRANCH_ADMIN_PERMISSIONS,
-  'hub-admin': BRANCH_ADMIN_PERMISSIONS,
-  'store-admin': BRANCH_ADMIN_PERMISSIONS,
-  'admin': BRANCH_ADMIN_PERMISSIONS,
-  'manager': BRANCH_ADMIN_PERMISSIONS,
+  'hq-admin': ADMIN_PERMISSIONS,
+  'hub-admin': ADMIN_PERMISSIONS,
+  'store-admin': { ...ADMIN_PERMISSIONS, canViewStockValue: false },
+  'admin': { ...ADMIN_PERMISSIONS, canViewStockValue: false },
+  'manager': { ...ADMIN_PERMISSIONS, canViewStockValue: false, canManageUsers: false },
   'sales_person': STAFF_PERMISSIONS,
   'technician': STAFF_PERMISSIONS,
   'cashier': STAFF_PERMISSIONS,
