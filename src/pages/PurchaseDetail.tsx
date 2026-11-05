@@ -351,11 +351,10 @@ const PurchaseDetail: React.FC = () => {
             <button
               onClick={() => setRevealCosts(!revealCosts)}
               title={revealCosts ? "Hide actual costs (use secret code)" : "Reveal actual costs"}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                revealCosts
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${revealCosts
                   ? 'bg-amber-50 text-amber-800 border-amber-300 shadow-2xs'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shadow-2xs'
-              }`}
+                }`}
             >
               {revealCosts ? (
                 <>
@@ -931,161 +930,161 @@ const PurchaseDetail: React.FC = () => {
             >
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-                    <Printer className="w-5 h-5" />
+                    <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                      <Printer className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">Print Barcode Labels</h3>
+                      <p className="text-xs text-slate-500">Configure sticker copies to print</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">Print Barcode Labels</h3>
-                    <p className="text-xs text-slate-500">Configure sticker copies to print</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowPrintModal(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="mb-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500 font-medium">Product Item:</span>
-                  <span className="font-bold text-slate-900 truncate max-w-[220px]">{productToPrint.name}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-500 font-medium">Inward Stock Quantity:</span>
-                  <span className="font-bold text-blue-700 font-mono">{productToPrint.quantity} units</span>
-                </div>
-              </div>
-
-              <div className="mb-5">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Number of Copies
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={printQuantity}
-                  onChange={(e) => setPrintQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono font-bold text-lg text-center"
-                />
-                <div className="mt-2.5 flex gap-2">
-                  {[1, 5, 10].map(qty => (
-                    <button
-                      key={qty}
-                      type="button"
-                      onClick={() => setPrintQuantity(qty)}
-                      className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
-                    >
-                      {qty}
-                    </button>
-                  ))}
                   <button
-                    type="button"
-                    onClick={() => setPrintQuantity(productToPrint.quantity)}
-                    className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                    onClick={() => setShowPrintModal(false)}
+                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
                   >
-                    Match ({productToPrint.quantity})
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
-              </div>
 
-              <div className="flex gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setShowPrintModal(false)}
-                  className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-xs font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmPrintLabel}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white py-2.5 px-4 rounded-xl transition-all text-xs font-bold shadow-xs hover:shadow-sm flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Print {printQuantity} Sticker{printQuantity > 1 ? 's' : ''}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Bulk Print Labels Modal */}
-        {showPrintAllModal && purchase && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150"
-            onClick={() => setShowPrintAllModal(false)}
-          >
-            <div
-              className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6 w-full max-w-xl max-h-[85vh] flex flex-col border border-slate-200/90"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-                    <Printer className="w-5 h-5" />
+                  <div className="mb-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 font-medium">Product Item:</span>
+                      <span className="font-bold text-slate-900 truncate max-w-[220px]">{productToPrint.name}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 font-medium">Inward Stock Quantity:</span>
+                      <span className="font-bold text-blue-700 font-mono">{productToPrint.quantity} units</span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">Batch Barcode Printing</h3>
-                    <p className="text-xs text-slate-500">
-                      Select items and configure copies • {selectedItems.length} of {purchase.items.length} selected
-                    </p>
+
+                  <div className="mb-5">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                      Number of Copies
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000"
+                      value={printQuantity}
+                      onChange={(e) => setPrintQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono font-bold text-lg text-center"
+                    />
+                    <div className="mt-2.5 flex gap-2">
+                      {[1, 5, 10].map(qty => (
+                        <button
+                          key={qty}
+                          type="button"
+                          onClick={() => setPrintQuantity(qty)}
+                          className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                        >
+                          {qty}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setPrintQuantity(productToPrint.quantity)}
+                        className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Match ({productToPrint.quantity})
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowPrintModal(false)}
+                      className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-xs font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={confirmPrintLabel}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white py-2.5 px-4 rounded-xl transition-all text-xs font-bold shadow-xs hover:shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>Print {printQuantity} Sticker{printQuantity > 1 ? 's' : ''}</span>
+                    </button>
                   </div>
                 </div>
-                <button
+              </div>
+        )}
+
+              {/* Bulk Print Labels Modal */}
+              {showPrintAllModal && purchase && (
+                <div
+                  className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150"
                   onClick={() => setShowPrintAllModal(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
                 >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+                  <div
+                    className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6 w-full max-w-xl max-h-[85vh] flex flex-col border border-slate-200/90"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                            <Printer className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="text-base font-bold text-slate-900">Batch Barcode Printing</h3>
+                            <p className="text-xs text-slate-500">
+                              Select items and configure copies • {selectedItems.length} of {purchase.items.length} selected
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setShowPrintAllModal(false)}
+                          className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
 
-              {/* Quick Actions Bar */}
-              <div className="mb-3.5 flex gap-2 flex-wrap text-xs">
-                <button
-                  type="button"
-                  onClick={toggleAllSelection}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition-colors cursor-pointer"
-                >
-                  {selectedItems.length === purchase.items.length ? 'Deselect All' : 'Select All'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const updates: { [key: string]: number } = {};
-                    purchase.items.forEach((_, idx) => updates[idx] = 1);
-                    setPrintQuantities(updates);
-                  }}
-                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors cursor-pointer"
-                >
-                  Set All to 1
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const updates: { [key: string]: number } = {};
-                    purchase.items.forEach((item, idx) => updates[idx] = item.quantity);
-                    setPrintQuantities(updates);
-                  }}
-                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg font-semibold transition-colors cursor-pointer"
-                >
-                  Match Inward Stock
-                </button>
-              </div>
+                      {/* Quick Actions Bar */}
+                      <div className="mb-3.5 flex gap-2 flex-wrap text-xs">
+                        <button
+                          type="button"
+                          onClick={toggleAllSelection}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition-colors cursor-pointer"
+                        >
+                          {selectedItems.length === purchase.items.length ? 'Deselect All' : 'Select All'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updates: { [key: string]: number } = {};
+                            purchase.items.forEach((_, idx) => updates[idx] = 1);
+                            setPrintQuantities(updates);
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors cursor-pointer"
+                        >
+                          Set All to 1
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updates: { [key: string]: number } = {};
+                            purchase.items.forEach((item, idx) => updates[idx] = item.quantity);
+                            setPrintQuantities(updates);
+                          }}
+                          className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg font-semibold transition-colors cursor-pointer"
+                        >
+                          Match Inward Stock
+                        </button>
+                      </div>
 
-              {/* Products List Scrollable Area */}
-              <div className="flex-1 overflow-y-auto space-y-2 mb-4 pr-1">
-                {purchase.items.map((item, index) => {
-                  const isSelected = selectedItems.includes(index);
-                  return (
-                    <div
-                      key={index}
-                      className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                        isSelected ? 'bg-blue-50/50 border-blue-200 shadow-2xs' : 'bg-slate-50/60 border-slate-200 opacity-60'
-                      }`}
-                    >
+                      {/* Products List Scrollable Area */}
+                      <div className="flex-1 overflow-y-auto space-y-2 mb-4 pr-1">
+                        {purchase.items.map((item, index) => {
+                          const isSelected = selectedItems.includes(index);
+                          return (
+                            <div
+                              key={index}
+                              className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                                isSelected ? 'bg-blue-50/50 border-blue-200 shadow-2xs' : 'bg-slate-50/60 border-slate-200 opacity-60'
+                              }`}
+                            >
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -1096,7 +1095,7 @@ const PurchaseDetail: React.FC = () => {
                         <p className="font-bold text-slate-900 truncate text-xs">{item.productName}</p>
                         <div className="flex gap-2 text-[11px] text-slate-500 mt-0.5">
                           <span>Stock: <strong className="text-slate-800">{item.quantity}</strong></span>
-                          <span>• {item.brand} {item.model ? `(${item.model})` : ''}</span>
+                          <span>• {item.brand} {item.model ? `(${ item.model })` : ''}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
