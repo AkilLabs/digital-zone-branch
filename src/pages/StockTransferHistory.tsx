@@ -29,8 +29,9 @@ import {
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useStore } from '../context/StoreContext';
-import type { StockTransfer, StockTransferItem } from '../types';
+import type { StockTransfer } from '../types';
 import Navbar from '../components/Navbar';
+import { printStockTransferInvoice } from '../utils/printStockTransferInvoice';
 
 export const StockTransferHistory: React.FC = () => {
   const { stores, currentHub } = useStore();
@@ -277,148 +278,20 @@ export const StockTransferHistory: React.FC = () => {
     };
   }, [transfers]);
 
-  // Print delivery challan
+  // Print stock transfer invoice & gate pass with company logo
   const handlePrintDeliveryChallan = (transfer: StockTransfer) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('Please allow popups to print delivery challan');
-      return;
-    }
-
-    const itemsRows = (transfer.items || [])
-      .map(
-        (it: StockTransferItem, idx: number) => `
-      <tr>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; text-align: center; color: #475569;">${idx + 1}</td>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; font-weight: 600; color: #0f172a;">${it.productName}</td>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; font-family: monospace; font-size: 11px;">${it.productCode || '—'}</td>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; color: #475569;">${it.brand || ''} ${it.category ? `• ${it.category}` : ''}</td>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; text-align: right; font-weight: 700; color: #0f172a;">${it.quantity}</td>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; text-align: right; color: #475569;">₹${(it.cost || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-        <td style="border: 1px solid #cbd5e1; padding: 7px 10px; text-align: right; font-weight: 700; color: #0f172a;">₹${((it.cost || 0) * (it.quantity || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-      </tr>
-    `
-      )
-      .join('');
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Stock Delivery Challan - ${transfer.id}</title>
-          <style>
-            @page { size: A4; margin: 12mm 15mm; }
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0f172a; margin: 0; padding: 16px; font-size: 12px; }
-            .header-bar { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 16px; }
-            .brand-name { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: #0284c7; }
-            .challan-title { font-size: 16px; font-weight: 800; text-transform: uppercase; color: #0f172a; margin-top: 2px; }
-            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
-            .meta-box h4 { margin: 0 0 4px 0; font-size: 10px; font-weight: 700; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
-            .meta-box p { margin: 0; font-size: 13px; font-weight: 600; color: #0f172a; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11.5px; }
-            th { background: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #475569; }
-            .summary-box { display: flex; justify-content: flex-end; margin-bottom: 30px; }
-            .summary-card { width: 280px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 14px; }
-            .summary-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
-            .summary-row.total { border-top: 1px solid #cbd5e1; font-weight: 800; font-size: 13px; margin-top: 4px; padding-top: 6px; color: #0f172a; }
-            .signatures { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 45px; text-align: center; }
-            .sig-line { border-top: 1px dashed #64748b; padding-top: 6px; font-size: 11px; font-weight: 600; color: #475569; }
-            @media print {
-              body { padding: 0; }
-              .no-print { display: none; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header-bar">
-            <div>
-              <div class="brand-name">${currentHub?.name || 'DIGITAL ZONE'}</div>
-              <div style="font-size: 11px; color: #64748b;">Central Inventory & Multi-Branch Logistics</div>
-            </div>
-            <div style="text-align: right;">
-              <div class="challan-title">Stock Transfer Challan</div>
-              <div style="font-family: monospace; font-size: 12px; font-weight: 700; color: #0284c7;">#${transfer.id}</div>
-              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Date: ${formatDateTime(transfer.createdAt)}</div>
-            </div>
-          </div>
-
-          <div class="meta-grid">
-            <div class="meta-box">
-              <h4>Source Location (Dispatched From)</h4>
-              <p>${transfer.fromStoreName || 'Central Warehouse'}</p>
-              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Operator: ${transfer.createdByName || transfer.createdBy || 'HQ Admin'}</div>
-            </div>
-            <div class="meta-box">
-              <h4>Destination Location (Delivered To)</h4>
-              <p>${transfer.toStoreName || 'Branch Store'}</p>
-              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Status: ${(transfer.status || 'Completed').toUpperCase()}</div>
-            </div>
-          </div>
-
-          ${
-            transfer.notes
-              ? `<div style="margin-bottom: 16px; padding: 8px 12px; background: #fffbeb; border: 1px solid #fef3c7; border-radius: 6px; font-size: 11.5px; color: #92400e;">
-                  <strong>Dispatch Notes / Waybill:</strong> ${transfer.notes}
-                 </div>`
-              : ''
-          }
-
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 40px; text-align: center;">#</th>
-                <th>Product Description</th>
-                <th>SKU / Code</th>
-                <th>Brand / Category</th>
-                <th style="width: 70px; text-align: right;">Qty</th>
-                <th style="width: 90px; text-align: right;">Unit Cost</th>
-                <th style="width: 100px; text-align: right;">Total Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsRows}
-            </tbody>
-          </table>
-
-          <div class="summary-box">
-            <div class="summary-card">
-              <div class="summary-row">
-                <span style="color: #64748b;">Total Line SKUs:</span>
-                <span style="font-weight: 700;">${transfer.totalItems || transfer.items?.length || 0}</span>
-              </div>
-              <div class="summary-row">
-                <span style="color: #64748b;">Total Units Transferred:</span>
-                <span style="font-weight: 700;">${transfer.totalQuantity || 0} PCS</span>
-              </div>
-              <div class="summary-row total">
-                <span>Total Consignment Value:</span>
-                <span>₹${(transfer.totalValue || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="signatures">
-            <div>
-              <div class="sig-line">Dispatched By (Warehouse)</div>
-            </div>
-            <div>
-              <div class="sig-line">Carrier / Driver</div>
-            </div>
-            <div>
-              <div class="sig-line">Received & Verified By (Branch)</div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-    printWindow.onload = () => {
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    };
+    const toStore = stores.find((s) => s.id === transfer.toStoreId);
+    const fromStore = stores.find((s) => s.id === transfer.fromStoreId);
+    printStockTransferInvoice({
+      transfer,
+      hubName: currentHub?.name || 'DIGITAL ZONE',
+      hubAddress: currentHub?.address || 'Head Office & Central Warehouse',
+      hubPhone: currentHub?.phone || '+91 98765 43210',
+      hubEmail: currentHub?.email || 'support@digitalzone.com',
+      hubGst: (currentHub as any)?.gst || '33AAAAA0000A1Z5',
+      consignorAddress: fromStore?.address,
+      consigneeAddress: toStore?.address,
+    });
   };
 
   // Export filtered list to CSV

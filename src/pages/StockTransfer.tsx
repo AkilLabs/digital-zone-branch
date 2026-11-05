@@ -8,6 +8,7 @@ import { db } from '../config/firebase';
 import type { Product, StockTransfer, StockTransferItem } from '../types';
 import { syncStoreProducts, updateLocalProductQuantities, upsertLocalProducts } from '../utils/productSyncCache';
 import { useInvalidateCache } from '../hooks/useFirestoreCache';
+import { printStockTransferInvoice } from '../utils/printStockTransferInvoice';
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -468,112 +469,24 @@ const StockTransferPage: React.FC = () => {
     notes?: string;
     date: Date;
   }) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('Please allow popups to print delivery challan');
-      return;
-    }
-
-    const itemsRows = transfer.items
-      .map(
-        (it, idx) => `
-      <tr>
-        <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: center;">${idx + 1}</td>
-        <td style="border: 1px solid #e2e8f0; padding: 8px; font-weight: bold;">${it.productName}</td>
-        <td style="border: 1px solid #e2e8f0; padding: 8px; font-family: monospace;">${it.productCode || '—'}</td>
-        <td style="border: 1px solid #e2e8f0; padding: 8px;">${it.brand} • ${it.category}</td>
-        <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right; font-weight: bold;">${it.quantity}</td>
-        <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">₹${(it.cost || 0).toFixed(2)}</td>
-        <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right; font-weight: bold;">₹${((it.cost || 0) * it.quantity).toFixed(2)}</td>
-      </tr>
-    `
-      )
-      .join('');
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Stock Transfer Note - ${transfer.id}</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1e293b; }
-            .header { border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; }
-            .title { font-size: 20px; font-weight: bold; text-transform: uppercase; color: #0f172a; }
-            .meta { font-size: 12px; color: #64748b; line-height: 1.5; }
-            .route-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; justify-content: space-between; }
-            table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 24px; }
-            th { background: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px; text-align: left; }
-            .signatures { display: flex; justify-content: space-between; margin-top: 48px; padding-top: 24px; font-size: 12px; }
-            .sig-line { width: 180px; border-top: 1px solid #94a3b8; text-align: center; padding-top: 6px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <div class="title">${currentHub?.name || 'Digital Zone Head Office'}</div>
-              <div class="meta">Inter-Store Stock Dispatch Note / Gate Pass</div>
-            </div>
-            <div style="text-align: right;" class="meta">
-              <div><strong>Transfer ID:</strong> ${transfer.id}</div>
-              <div><strong>Date:</strong> ${transfer.date.toLocaleString()}</div>
-            </div>
-          </div>
-
-          <div class="route-card">
-            <div>
-              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: bold;">Origin (From):</div>
-              <div style="font-size: 14px; font-weight: bold;">${transfer.fromName}</div>
-            </div>
-            <div style="font-size: 18px; color: #3b82f6; align-self: center;">➔</div>
-            <div style="text-align: right;">
-              <div style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: bold;">Destination (To):</div>
-              <div style="font-size: 14px; font-weight: bold;">${transfer.toName}</div>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 36px; text-align: center;">#</th>
-                <th>Product Description</th>
-                <th>SKU Code</th>
-                <th>Brand / Category</th>
-                <th style="text-align: right; width: 60px;">Qty</th>
-                <th style="text-align: right; width: 90px;">Unit Rate</th>
-                <th style="text-align: right; width: 100px;">Total Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsRows}
-            </tbody>
-            <tfoot>
-              <tr style="background: #f8fafc; font-weight: bold;">
-                <td colspan="4" style="border: 1px solid #cbd5e1; padding: 10px; text-align: right;">Grand Total:</td>
-                <td style="border: 1px solid #cbd5e1; padding: 10px; text-align: right;">${transfer.totalQuantity}</td>
-                <td style="border: 1px solid #cbd5e1; padding: 10px;"></td>
-                <td style="border: 1px solid #cbd5e1; padding: 10px; text-align: right; color: #0284c7;">₹${transfer.totalValue.toFixed(2)}</td>
-              </tr>
-            </tfoot>
-          </table>
-
-          ${transfer.notes ? `<div style="font-size: 12px; margin-bottom: 24px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;"><strong>Remarks / Instructions:</strong> ${transfer.notes}</div>` : ''}
-
-          <div class="signatures">
-            <div class="sig-line">Prepared & Dispatched By</div>
-            <div class="sig-line">Carrier / Driver</div>
-            <div class="sig-line">Received & Verified By</div>
-          </div>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
-    printWindow.onload = () => {
-      setTimeout(() => {
-        printWindow.print();
-      }, 500);
-    };
+    printStockTransferInvoice({
+      transfer: {
+        id: transfer.id,
+        fromStoreName: transfer.fromName,
+        toStoreName: transfer.toName,
+        totalQuantity: transfer.totalQuantity,
+        totalValue: transfer.totalValue,
+        items: transfer.items,
+        notes: transfer.notes,
+        createdAt: transfer.date,
+        status: 'completed',
+      },
+      hubName: currentHub?.name || 'DIGITAL ZONE',
+      hubAddress: currentHub?.address || 'Central Warehouse & Head Office',
+      hubPhone: currentHub?.phone || '+91 98765 43210',
+      hubEmail: currentHub?.email || 'support@digitalzone.com',
+      hubGst: (currentHub as any)?.gst || '33AAAAA0000A1Z5',
+    });
   };
 
   // Distinct brands in source inventory
