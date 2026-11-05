@@ -24,8 +24,11 @@ import {
   Loader2,
   ExternalLink,
   RefreshCw,
-  Clock
+  Clock,
+  Download
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import type { Supplier, SupplierPayment, PaymentMode, PaymentSplit } from '../types';
 import {
   getDoc,
@@ -510,6 +513,184 @@ const SupplierLedger: React.FC = () => {
     }
   };
 
+  // =========================================================================
+  // PERFECT MINIMAL PDF GENERATOR
+  // =========================================================================
+  const downloadPDF = () => {
+    if (!supplier) return;
+    try {
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      // Header Brand
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text('DIGITAL ZONE', 14, 18);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text('Central Procurement & HQ Hub', 14, 23);
+
+      // Statement Title & Info (Right side)
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(37, 99, 235); // blue-600
+      doc.text('STATEMENT OF ACCOUNT', 196, 18, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Date: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`, 196, 23, { align: 'right' });
+      doc.text(`Ref: DZ-STMT-${supplier.id?.slice(0, 6).toUpperCase() || 'NA'}`, 196, 27, { align: 'right' });
+
+      // Clean divider
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.4);
+      doc.line(14, 31, 196, 31);
+
+      // Left: Vendor Info
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184); // slate-400
+      doc.text('STATEMENT ISSUED TO', 14, 37);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(supplier.name, 14, 43);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      let leftY = 48;
+      if (supplier.contactPerson) {
+        doc.text(`Attn: ${supplier.contactPerson}`, 14, leftY);
+        leftY += 4.5;
+      }
+      doc.text(`Phone: ${supplier.phone}`, 14, leftY);
+      leftY += 4.5;
+      if (supplier.gstNumber) {
+        doc.text(`GSTIN: ${supplier.gstNumber}`, 14, leftY);
+        leftY += 4.5;
+      }
+      if (supplier.address) {
+        doc.text(supplier.address.slice(0, 48), 14, leftY);
+      }
+
+      // Right: Account Summary Box
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text('ACCOUNT SUMMARY', 196, 37, { align: 'right' });
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Total Purchases: Rs. ${summary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 196, 43, { align: 'right' });
+      doc.text(`Total Cleared: Rs. ${summary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 196, 48, { align: 'right' });
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      if (summary.netClosingBalance > 0) {
+        doc.setTextColor(225, 29, 72); // rose-600
+        doc.text(`Closing Due: Rs. ${summary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 196, 54, { align: 'right' });
+      } else {
+        doc.setTextColor(16, 149, 93); // emerald-600
+        doc.text(`Closing Due: Rs. 0.00 (Settled)`, 196, 54, { align: 'right' });
+      }
+
+      // Tabular Statement
+      const tableHead = [['DATE', 'PARTICULARS', 'REF / VOUCHER', 'MODE', 'DEBIT (+)', 'CREDIT (-)', 'BALANCE']];
+      const tableBody = computedLedger.map(row => [
+        row.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        row.type === 'purchase'
+          ? `Purchase Invoiced${row.notes ? ` (${row.notes})` : ''}`
+          : row.type === 'payment_out'
+          ? `Disbursement Payment${row.notes ? ` (${row.notes})` : ''}`
+          : `Vendor Refund${row.notes ? ` (${row.notes})` : ''}`,
+        row.referenceNumber || '—',
+        (row.paymentMode || 'cash').toUpperCase(),
+        row.debit > 0 ? row.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—',
+        row.credit > 0 ? row.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—',
+        row.runningBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })
+      ]);
+
+      const tableFoot = [[
+        'CLOSING TOTALS',
+        '',
+        '',
+        '',
+        summary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 }),
+        summary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 }),
+        summary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })
+      ]];
+
+      autoTable(doc, {
+        head: tableHead,
+        body: tableBody,
+        foot: tableFoot,
+        startY: Math.max(leftY + 6, 64),
+        margin: { left: 14, right: 14 },
+        styles: {
+          font: 'helvetica',
+          fontSize: 7.5,
+          textColor: [15, 23, 42],
+          cellPadding: { top: 2.5, right: 2.5, bottom: 2.5, left: 2.5 },
+          lineWidth: 0.1,
+          lineColor: [241, 245, 249]
+        },
+        headStyles: {
+          fillColor: [248, 250, 252],
+          textColor: [71, 85, 105],
+          fontStyle: 'bold',
+          lineWidth: { bottom: 0.3 },
+          lineColor: [203, 213, 225]
+        },
+        footStyles: {
+          fillColor: [248, 250, 252],
+          textColor: [15, 23, 42],
+          fontStyle: 'bold',
+          lineWidth: { top: 0.3 },
+          lineColor: [203, 213, 225]
+        },
+        columnStyles: {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 'auto' },
+          2: { cellWidth: 26 },
+          3: { cellWidth: 16, halign: 'center' },
+          4: { cellWidth: 26, halign: 'right' },
+          5: { cellWidth: 26, halign: 'right', textColor: [16, 149, 93] },
+          6: { cellWidth: 28, halign: 'right', fontStyle: 'bold' }
+        },
+        alternateRowStyles: {
+          fillColor: [255, 255, 255]
+        },
+        didDrawPage: (data) => {
+          const pageSize = doc.internal.pageSize;
+          const pageHeight = pageSize.height || pageSize.getHeight();
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          doc.text('This is a computer-generated statement of account.', 14, pageHeight - 8);
+          doc.text(`Page ${data.pageNumber}`, 196, pageHeight - 8, { align: 'right' });
+        }
+      });
+
+      const cleanName = supplier.name.replace(/[^a-zA-Z0-9]/g, '_');
+      const dateStr = new Date().toISOString().split('T')[0];
+      doc.save(`Statement_${cleanName}_${dateStr}.pdf`);
+      success(`Downloaded statement as PDF`);
+    } catch (err: any) {
+      console.error('Error generating PDF:', err);
+      showError('Failed to generate PDF statement');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50">
@@ -615,7 +796,7 @@ const SupplierLedger: React.FC = () => {
               </div>
             </div>
 
-            {/* Financial Status & Prominent Blue CTA */}
+            {/* Financial Status & Action Buttons */}
             <div className="flex items-center gap-3 justify-between md:justify-end flex-wrap sm:flex-nowrap border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
               <div className="text-left md:text-right">
                 <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
@@ -627,10 +808,23 @@ const SupplierLedger: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* 1-CLICK PDF DOWNLOAD (PERFECT MINIMAL PDF) */}
+                <button
+                  type="button"
+                  onClick={downloadPDF}
+                  className="px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs sm:text-sm rounded-xl border border-slate-300 transition-colors inline-flex items-center gap-1.5 shadow-2xs"
+                  title="Download Perfect PDF Statement"
+                >
+                  <Download className="w-4 h-4 text-blue-600" />
+                  <span className="hidden sm:inline">PDF</span>
+                </button>
+
+                {/* PRINT PREVIEW MODAL */}
                 <button
                   type="button"
                   onClick={() => setShowPrintModal(true)}
                   className="px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs sm:text-sm rounded-xl border border-slate-300 transition-colors inline-flex items-center gap-1.5 shadow-2xs"
+                  title="Print Preview"
                 >
                   <Printer className="w-4 h-4 text-slate-500" />
                   <span className="hidden sm:inline">Print</span>
@@ -1148,70 +1342,84 @@ const SupplierLedger: React.FC = () => {
         )}
 
         {/* ========================================================================= */}
-        {/* PRINTABLE STATEMENT MODAL                                                 */}
+        {/* PRINTABLE STATEMENT MODAL (WITH PERFECT PDF DOWNLOAD & MINIMAL A4 LOOK)  */}
         {/* ========================================================================= */}
         {showPrintModal && (
           <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
             <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden border border-slate-200">
               <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
                 <div className="flex items-center gap-2">
-                  <Printer className="w-4 h-4 text-blue-600" />
-                  <h3 className="text-sm font-bold text-slate-900">Print Statement of Account</h3>
+                  <Receipt className="w-4 h-4 text-blue-600" />
+                  <h3 className="text-sm font-bold text-slate-900">Statement of Account</h3>
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* BLUE BUTTON: DOWNLOAD PDF */}
+                  <button
+                    type="button"
+                    onClick={downloadPDF}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download PDF</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => window.print()}
-                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs"
+                    className="px-3.5 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs transition-colors"
                   >
                     <Printer className="w-3.5 h-3.5" />
-                    <span>Print / Save PDF</span>
+                    <span>Print</span>
                   </button>
+
                   <button
                     type="button"
                     onClick={() => setShowPrintModal(false)}
-                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+                    className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg ml-1"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-6 sm:p-8">
-                <div id="printable-statement" className="bg-white text-slate-900 font-sans">
-                  <div className="flex items-start justify-between border-b-2 border-slate-900 pb-3 mb-4">
+              {/* Minimal Paper Look Preview */}
+              <div className="flex-1 overflow-y-auto p-6 sm:p-10 bg-slate-100/60 flex justify-center">
+                <div id="printable-statement" className="bg-white text-slate-900 font-sans w-full max-w-3xl p-8 sm:p-12 rounded-xl shadow-xs border border-slate-200/80">
+                  <div className="flex items-start justify-between border-b border-slate-200 pb-4 mb-5">
                     <div>
-                      <h2 className="text-xl font-bold tracking-tight uppercase">DIGITAL ZONE</h2>
-                      <p className="text-xs text-slate-600">Central Procurement & Head Office Hub</p>
-                      <p className="text-xs text-slate-500 font-medium">Vendor Statement of Account</p>
+                      <h2 className="text-xl font-bold tracking-tight uppercase text-slate-900">DIGITAL ZONE</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">Central Procurement & HQ Hub</p>
                     </div>
                     <div className="text-right">
-                      <div className="text-[11px] font-bold uppercase text-slate-400">Date</div>
-                      <div className="text-xs font-mono font-semibold">
-                        {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      <div className="text-xs font-bold uppercase tracking-wider text-blue-600">Statement of Account</div>
+                      <div className="text-xs text-slate-500 mt-0.5 font-mono">
+                        Date: {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </div>
+                      <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                        Ref: DZ-STMT-{supplier.id?.slice(0, 6).toUpperCase() || 'NA'}
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-xs pb-4 mb-4 border-b border-slate-200">
+                  <div className="grid grid-cols-2 gap-6 text-xs pb-5 mb-5 border-b border-slate-100">
                     <div>
-                      <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5">Vendor Information</div>
+                      <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Statement Issued To</div>
                       <div className="font-bold text-sm text-slate-900">{supplier.name}</div>
-                      {supplier.contactPerson && <div>Attn: {supplier.contactPerson}</div>}
-                      <div>Phone: {supplier.phone}</div>
-                      {supplier.gstNumber && <div className="font-mono">GSTIN: {supplier.gstNumber}</div>}
-                      {supplier.address && <div className="text-slate-600 mt-0.5">{supplier.address}</div>}
+                      {supplier.contactPerson && <div className="text-slate-600 mt-0.5">Attn: {supplier.contactPerson}</div>}
+                      <div className="text-slate-600 mt-0.5">Phone: {supplier.phone}</div>
+                      {supplier.gstNumber && <div className="font-mono text-slate-700 mt-0.5">GSTIN: {supplier.gstNumber}</div>}
+                      {supplier.address && <div className="text-slate-500 mt-0.5">{supplier.address}</div>}
                     </div>
 
                     <div className="text-right">
-                      <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5">Account Summary</div>
-                      <div className="text-xs">
-                        Total Invoiced: <span className="font-mono font-semibold">₹{summary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Account Summary</div>
+                      <div className="text-xs text-slate-600">
+                        Total Invoiced: <span className="font-mono font-semibold text-slate-800">₹{summary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      <div className="text-xs">
+                      <div className="text-xs text-slate-600 mt-0.5">
                         Total Cleared: <span className="font-mono font-semibold text-emerald-600">₹{summary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      <div className="text-sm font-bold mt-1">
+                      <div className="text-sm font-bold mt-2">
                         Closing Due:{' '}
                         <span className={`font-mono ${summary.netClosingBalance > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
                           ₹{summary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -1220,51 +1428,71 @@ const SupplierLedger: React.FC = () => {
                     </div>
                   </div>
 
-                  <table className="w-full text-left border-collapse text-xs mb-6">
+                  <table className="w-full text-left border-collapse text-xs mb-8">
                     <thead>
-                      <tr className="border-b border-slate-300 font-bold uppercase text-[10px] text-slate-600">
-                        <th className="py-2">Date</th>
-                        <th className="py-2">Particulars</th>
-                        <th className="py-2">Ref / Voucher</th>
-                        <th className="py-2 text-right">Debit (+)</th>
-                        <th className="py-2 text-right">Credit (-)</th>
-                        <th className="py-2 text-right">Balance</th>
+                      <tr className="border-b border-slate-200 font-bold uppercase text-[10px] text-slate-500 bg-slate-50/50">
+                        <th className="py-2.5 px-2">Date</th>
+                        <th className="py-2.5 px-2">Particulars</th>
+                        <th className="py-2.5 px-2">Voucher #</th>
+                        <th className="py-2.5 px-2">Mode</th>
+                        <th className="py-2.5 px-2 text-right">Debit (+)</th>
+                        <th className="py-2.5 px-2 text-right">Credit (-)</th>
+                        <th className="py-2.5 px-2 text-right">Balance</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-200">
+                    <tbody className="divide-y divide-slate-100">
                       {computedLedger.map((row, idx) => (
                         <tr key={idx}>
-                          <td className="py-2 text-slate-600 font-mono">
+                          <td className="py-2.5 px-2 text-slate-600 font-mono">
                             {row.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                           </td>
-                          <td className="py-2 font-medium">
+                          <td className="py-2.5 px-2 font-medium text-slate-900">
                             {row.type === 'purchase'
                               ? 'Purchase Invoiced'
                               : row.type === 'payment_out'
-                              ? `Disbursement (${row.paymentMode})`
-                              : 'Refund Credit'}
-                            {row.notes ? ` — ${row.notes}` : ''}
+                              ? `Disbursement Payment`
+                              : 'Vendor Refund'}
+                            {row.notes ? ` (${row.notes})` : ''}
                           </td>
-                          <td className="py-2 font-mono text-slate-500">
+                          <td className="py-2.5 px-2 font-mono text-slate-500">
                             {row.referenceNumber || '—'}
                           </td>
-                          <td className="py-2 text-right font-mono">
+                          <td className="py-2.5 px-2 uppercase text-[10px] font-semibold text-slate-600">
+                            {row.paymentMode || 'CASH'}
+                          </td>
+                          <td className="py-2.5 px-2 text-right font-mono">
                             {row.debit > 0 ? `₹${row.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                           </td>
-                          <td className="py-2 text-right font-mono text-emerald-700">
+                          <td className="py-2.5 px-2 text-right font-mono text-emerald-700">
                             {row.credit > 0 ? `₹${row.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
                           </td>
-                          <td className="py-2 text-right font-mono font-bold">
+                          <td className="py-2.5 px-2 text-right font-mono font-bold text-slate-900">
                             ₹{row.runningBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                           </td>
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-300 font-bold text-slate-900 bg-slate-50/50">
+                        <td colSpan={4} className="py-2.5 px-2 text-right uppercase text-[10px] text-slate-500">
+                          Totals
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono">
+                          ₹{summary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono text-emerald-600">
+                          ₹{summary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-2.5 px-2 text-right font-mono text-rose-600 font-extrabold">
+                          ₹{summary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
 
-                  <div className="pt-6 flex items-center justify-between text-xs text-slate-500 border-t border-slate-200">
+                  <div className="pt-8 flex items-center justify-between text-xs text-slate-400 border-t border-slate-100">
                     <div>Authorized Signature & Seal</div>
-                    <div className="font-mono text-[10px]">Page 1 of 1 • System Generated Vendor Ledger</div>
+                    <div className="font-mono text-[10px]">Computer-generated vendor statement</div>
                   </div>
                 </div>
               </div>
@@ -1400,7 +1628,7 @@ const SupplierLedger: React.FC = () => {
                     {isSubmitting ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Saving...</span>
+                        <span>Saving Changes...</span>
                       </>
                     ) : (
                       <span>Save Changes</span>
@@ -1412,6 +1640,28 @@ const SupplierLedger: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Media Print Global Style for Crisp Paper Statement */}
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          #printable-statement, #printable-statement * {
+            visibility: visible;
+          }
+          #printable-statement {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0 !important;
+            padding: 24px !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };
