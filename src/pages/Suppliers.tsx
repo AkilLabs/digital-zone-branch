@@ -24,8 +24,10 @@ import {
   Receipt,
   ArrowRight,
   Check,
-  Calendar,
-  MessageCircle
+  MessageCircle,
+  Printer,
+  ArrowDownLeft,
+  ArrowUpRight
 } from 'lucide-react';
 import type { Supplier, SupplierPayment, PaymentMode, PaymentSplit } from '../types';
 import {
@@ -39,9 +41,16 @@ import {
   increment
 } from 'firebase/firestore';
 
+interface LedgerEntry extends SupplierPayment {
+  debit: number; // Purchase / bill amount
+  credit: number; // Payment / refund cleared
+  runningBalance: number; // Live cumulative balance after this row
+  invoiceNumber?: string;
+}
+
 const Suppliers: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, getDocRef } = useStore();
   const { success, error: showError } = useToastContext();
   const navigate = useNavigate();
 
@@ -63,10 +72,10 @@ const Suppliers: React.FC = () => {
 
   // Selected supplier & ledger tab
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [modalTab, setModalTab] = useState<'pay' | 'history' | 'details'>('pay');
-  const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([]);
+  const [modalTab, setModalTab] = useState<'statement' | 'pay' | 'details' | 'print'>('statement');
+  const [rawSupplierPayments, setRawSupplierPayments] = useState<SupplierPayment[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [historyFilter, setHistoryFilter] = useState<'all' | 'purchases' | 'payments'>('all');
+  const [ledgerFilter, setLedgerFilter] = useState<'all' | 'purchases' | 'payments'>('all');
 
   // Double-submission protection locks
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -201,21 +210,18 @@ const Suppliers: React.FC = () => {
             type: 'purchase',
             paymentMode: purchaseData.paymentMode || 'cash',
             paymentSplit: purchaseData.paymentSplit,
-            notes: purchaseData.notes || `Purchase #${purchaseData.purchaseNumber || doc.id.slice(-6)}`,
+            notes: purchaseData.notes || `Purchase Invoice #${purchaseData.purchaseNumber || doc.id.slice(-6)}`,
             relatedPurchaseId: doc.id,
             createdAt: createdAtDate,
             createdBy: purchaseData.createdBy || '',
-            createdByName: purchaseData.createdByName || ''
+            createdByName: purchaseData.createdByName || '',
+            referenceNumber: purchaseData.purchaseNumber || purchaseData.invoiceNumber || doc.id.slice(-6)
           } as SupplierPayment);
         }
       });
 
-      // Combine and sort reverse chronological (newest first)
-      const allTransactions = [...payments, ...purchasePayments].sort(
-        (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-      );
-
-      setSupplierPayments(allTransactions);
+      // Combine all raw transactions
+      setRawSupplierPayments([...payments, ...purchasePayments]);
     } catch (err: any) {
       console.error('Error fetching transactions:', err);
       showError('Failed to load transaction history');
@@ -224,7 +230,73 @@ const Suppliers: React.FC = () => {
     }
   };
 
-  // Filter and Sort Suppliers
+  // Build true double-entry running balance ledger
+  const computedLedger = useMemo(() => {
+    // Sort oldest first to calculate accurate running balance
+    const sortedAsc = [...rawSupplierPayments].sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
+    );
+
+    let running = 0;
+    const computedAsc: LedgerEntry[] = sortedAsc.map(tx => {
+      let debit = 0;
+      let credit = 0;
+
+      if (tx.type === 'purchase') {
+        debit = tx.amount;
+        running += tx.amount;
+      } else if (tx.type === 'payment_out') {
+        credit = tx.amount;
+        running -= tx.amount;
+      } else if (tx.type === 'payment_in') {
+        debit = tx.amount;
+        running += tx.amount;
+      }
+
+      return {
+        ...tx,
+        debit,
+        credit,
+        runningBalance: running,
+        invoiceNumber: tx.referenceNumber
+      };
+    });
+
+    // Return descending (newest first) for primary display
+    return computedAsc.reverse();
+  }, [rawSupplierPayments]);
+
+  // Filtered ledger rows
+  const filteredLedger = useMemo(() => {
+    if (ledgerFilter === 'purchases') {
+      return computedLedger.filter(t => t.type === 'purchase');
+    }
+    if (ledgerFilter === 'payments') {
+      return computedLedger.filter(t => t.type === 'payment_out' || t.type === 'payment_in');
+    }
+    return computedLedger;
+  }, [computedLedger, ledgerFilter]);
+
+  // Ledger summary totals
+  const ledgerSummary = useMemo(() => {
+    const totalDebits = rawSupplierPayments
+      .filter(t => t.type === 'purchase' || t.type === 'payment_in')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const totalCredits = rawSupplierPayments
+      .filter(t => t.type === 'payment_out')
+      .reduce((sum, t) => sum + t.amount, 0);
+
+    const netClosingBalance = totalDebits - totalCredits;
+
+    return {
+      totalDebits,
+      totalCredits,
+      netClosingBalance
+    };
+  }, [rawSupplierPayments]);
+
+  // Filter and Sort Suppliers Directory
   const filteredAndSortedSuppliers = useMemo(() => {
     return suppliers
       .filter(supplier => {
@@ -297,14 +369,12 @@ const Suppliers: React.FC = () => {
     if (paymentType === 'payment_out') {
       return currentDue - amount;
     } else {
-      // Payment in (refund from supplier) increases our pending claim or decrements paid
       return currentDue + amount;
     }
   }, [selectedSupplier, paymentAmount, paymentType]);
 
   // Handle Recording Payment with double-click immunity
   const handleAddPayment = async () => {
-    // 1. Double-click prevention: Synchronous lock
     if (isSubmittingPaymentRef.current) return;
     if (!selectedSupplier) {
       showError('Please select a supplier');
@@ -343,7 +413,7 @@ const Suppliers: React.FC = () => {
         notes: paymentNotes.trim(),
         createdAt: new Date(),
         createdBy: currentUser?.uid || '',
-        createdByName: currentUser?.displayName || currentUser?.email || 'User'
+        createdByName: currentUser?.displayName || currentUser?.email || 'HQ Admin'
       };
 
       if (paymentSplit) {
@@ -449,17 +519,17 @@ const Suppliers: React.FC = () => {
       resetPaymentForm();
       await fetchSuppliers();
       await fetchSupplierPayments(selectedSupplier.id!);
-      setModalTab('history'); // Switch to history tab to confirm the recorded transaction
+      setModalTab('statement');
     } catch (err: any) {
       console.error('Error recording payment:', err);
-      showError('Failed to record payment: ' + (err.message || 'Unknown error'));
+      showError('Failed to record payment: ' + (err.message || 'Network error'));
     } finally {
-      setIsSubmitting(false);
       isSubmittingPaymentRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
-  // Handle Adding New Supplier with double-click protection
+  // Add Supplier with duplicate and lock protection
   const handleAddSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingSupplierRef.current) return;
@@ -479,36 +549,42 @@ const Suppliers: React.FC = () => {
 
       const newSupplierData = {
         name: supplierForm.name.trim(),
-        contactPerson: supplierForm.contactPerson.trim(),
+        contactPerson: supplierForm.contactPerson.trim() || undefined,
         phone: supplierForm.phone.trim(),
-        email: supplierForm.email.trim(),
-        address: supplierForm.address.trim(),
-        gstNumber: supplierForm.gstNumber.trim().toUpperCase(),
+        email: supplierForm.email.trim() || undefined,
+        address: supplierForm.address.trim() || undefined,
+        gstNumber: supplierForm.gstNumber.trim().toUpperCase() || undefined,
         totalPurchaseAmount: 0,
         totalPaid: 0,
         totalPending: 0,
         isActive: true,
         createdAt: Timestamp.now(),
         createdBy: currentUser?.uid || '',
-        createdByName: currentUser?.displayName || currentUser?.email || 'User'
+        createdByName: currentUser?.displayName || currentUser?.email || 'HQ Admin'
       };
 
-      await addDoc(getCollectionRef('suppliers'), newSupplierData);
-
-      success(`Supplier "${supplierForm.name.trim()}" added successfully!`);
+      const docRef = await addDoc(getCollectionRef('suppliers'), newSupplierData);
+      success(`Supplier "${supplierForm.name}" registered successfully`);
       setShowAddModal(false);
       resetSupplierForm();
       await fetchSuppliers();
+
+      // Open ledger directly for new supplier
+      openLedgerModal({
+        id: docRef.id,
+        ...newSupplierData,
+        createdAt: new Date()
+      } as Supplier, 'statement');
     } catch (err: any) {
       console.error('Error adding supplier:', err);
-      showError('Failed to add supplier: ' + (err.message || 'Unknown error'));
+      showError('Failed to add supplier: ' + (err.message || 'Network error'));
     } finally {
-      setIsSubmitting(false);
       isSubmittingSupplierRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
-  // Handle Editing Supplier with double-click protection
+  // Edit Supplier
   const handleEditSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingSupplierRef.current) return;
@@ -530,32 +606,32 @@ const Suppliers: React.FC = () => {
       const supplierRef = getDocRef('suppliers', selectedSupplier.id);
       await updateDoc(supplierRef, {
         name: supplierForm.name.trim(),
-        contactPerson: supplierForm.contactPerson.trim(),
+        contactPerson: supplierForm.contactPerson.trim() || '',
         phone: supplierForm.phone.trim(),
-        email: supplierForm.email.trim(),
-        address: supplierForm.address.trim(),
-        gstNumber: supplierForm.gstNumber.trim().toUpperCase(),
+        email: supplierForm.email.trim() || '',
+        address: supplierForm.address.trim() || '',
+        gstNumber: supplierForm.gstNumber.trim().toUpperCase() || '',
         updatedAt: Timestamp.now()
       });
 
-      success(`Supplier "${supplierForm.name.trim()}" updated successfully!`);
+      success(`Updated details for ${supplierForm.name}`);
       setShowEditModal(false);
+      resetSupplierForm();
       await fetchSuppliers();
     } catch (err: any) {
       console.error('Error updating supplier:', err);
-      showError('Failed to update supplier: ' + (err.message || 'Unknown error'));
+      showError('Failed to update supplier: ' + (err.message || 'Network error'));
     } finally {
-      setIsSubmitting(false);
       isSubmittingSupplierRef.current = false;
+      setIsSubmitting(false);
     }
   };
 
   // Open modals
-  const openLedgerModal = (supplier: Supplier, defaultTab: 'pay' | 'history' | 'details' = 'pay') => {
+  const openLedgerModal = (supplier: Supplier, defaultTab: 'statement' | 'pay' | 'details' | 'print' = 'statement') => {
     setSelectedSupplier(supplier);
     setModalTab(defaultTab);
     resetPaymentForm();
-    // Default to full pending due if paying
     if (supplier.totalPending > 0) {
       setPaymentAmount(String(supplier.totalPending));
     }
@@ -603,16 +679,9 @@ const Suppliers: React.FC = () => {
     });
   };
 
-  // Filtered transactions for the ledger history tab
-  const filteredTransactions = useMemo(() => {
-    if (historyFilter === 'purchases') {
-      return supplierPayments.filter(t => t.type === 'purchase');
-    }
-    if (historyFilter === 'payments') {
-      return supplierPayments.filter(t => t.type === 'payment_out' || t.type === 'payment_in');
-    }
-    return supplierPayments;
-  }, [supplierPayments, historyFilter]);
+  const handlePrint = () => {
+    window.print();
+  };
 
   if (isLoading) {
     return (
@@ -620,52 +689,54 @@ const Suppliers: React.FC = () => {
         <Navbar />
         <div className="flex flex-col items-center justify-center h-[calc(100vh-64px)]">
           <div className="relative">
-            <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-            <Users className="w-6 h-6 text-blue-600 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2" />
+            <div className="w-12 h-12 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+            <Building className="w-5 h-5 text-blue-600 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
           </div>
-          <p className="mt-4 text-slate-600 font-medium">Loading suppliers...</p>
+          <p className="mt-4 text-slate-600 text-sm font-medium">Loading supplier registry...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50">
       <Navbar />
 
-      <div className="max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4 pb-24 sm:pb-8">
-        {/* COMPACT HEADER (Clean Project Style matching Products.tsx) */}
-        <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <main className="w-full max-w-full px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-28 sm:pb-12">
+        {/* ========================================================================= */}
+        {/* HEADER & TOP CONTROLS                                                     */}
+        {/* ========================================================================= */}
+        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
-              <Building className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
-              Suppliers & Vendors
-            </h1>
-            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-              {filteredAndSortedSuppliers.length} supplier{filteredAndSortedSuppliers.length !== 1 ? 's' : ''} listed
-              {currentStore?.name && (
-                <span className="text-gray-400 hidden md:inline"> • Location: <strong className="text-gray-700 font-medium">{currentStore.name}</strong></span>
-              )}
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 bg-blue-50 text-blue-600 rounded-lg border border-blue-100">
+                <Building className="w-5 h-5" />
+              </span>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                Supplier Management & Ledger
+              </h1>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
+              {filteredAndSortedSuppliers.length} vendor{filteredAndSortedSuppliers.length !== 1 ? 's' : ''} • Central HQ Procurement & Double-Entry Account Ledgers
             </p>
           </div>
 
-          {/* Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
             <button
               type="button"
               onClick={() => fetchSuppliers(true)}
               disabled={isRefreshing}
+              className="px-3 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors text-xs font-medium flex items-center gap-1.5 disabled:opacity-50"
               title="Refresh suppliers list"
-              className="px-3 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-xs font-medium flex items-center gap-1.5 disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : 'text-gray-500'}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : 'text-slate-500'}`} />
               <span className="hidden sm:inline">Refresh</span>
             </button>
 
             <button
               type="button"
               onClick={openAddModal}
-              className="bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-1.5 text-xs sm:text-sm shadow-sm whitespace-nowrap"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-xs sm:text-sm font-medium flex items-center gap-1.5 shadow-sm whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
               <span>Add Supplier</span>
@@ -673,131 +744,170 @@ const Suppliers: React.FC = () => {
           </div>
         </div>
 
-        {/* COMPACT STATS (Matching Products.tsx) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Total Suppliers</p>
-            <p className="text-lg font-bold text-gray-900">{metrics.totalSuppliers}</p>
+        {/* ========================================================================= */}
+        {/* 4 PROFESSIONAL KPI METRIC CARDS                                            */}
+        {/* ========================================================================= */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
+          <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-medium">Total Suppliers</span>
+              <Users className="w-4 h-4 text-slate-400" />
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-slate-900">
+              {metrics.totalSuppliers}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              {metrics.settledSuppliersCount} accounts settled
+            </div>
           </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Total Purchases</p>
-            <p className="text-lg font-bold text-blue-600">₹{Math.round(metrics.totalPurchaseAmount).toLocaleString()}</p>
+
+          <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-medium">Total Purchases Billed</span>
+              <ShoppingCart className="w-4 h-4 text-blue-500" />
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-slate-900 font-mono">
+              ₹{Math.round(metrics.totalPurchaseAmount).toLocaleString('en-IN')}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Lifetime procurement invoices
+            </div>
           </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-            <p className="text-xs text-gray-500">Total Settled</p>
-            <p className="text-lg font-bold text-green-600">₹{Math.round(metrics.totalPaidAmount).toLocaleString()}</p>
+
+          <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-medium">Total Cleared / Paid</span>
+              <Check className="w-4 h-4 text-emerald-500" />
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-emerald-600 font-mono">
+              ₹{Math.round(metrics.totalPaidAmount).toLocaleString('en-IN')}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-0.5">
+              Disbursed vendor payments
+            </div>
           </div>
+
           <div
             onClick={() => setStatusFilter(statusFilter === 'pending' ? 'all' : 'pending')}
-            className={`bg-white rounded-lg border p-3 shadow-sm cursor-pointer transition-colors ${
-              statusFilter === 'pending' ? 'border-red-500 bg-red-50/60' : 'border-gray-200 hover:border-red-300'
+            className={`rounded-xl border p-4 shadow-2xs cursor-pointer transition-all ${
+              statusFilter === 'pending'
+                ? 'bg-rose-50/70 border-rose-300 ring-2 ring-rose-500/20'
+                : 'bg-white border-slate-200/90 hover:border-rose-300'
             }`}
           >
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-gray-500">Outstanding Dues</p>
-              {statusFilter === 'pending' && <span className="text-[10px] text-red-600 font-bold uppercase">Filtered</span>}
+            <div className="flex items-center justify-between text-slate-500 mb-1">
+              <span className="text-xs font-medium text-rose-700">Outstanding Balance Due</span>
+              <TrendingDown className="w-4 h-4 text-rose-500" />
             </div>
-            <p className="text-lg font-bold text-red-600">₹{Math.round(metrics.totalPendingDues).toLocaleString()}</p>
+            <div className="text-xl sm:text-2xl font-bold text-rose-600 font-mono">
+              ₹{Math.round(metrics.totalPendingDues).toLocaleString('en-IN')}
+            </div>
+            <div className="text-[11px] text-rose-600/80 mt-0.5 flex items-center justify-between">
+              <span>{metrics.suppliersWithDuesCount} suppliers with balance</span>
+              {statusFilter === 'pending' && <span className="font-bold text-[10px] uppercase">Active Filter</span>}
+            </div>
           </div>
         </div>
 
-        {/* COMPACT FILTERS & SEARCH (Matching Products.tsx) */}
-        <div className="bg-white rounded-lg border border-gray-200 p-2 sm:p-3 mb-3 sm:mb-4 shadow-sm">
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {/* Status Filter Tags */}
+        {/* ========================================================================= */}
+        {/* SEARCH, STATUS FILTER CHIPS & SORT CONTROLS                               */}
+        {/* ========================================================================= */}
+        <div className="bg-white rounded-xl border border-slate-200 p-2.5 sm:p-3 mb-4 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+          {/* Status Filter Chips */}
+          <div className="flex items-center gap-1.5 flex-wrap">
             {[
-              { key: 'all', label: `All (${suppliers.length})` },
-              { key: 'pending', label: `With Dues (${metrics.suppliersWithDuesCount})` },
-              { key: 'settled', label: `Settled (${metrics.settledSuppliersCount})` },
-            ].map(s => (
+              { key: 'all', label: `All Vendors (${suppliers.length})` },
+              { key: 'pending', label: `Dues Pending (${metrics.suppliersWithDuesCount})` },
+              { key: 'settled', label: `Settled (${metrics.settledSuppliersCount})` }
+            ].map(tab => (
               <button
-                key={s.key}
+                key={tab.key}
                 type="button"
-                onClick={() => setStatusFilter(s.key as any)}
-                className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium border transition-all ${
-                  statusFilter === (s.key as any)
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                onClick={() => setStatusFilter(tab.key as any)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  statusFilter === tab.key
+                    ? 'bg-blue-600 text-white shadow-2xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
                 }`}
               >
-                {s.label}
+                {tab.label}
               </button>
             ))}
+          </div>
 
-            {/* Search Input inline */}
-            <div className="relative flex-1 min-w-[200px] sm:min-w-[260px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          {/* Search Bar + Sort & View Mode */}
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial min-w-[240px] sm:min-w-[340px]">
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                placeholder="Search supplier, phone, contact, GST..."
-                className="w-full pl-9 pr-7 py-1.5 sm:py-2 text-xs sm:text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                placeholder="Search vendor, phone, GST, contact..."
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
               />
               {searchTerm && (
                 <button
                   type="button"
                   onClick={() => setSearchTerm('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3 h-3" />
                 </button>
               )}
             </div>
 
-            {/* Sort Dropdown */}
-            <div className="relative">
-              <select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value as any)}
-                className="px-3 py-1.5 sm:py-2 border border-gray-300 rounded-lg text-xs sm:text-sm bg-white font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 pr-7 cursor-pointer appearance-none"
-              >
-                <option value="pending_desc">Dues: High → Low</option>
-                <option value="pending_asc">Dues: Low → High</option>
-                <option value="purchase_desc">Purchases: High → Low</option>
-                <option value="name_asc">Name: A → Z</option>
-                <option value="recent">Recently Added</option>
-              </select>
-            </div>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as any)}
+              className="py-1.5 px-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+            >
+              <option value="pending_desc">Due: High to Low</option>
+              <option value="pending_asc">Due: Low to High</option>
+              <option value="purchase_desc">Purchases: High to Low</option>
+              <option value="name_asc">Name: A to Z</option>
+              <option value="recent">Recently Added</option>
+            </select>
 
-            {/* View switcher */}
-            <div className="flex items-center border border-gray-300 rounded-lg p-0.5 bg-gray-50">
+            <div className="flex items-center border border-slate-200 rounded-lg p-0.5 bg-slate-50">
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
                 className={`p-1.5 rounded text-xs transition-colors ${
-                  viewMode === 'grid' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                  viewMode === 'grid' ? 'bg-white text-blue-600 shadow-2xs font-semibold' : 'text-slate-500 hover:text-slate-800'
                 }`}
-                title="Grid view"
+                title="Grid cards"
               >
-                <LayoutGrid className="w-4 h-4" />
+                <LayoutGrid className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
                 onClick={() => setViewMode('table')}
                 className={`p-1.5 rounded text-xs transition-colors ${
-                  viewMode === 'table' ? 'bg-white text-blue-600 shadow-xs' : 'text-gray-600 hover:text-gray-900'
+                  viewMode === 'table' ? 'bg-white text-blue-600 shadow-2xs font-semibold' : 'text-slate-500 hover:text-slate-800'
                 }`}
                 title="Table view"
               >
-                <List className="w-4 h-4" />
+                <List className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* Content Section: Grid View or Table View */}
+        {/* ========================================================================= */}
+        {/* SUPPLIERS CONTENT (GRID OR DIRECTORY TABLE)                              */}
+        {/* ========================================================================= */}
         {filteredAndSortedSuppliers.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-10 text-center shadow-sm">
-            <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center mx-auto mb-3">
-              <Users className="w-6 h-6" />
+          <div className="bg-white rounded-xl border border-slate-200 p-12 text-center shadow-2xs">
+            <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-3 border border-blue-100">
+              <Building className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-bold text-gray-900">No suppliers found</h3>
-            <p className="text-xs text-gray-500 max-w-sm mx-auto mt-1">
+            <h3 className="text-base font-bold text-slate-900">No suppliers found</h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
               {searchTerm
-                ? `No suppliers matched "${searchTerm}". Try adjusting your search query.`
+                ? `No supplier matched "${searchTerm}". Try checking your spelling or filters.`
                 : statusFilter === 'pending'
-                ? 'No suppliers currently have outstanding dues!'
+                ? 'All supplier accounts are completely settled with ₹0 pending balance.'
                 : 'Get started by registering your first supplier.'}
             </p>
             <div className="mt-4">
@@ -808,7 +918,7 @@ const Suppliers: React.FC = () => {
                     setSearchTerm('');
                     setStatusFilter('all');
                   }}
-                  className="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
                 >
                   Clear filters
                 </button>
@@ -816,16 +926,16 @@ const Suppliers: React.FC = () => {
                 <button
                   type="button"
                   onClick={openAddModal}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-medium rounded-lg shadow-sm transition-all"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-semibold rounded-lg shadow-sm transition-all"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>Add New Supplier</span>
+                  <span>Register First Supplier</span>
                 </button>
               )}
             </div>
           </div>
         ) : viewMode === 'grid' ? (
-          /* Grid View */
+          /* GRID VIEW */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
             {filteredAndSortedSuppliers.map(supplier => {
               const hasDues = (supplier.totalPending || 0) > 0;
@@ -834,60 +944,41 @@ const Suppliers: React.FC = () => {
               return (
                 <div
                   key={supplier.id}
-                  className={`bg-white rounded-lg border transition-all duration-200 hover:shadow-md flex flex-col overflow-hidden ${
-                    hasDues
-                      ? 'border-red-200 hover:border-red-300'
-                      : 'border-gray-200 hover:border-blue-300'
-                  }`}
+                  className="bg-white rounded-xl border border-slate-200/90 hover:border-slate-300 transition-all duration-150 hover:shadow-xs flex flex-col justify-between overflow-hidden"
                 >
-                  {/* Top card banner */}
-                  <div className="p-4 pb-3">
-                    <div className="flex items-start justify-between gap-2.5">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div
-                          className={`w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm flex-shrink-0 ${
-                            hasDues
-                              ? 'bg-red-50 text-red-600 border border-red-200'
-                              : 'bg-green-50 text-green-700 border border-green-200'
-                          }`}
-                        >
+                  {/* Top vendor info */}
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center font-bold text-sm flex-shrink-0">
                           {initial}
                         </div>
                         <div className="min-w-0">
-                          <h3 className="font-semibold text-gray-900 text-sm truncate" title={supplier.name}>
+                          <h3 className="font-bold text-slate-900 text-sm truncate" title={supplier.name}>
                             {supplier.name}
                           </h3>
-                          {supplier.contactPerson ? (
-                            <p className="text-xs text-gray-500 truncate mt-0.5">
-                              {supplier.contactPerson}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-gray-400 mt-0.5">Supplier / Vendor</p>
-                          )}
+                          <p className="text-xs text-slate-500 truncate mt-0.5">
+                            {supplier.contactPerson || 'Vendor / Distributor'}
+                          </p>
                         </div>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => openEditModal(supplier)}
-                        className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
-                        title="Edit Supplier"
-                        aria-label="Edit Supplier"
+                        className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors flex-shrink-0"
+                        title="Edit vendor"
                       >
-                        <Edit2 className="w-4 h-4" />
+                        <Edit2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
-                    {/* Contact & GST Chips */}
-                    <div className="mt-3 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs text-gray-600 bg-gray-50 px-2.5 py-1.5 rounded-lg border border-gray-100">
-                        <span className="flex items-center gap-1.5 font-medium text-gray-700">
-                          <Phone className="w-3.5 h-3.5 text-gray-400" />
-                          <a
-                            href={`tel:${supplier.phone}`}
-                            className="hover:text-blue-600 hover:underline"
-                            onClick={e => e.stopPropagation()}
-                          >
+                    {/* Contact details */}
+                    <div className="mt-3 space-y-1.5 text-xs text-slate-600">
+                      <div className="flex items-center justify-between bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100">
+                        <span className="flex items-center gap-1.5 font-medium text-slate-700">
+                          <Phone className="w-3.5 h-3.5 text-slate-400" />
+                          <a href={`tel:${supplier.phone}`} className="hover:text-blue-600 hover:underline">
                             {supplier.phone}
                           </a>
                         </span>
@@ -895,125 +986,115 @@ const Suppliers: React.FC = () => {
                           href={`https://wa.me/${supplier.phone.replace(/[^0-9]/g, '')}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-green-600 hover:text-green-700 font-medium inline-flex items-center gap-1 text-[11px]"
-                          onClick={e => e.stopPropagation()}
+                          className="text-emerald-600 hover:text-emerald-700 font-semibold inline-flex items-center gap-1 text-[11px]"
                         >
-                          <MessageCircle className="w-3.5 h-3.5" />
+                          <MessageCircle className="w-3 h-3" />
                           <span>WhatsApp</span>
                         </a>
                       </div>
 
                       {supplier.gstNumber && (
-                        <div className="flex items-center gap-1.5 text-[11px] text-gray-500 px-1">
-                          <span className="font-semibold text-gray-400 uppercase">GST:</span>
-                          <span className="font-mono text-gray-700">{supplier.gstNumber}</span>
+                        <div className="flex items-center gap-1.5 text-[11px] px-1 text-slate-500">
+                          <span className="text-slate-400 font-semibold uppercase">GSTIN:</span>
+                          <span className="font-mono text-slate-700">{supplier.gstNumber}</span>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Financial Due Highlight Box */}
-                  <div className="px-4 py-2 mt-auto">
-                    <div
-                      className={`p-3 rounded-lg border flex items-center justify-between ${
-                        hasDues
-                          ? 'bg-red-50/60 border-red-200'
-                          : 'bg-green-50/50 border-green-200'
-                      }`}
-                    >
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-0.5">
-                          {hasDues ? 'Outstanding Due' : 'Balance Status'}
-                        </p>
-                        <p
-                          className={`text-lg font-bold ${
-                            hasDues ? 'text-red-600' : 'text-green-700'
-                          }`}
-                        >
-                          {hasDues
-                            ? `₹${supplier.totalPending.toLocaleString('en-IN', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2
-                              })}`
-                            : 'All Cleared ✓'}
-                        </p>
+                  {/* Financial Due Summary */}
+                  <div className="px-4 pb-3">
+                    <div className="p-3 bg-slate-50/80 rounded-lg border border-slate-200/80">
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-slate-500 font-medium">Balance Status</span>
+                        {hasDues ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                            Due Pending
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Settled ✓
+                          </span>
+                        )}
                       </div>
 
-                      <div className="text-right">
-                        <p className="text-[10px] uppercase font-semibold text-gray-400">Purchases</p>
-                        <p className="text-xs font-bold text-gray-700">
-                          ₹{supplier.totalPurchaseAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </p>
+                      <div className="flex items-baseline justify-between mt-1">
+                        <div>
+                          <div className={`text-base font-bold font-mono ${hasDues ? 'text-rose-600' : 'text-slate-900'}`}>
+                            ₹{supplier.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[10px] text-slate-400">Current Balance</div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-xs font-semibold text-slate-700 font-mono">
+                            ₹{Math.round(supplier.totalPurchaseAmount).toLocaleString('en-IN')}
+                          </div>
+                          <div className="text-[10px] text-slate-400">Invoiced</div>
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Card Action Buttons */}
-                  <div className="p-3 pt-2 border-t border-gray-100 bg-gray-50/50 flex items-center gap-2">
+                  {/* Action buttons */}
+                  <div className="p-3 border-t border-slate-100 bg-slate-50/50 flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => openLedgerModal(supplier, hasDues ? 'pay' : 'history')}
-                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-xs transition-all shadow-xs ${
-                        hasDues
-                          ? 'bg-red-600 hover:bg-red-700 text-white'
-                          : 'bg-blue-600 hover:bg-blue-700 text-white'
-                      }`}
-                    >
-                      <CreditCard className="w-3.5 h-3.5" />
-                      <span>{hasDues ? 'Pay' : 'Ledger'}</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => openLedgerModal(supplier, 'history')}
-                      className="px-2.5 py-2 bg-white hover:bg-gray-100 text-gray-700 font-semibold text-xs rounded-lg border border-gray-300 transition-colors"
-                      title="View Purchases & Payments History"
+                      onClick={() => openLedgerModal(supplier, 'statement')}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-xs transition-colors shadow-2xs"
                     >
                       <Receipt className="w-3.5 h-3.5" />
+                      <span>Ledger Statement</span>
                     </button>
+
+                    {hasDues && (
+                      <button
+                        type="button"
+                        onClick={() => openLedgerModal(supplier, 'pay')}
+                        className="px-3 py-2 bg-white hover:bg-rose-50 text-rose-700 font-semibold text-xs rounded-lg border border-rose-200 transition-colors inline-flex items-center gap-1"
+                        title="Record Payment"
+                      >
+                        <CreditCard className="w-3.5 h-3.5 text-rose-600" />
+                        <span>Pay</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
         ) : (
-          /* Table View */
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          /* TABLE DIRECTORY VIEW */
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    <th className="py-3 px-4">Supplier</th>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                    <th className="py-3 px-4">Vendor / Supplier</th>
                     <th className="py-3 px-4">Contact</th>
-                    <th className="py-3 px-4 text-right">Total Purchases</th>
-                    <th className="py-3 px-4 text-right">Total Paid</th>
-                    <th className="py-3 px-4 text-right">Outstanding Dues</th>
+                    <th className="py-3 px-4 text-right">Invoiced (Purchases)</th>
+                    <th className="py-3 px-4 text-right">Disbursed (Paid)</th>
+                    <th className="py-3 px-4 text-right">Balance Due</th>
                     <th className="py-3 px-4 text-center">Status</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 text-sm">
+                <tbody className="divide-y divide-slate-100 text-sm">
                   {filteredAndSortedSuppliers.map(supplier => {
                     const hasDues = (supplier.totalPending || 0) > 0;
                     const initial = supplier.name.charAt(0).toUpperCase() || 'S';
 
                     return (
-                      <tr key={supplier.id} className="hover:bg-gray-50 transition-colors">
+                      <tr key={supplier.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-3 px-4 whitespace-nowrap">
                           <div className="flex items-center gap-2.5">
-                            <div
-                              className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs flex-shrink-0 ${
-                                hasDues
-                                  ? 'bg-red-50 text-red-600 border border-red-200'
-                                  : 'bg-green-50 text-green-700 border border-green-200'
-                              }`}
-                            >
+                            <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center font-bold text-xs flex-shrink-0">
                               {initial}
                             </div>
                             <div>
-                              <div className="font-semibold text-gray-900">{supplier.name}</div>
+                              <div className="font-semibold text-slate-900 text-xs sm:text-sm">{supplier.name}</div>
                               {supplier.gstNumber && (
-                                <div className="text-[11px] font-mono text-gray-400">
+                                <div className="text-[11px] font-mono text-slate-400">
                                   GST: {supplier.gstNumber}
                                 </div>
                               )}
@@ -1022,37 +1103,33 @@ const Suppliers: React.FC = () => {
                         </td>
 
                         <td className="py-3 px-4 whitespace-nowrap">
-                          <div className="text-gray-900 font-medium text-xs">{supplier.phone}</div>
+                          <div className="text-slate-900 font-medium text-xs">{supplier.phone}</div>
                           {supplier.contactPerson && (
-                            <div className="text-xs text-gray-500">{supplier.contactPerson}</div>
+                            <div className="text-[11px] text-slate-500">{supplier.contactPerson}</div>
                           )}
                         </td>
 
-                        <td className="py-3 px-4 text-right whitespace-nowrap font-medium text-gray-900 text-xs">
+                        <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-xs text-slate-800">
                           ₹{supplier.totalPurchaseAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
 
-                        <td className="py-3 px-4 text-right whitespace-nowrap font-medium text-green-600 text-xs">
+                        <td className="py-3 px-4 text-right whitespace-nowrap font-mono text-xs text-emerald-600">
                           ₹{supplier.totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
 
                         <td className="py-3 px-4 text-right whitespace-nowrap">
-                          <span
-                            className={`font-bold text-sm ${
-                              hasDues ? 'text-red-600' : 'text-gray-400'
-                            }`}
-                          >
+                          <span className={`font-mono font-bold text-xs sm:text-sm ${hasDues ? 'text-rose-600' : 'text-slate-400'}`}>
                             ₹{supplier.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                           </span>
                         </td>
 
                         <td className="py-3 px-4 text-center whitespace-nowrap">
                           {hasDues ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-                              Pending
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                              Due Pending
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                               Settled ✓
                             </span>
                           )}
@@ -1062,20 +1139,25 @@ const Suppliers: React.FC = () => {
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
-                              onClick={() => openLedgerModal(supplier, hasDues ? 'pay' : 'history')}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                                hasDues
-                                  ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                                  : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                              }`}
+                              onClick={() => openLedgerModal(supplier, 'statement')}
+                              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
                             >
-                              {hasDues ? 'Pay' : 'Ledger'}
+                              Ledger
                             </button>
+                            {hasDues && (
+                              <button
+                                type="button"
+                                onClick={() => openLedgerModal(supplier, 'pay')}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors"
+                              >
+                                Pay
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => openEditModal(supplier)}
-                              className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                              title="Edit Supplier"
+                              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                              title="Edit vendor"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
@@ -1089,156 +1171,416 @@ const Suppliers: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
+      </main>
 
       {/* ========================================================================= */}
-      {/* MODAL 1: REDEFINED SUPPLIER LEDGER & PAYMENT MODAL                        */}
+      {/* THE PROFESSIONAL SUPPLIER LEDGER MODAL                                    */}
       {/* ========================================================================= */}
       {showLedgerModal && selectedSupplier && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="p-5 sm:p-6 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between gap-4">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden border border-slate-200">
+            {/* Ledger Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg flex-shrink-0 ${
-                    selectedSupplier.totalPending > 0
-                      ? 'bg-rose-100 text-rose-700'
-                      : 'bg-emerald-100 text-emerald-700'
-                  }`}
-                >
+                <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-base flex-shrink-0 shadow-2xs">
                   {selectedSupplier.name.charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-xl font-bold text-slate-900 truncate">{selectedSupplier.name}</h2>
-                    {selectedSupplier.totalPending > 0 ? (
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700">
-                        Due: ₹{selectedSupplier.totalPending.toLocaleString('en-IN')}
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700">
-                        Settled ✓
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900 truncate">
+                      {selectedSupplier.name}
+                    </h2>
+                    {selectedSupplier.gstNumber && (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-200/80 text-slate-700">
+                        GST: {selectedSupplier.gstNumber}
                       </span>
                     )}
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2 flex-wrap">
                     <span>Phone: {selectedSupplier.phone}</span>
                     {selectedSupplier.contactPerson && <span>• Contact: {selectedSupplier.contactPerson}</span>}
-                    {selectedSupplier.gstNumber && <span>• GST: {selectedSupplier.gstNumber}</span>}
+                    {selectedSupplier.address && <span className="truncate max-w-[200px]">• {selectedSupplier.address}</span>}
                   </p>
                 </div>
               </div>
 
-              <button
-                onClick={() => setShowLedgerModal(false)}
-                disabled={isSubmitting}
-                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-xl transition-colors disabled:opacity-50"
-                aria-label="Close"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              {/* Header Balance Badge & Action Bar */}
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap justify-between sm:justify-end">
+                <div className="bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs text-right">
+                  <div className="text-[10px] text-slate-400 uppercase font-semibold">Net Balance Due</div>
+                  <div className={`text-sm sm:text-base font-bold font-mono ${selectedSupplier.totalPending > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    ₹{selectedSupplier.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setModalTab('pay')}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                    modalTab === 'pay' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Record Payment</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowLedgerModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition-colors"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
-            {/* Modal Navigation Tabs */}
-            <div className="flex border-b border-slate-200 bg-white px-6">
-              <button
-                onClick={() => setModalTab('pay')}
-                className={`py-3 px-4 font-semibold text-sm border-b-2 transition-all flex items-center gap-2 ${
-                  modalTab === 'pay'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <CreditCard className="w-4 h-4" />
-                <span>Record Payment</span>
-              </button>
+            {/* Navigation Tabs */}
+            <div className="flex items-center justify-between border-b border-slate-200 bg-white px-4 sm:px-6">
+              <div className="flex items-center gap-1 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModalTab('statement')}
+                  className={`py-3 px-3 sm:px-4 font-semibold text-xs sm:text-sm border-b-2 transition-all flex items-center gap-1.5 ${
+                    modalTab === 'statement'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Receipt className="w-4 h-4" />
+                  <span>Account Ledger</span>
+                  <span className="ml-1 text-[11px] px-1.5 py-0.2 bg-slate-100 rounded-full font-mono text-slate-600">
+                    {computedLedger.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModalTab('pay')}
+                  className={`py-3 px-3 sm:px-4 font-semibold text-xs sm:text-sm border-b-2 transition-all flex items-center gap-1.5 ${
+                    modalTab === 'pay'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>Record Payment</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModalTab('details')}
+                  className={`py-3 px-3 sm:px-4 font-semibold text-xs sm:text-sm border-b-2 transition-all flex items-center gap-1.5 ${
+                    modalTab === 'details'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Building className="w-4 h-4" />
+                  <span>Profile & Tax</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModalTab('print')}
+                  className={`py-3 px-3 sm:px-4 font-semibold text-xs sm:text-sm border-b-2 transition-all flex items-center gap-1.5 ${
+                    modalTab === 'print'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Statement</span>
+                </button>
+              </div>
 
               <button
-                onClick={() => setModalTab('history')}
-                className={`py-3 px-4 font-semibold text-sm border-b-2 transition-all flex items-center gap-2 ${
-                  modalTab === 'history'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
+                type="button"
+                onClick={() => fetchSupplierPayments(selectedSupplier.id!)}
+                disabled={isLoadingHistory}
+                className="text-xs text-blue-600 hover:text-blue-700 font-medium inline-flex items-center gap-1 py-1"
+                title="Refresh transactions"
               >
-                <Receipt className="w-4 h-4" />
-                <span>Ledger History ({supplierPayments.length})</span>
-              </button>
-
-              <button
-                onClick={() => setModalTab('details')}
-                className={`py-3 px-4 font-semibold text-sm border-b-2 transition-all flex items-center gap-2 ${
-                  modalTab === 'details'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Building className="w-4 h-4" />
-                <span>Supplier Profile</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">Refresh</span>
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-5 sm:p-6">
-              {/* TAB 1: RECORD PAYMENT */}
-              {modalTab === 'pay' && (
-                <div className="max-w-2xl mx-auto space-y-5">
-                  {/* Payment Type Selector */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
-                      Payment Direction
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setPaymentType('payment_out')}
-                        className={`p-3 rounded-xl border font-medium text-sm flex items-center justify-center gap-2 transition-all ${
-                          paymentType === 'payment_out'
-                            ? 'bg-rose-50 border-rose-300 text-rose-700 ring-2 ring-rose-500/20 shadow-xs'
-                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <TrendingDown className="w-4 h-4 text-rose-600" />
-                        <div className="text-left">
-                          <div className="font-semibold">Pay Supplier</div>
-                          <div className="text-[11px] opacity-75">Settle purchase dues</div>
-                        </div>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setPaymentType('payment_in')}
-                        className={`p-3 rounded-xl border font-medium text-sm flex items-center justify-center gap-2 transition-all ${
-                          paymentType === 'payment_in'
-                            ? 'bg-emerald-50 border-emerald-300 text-emerald-700 ring-2 ring-emerald-500/20 shadow-xs'
-                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <TrendingUp className="w-4 h-4 text-emerald-600" />
-                        <div className="text-left">
-                          <div className="font-semibold">Supplier Refund</div>
-                          <div className="text-[11px] opacity-75">Receive money back</div>
-                        </div>
-                      </button>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-50/50">
+              {/* ================================================================= */}
+              {/* TAB 1: RUNNING BALANCE ACCOUNT LEDGER STATEMENT                   */}
+              {/* ================================================================= */}
+              {modalTab === 'statement' && (
+                <div className="space-y-4">
+                  {/* Ledger Summary Ribbon */}
+                  <div className="grid grid-cols-3 gap-2 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-2xs">
+                    <div>
+                      <div className="text-[11px] text-slate-400 uppercase font-semibold">Total Debited (Purchases)</div>
+                      <div className="text-base sm:text-lg font-bold text-slate-900 font-mono mt-0.5">
+                        ₹{ledgerSummary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400 uppercase font-semibold">Total Credited (Paid Out)</div>
+                      <div className="text-base sm:text-lg font-bold text-emerald-600 font-mono mt-0.5">
+                        ₹{ledgerSummary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400 uppercase font-semibold">Current Outstanding Balance</div>
+                      <div className={`text-base sm:text-lg font-bold font-mono mt-0.5 ${ledgerSummary.netClosingBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        ₹{ledgerSummary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Payment Amount */}
+                  {/* Filter Chips for Statement */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setLedgerFilter('all')}
+                        className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                          ledgerFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        All Entries ({computedLedger.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLedgerFilter('purchases')}
+                        className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                          ledgerFilter === 'purchases' ? 'bg-white text-blue-600 shadow-2xs' : 'text-slate-600 hover:text-blue-600'
+                        }`}
+                      >
+                        Purchases Only
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLedgerFilter('payments')}
+                        className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                          ledgerFilter === 'payments' ? 'bg-white text-emerald-600 shadow-2xs' : 'text-slate-600 hover:text-emerald-600'
+                        }`}
+                      >
+                        Disbursements Only
+                      </button>
+                    </div>
+
+                    <span className="text-[11px] text-slate-400 hidden sm:inline">
+                      Chronological double-entry running balance
+                    </span>
+                  </div>
+
+                  {/* The Ledger Table */}
+                  {isLoadingHistory ? (
+                    <div className="py-16 text-center text-slate-500 bg-white rounded-xl border border-slate-200">
+                      <Loader2 className="w-7 h-7 animate-spin mx-auto text-blue-600 mb-2" />
+                      <p className="text-xs sm:text-sm font-medium">Computing account ledger entries...</p>
+                    </div>
+                  ) : filteredLedger.length === 0 ? (
+                    <div className="py-14 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
+                      <Receipt className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                      <p className="text-sm font-bold text-slate-700">No transactions recorded yet</p>
+                      <p className="text-xs text-slate-400 mt-0.5 max-w-sm mx-auto">
+                        Invoices created in Purchases or recorded payments will automatically appear in this ledger.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-slate-50 border-b border-slate-200 font-semibold text-slate-600 uppercase tracking-wider">
+                              <th className="py-2.5 px-3 whitespace-nowrap">Date & Time</th>
+                              <th className="py-2.5 px-3">Particulars / Description</th>
+                              <th className="py-2.5 px-3 whitespace-nowrap">Voucher / Ref #</th>
+                              <th className="py-2.5 px-3 whitespace-nowrap">Mode</th>
+                              <th className="py-2.5 px-3 text-right whitespace-nowrap text-slate-800">Debit (+)</th>
+                              <th className="py-2.5 px-3 text-right whitespace-nowrap text-emerald-700">Credit (-)</th>
+                              <th className="py-2.5 px-3 text-right whitespace-nowrap text-slate-900">Running Balance</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-normal">
+                            {filteredLedger.map(entry => {
+                              const isPurchase = entry.type === 'purchase';
+                              const isPaymentOut = entry.type === 'payment_out';
+
+                              return (
+                                <tr key={entry.id} className="hover:bg-slate-50/70 transition-colors">
+                                  <td className="py-2.5 px-3 whitespace-nowrap text-slate-600">
+                                    <div className="font-medium text-slate-800">
+                                      {entry.createdAt.toLocaleDateString('en-IN', {
+                                        day: '2-digit',
+                                        month: 'short',
+                                        year: 'numeric'
+                                      })}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                      {entry.createdAt.toLocaleTimeString('en-IN', {
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </div>
+                                  </td>
+
+                                  <td className="py-2.5 px-3">
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className={`p-1 rounded flex-shrink-0 ${
+                                          isPurchase
+                                            ? 'bg-blue-50 text-blue-600'
+                                            : isPaymentOut
+                                            ? 'bg-rose-50 text-rose-600'
+                                            : 'bg-emerald-50 text-emerald-600'
+                                        }`}
+                                      >
+                                        {isPurchase ? (
+                                          <ArrowDownLeft className="w-3.5 h-3.5" />
+                                        ) : isPaymentOut ? (
+                                          <ArrowUpRight className="w-3.5 h-3.5" />
+                                        ) : (
+                                          <Check className="w-3.5 h-3.5" />
+                                        )}
+                                      </span>
+                                      <div>
+                                        <div className="font-semibold text-slate-800">
+                                          {isPurchase
+                                            ? 'Purchase Invoice'
+                                            : isPaymentOut
+                                            ? 'Disbursement Payment'
+                                            : 'Vendor Refund'}
+                                        </div>
+                                        {entry.notes && (
+                                          <div className="text-[11px] text-slate-500 truncate max-w-xs">
+                                            {entry.notes}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  <td className="py-2.5 px-3 whitespace-nowrap">
+                                    {isPurchase && entry.relatedPurchaseId ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setShowLedgerModal(false);
+                                          navigate(`/purchases/${entry.relatedPurchaseId}`);
+                                        }}
+                                        className="font-mono text-blue-600 hover:underline inline-flex items-center gap-1 font-medium"
+                                        title="View purchase invoice"
+                                      >
+                                        <span>#{entry.referenceNumber || entry.relatedPurchaseId.slice(-6)}</span>
+                                        <ExternalLink className="w-3 h-3" />
+                                      </button>
+                                    ) : (
+                                      <span className="font-mono text-slate-500">
+                                        {entry.referenceNumber || '—'}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  <td className="py-2.5 px-3 whitespace-nowrap">
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-slate-100 text-slate-700">
+                                      {entry.paymentMode}
+                                    </span>
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono font-medium text-slate-900">
+                                    {entry.debit > 0 ? `₹${entry.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono font-semibold text-emerald-600">
+                                    {entry.credit > 0 ? `₹${entry.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                                  </td>
+
+                                  <td className="py-2.5 px-3 text-right whitespace-nowrap font-mono font-bold">
+                                    <span className={entry.runningBalance > 0 ? 'text-rose-600' : 'text-slate-800'}>
+                                      ₹{entry.runningBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot>
+                            <tr className="bg-slate-50 border-t-2 border-slate-200 font-bold text-slate-900">
+                              <td colSpan={4} className="py-3 px-3 text-right uppercase text-[11px] text-slate-500">
+                                Statement Totals
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono text-slate-900">
+                                ₹{ledgerSummary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono text-emerald-600">
+                                ₹{ledgerSummary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono text-rose-600">
+                                ₹{ledgerSummary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ================================================================= */}
+              {/* TAB 2: RECORD PAYMENT / DISBURSEMENT                              */}
+              {/* ================================================================= */}
+              {modalTab === 'pay' && (
+                <div className="max-w-2xl mx-auto bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">Record Transaction</h3>
+                    <p className="text-xs text-slate-500">Settle pending purchase dues or record vendor refunds</p>
+                  </div>
+
+                  {/* Direction Selector */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentType('payment_out')}
+                      className={`p-3 rounded-xl border font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
+                        paymentType === 'payment_out'
+                          ? 'bg-rose-50 border-rose-300 text-rose-700 ring-2 ring-rose-500/20'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <TrendingDown className="w-4 h-4 text-rose-600" />
+                      <span>Pay Supplier (Disbursement)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setPaymentType('payment_in')}
+                      className={`p-3 rounded-xl border font-semibold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
+                        paymentType === 'payment_in'
+                          ? 'bg-emerald-50 border-emerald-300 text-emerald-700 ring-2 ring-emerald-500/20'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <TrendingUp className="w-4 h-4 text-emerald-600" />
+                      <span>Supplier Refund (Received)</span>
+                    </button>
+                  </div>
+
+                  {/* Amount Input */}
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                        Payment Amount *
+                      <label className="text-xs font-semibold text-slate-700">
+                        Payment Amount (₹) *
                       </label>
                       {selectedSupplier.totalPending > 0 && (
-                        <span className="text-xs text-rose-600 font-semibold">
-                          Total Due: ₹{selectedSupplier.totalPending.toLocaleString('en-IN')}
+                        <span className="text-xs text-rose-600 font-semibold font-mono">
+                          Outstanding Due: ₹{selectedSupplier.totalPending.toLocaleString('en-IN')}
                         </span>
                       )}
                     </div>
 
                     <div className="relative">
-                      <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-bold text-slate-400">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-lg font-bold text-slate-400">
                         ₹
                       </span>
                       <input
@@ -1249,12 +1591,12 @@ const Suppliers: React.FC = () => {
                         value={paymentAmount}
                         onChange={e => setPaymentAmount(e.target.value)}
                         disabled={isSubmitting}
-                        className="w-full pl-9 pr-4 py-3 text-xl font-bold text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                        className="w-full pl-9 pr-4 py-2.5 text-lg font-bold font-mono text-slate-900 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all"
                       />
                     </div>
 
-                    {/* Quick Fill Chips */}
-                    <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                    {/* Quick Smart Chips */}
+                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                       {selectedSupplier.totalPending > 0 && (
                         <>
                           <button
@@ -1273,12 +1615,12 @@ const Suppliers: React.FC = () => {
                           </button>
                         </>
                       )}
-                      {[1000, 2000, 5000, 10000].map(amt => (
+                      {[1000, 5000, 10000, 25000].map(amt => (
                         <button
                           key={amt}
                           type="button"
                           onClick={() => setPaymentAmount(String(amt))}
-                          className="px-2.5 py-1 text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors"
+                          className="px-2 py-1 text-xs font-medium bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 transition-colors"
                         >
                           ₹{amt.toLocaleString('en-IN')}
                         </button>
@@ -1287,7 +1629,7 @@ const Suppliers: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => setPaymentAmount('')}
-                          className="px-2.5 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-lg transition-colors ml-auto"
+                          className="px-2 py-1 text-xs font-medium text-slate-400 hover:text-slate-600 transition-colors ml-auto"
                         >
                           Clear
                         </button>
@@ -1295,40 +1637,33 @@ const Suppliers: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Real-Time Balance Impact Preview Card */}
+                  {/* Real-Time Balance Projection Strip */}
                   {parseFloat(paymentAmount) > 0 && (
-                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
-                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        Live Balance Impact Preview
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-3 gap-2 text-center">
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">Current Balance</div>
+                        <div className="text-xs sm:text-sm font-bold text-slate-800 font-mono mt-0.5">
+                          ₹{selectedSupplier.totalPending.toLocaleString('en-IN')}
+                        </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-center pt-1">
-                        <div>
-                          <div className="text-[11px] text-slate-500">Current Due</div>
-                          <div className="text-sm font-bold text-slate-800">
-                            ₹{selectedSupplier.totalPending.toLocaleString('en-IN')}
-                          </div>
+                      <div className="flex flex-col items-center justify-center">
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">
+                          {paymentType === 'payment_out' ? '- Paying' : '+ Refund'}
                         </div>
-
-                        <div className="flex flex-col items-center justify-center">
-                          <div className="text-[11px] text-slate-400">
-                            {paymentType === 'payment_out' ? '- Paying' : '+ Refund'}
-                          </div>
-                          <div className="text-xs font-semibold text-blue-600 flex items-center gap-1">
-                            <span>₹{parseFloat(paymentAmount || '0').toLocaleString('en-IN')}</span>
-                            <ArrowRight className="w-3 h-3" />
-                          </div>
+                        <div className="text-xs font-bold text-blue-600 font-mono mt-0.5 flex items-center gap-1">
+                          <span>₹{parseFloat(paymentAmount || '0').toLocaleString('en-IN')}</span>
+                          <ArrowRight className="w-3 h-3" />
                         </div>
-
-                        <div>
-                          <div className="text-[11px] text-slate-500">New Due Balance</div>
-                          <div
-                            className={`text-sm font-extrabold ${
-                              calculatedRemainingDue <= 0 ? 'text-emerald-600' : 'text-rose-600'
-                            }`}
-                          >
-                            ₹{Math.max(0, calculatedRemainingDue).toLocaleString('en-IN')}
-                            {calculatedRemainingDue <= 0 && ' (Settled)'}
-                          </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-400 uppercase font-semibold">Projected Due</div>
+                        <div
+                          className={`text-xs sm:text-sm font-bold font-mono mt-0.5 ${
+                            calculatedRemainingDue <= 0 ? 'text-emerald-600' : 'text-rose-600'
+                          }`}
+                        >
+                          ₹{Math.max(0, calculatedRemainingDue).toLocaleString('en-IN')}
+                          {calculatedRemainingDue <= 0 && ' (Settled)'}
                         </div>
                       </div>
                     </div>
@@ -1336,7 +1671,7 @@ const Suppliers: React.FC = () => {
 
                   {/* Payment Mode */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                       Payment Mode
                     </label>
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
@@ -1345,9 +1680,9 @@ const Suppliers: React.FC = () => {
                           key={mode}
                           type="button"
                           onClick={() => setPaymentMode(mode)}
-                          className={`py-2 px-3 rounded-xl border text-xs font-bold capitalize transition-all ${
+                          className={`py-2 px-3 rounded-lg border text-xs font-semibold capitalize transition-all ${
                             paymentMode === mode
-                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
                               : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                           }`}
                         >
@@ -1357,104 +1692,96 @@ const Suppliers: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Split Payment inputs if mode is split */}
+                  {/* Split Inputs */}
                   {paymentMode === 'split' && (
-                    <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                      <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                         <span>Split Breakdown</span>
-                        <span className="text-[11px] text-slate-500">
+                        <span className="text-[11px] text-slate-500 font-mono">
                           Total must equal ₹{parseFloat(paymentAmount || '0').toLocaleString('en-IN')}
                         </span>
                       </div>
-                      <div className="grid grid-cols-3 gap-3">
+                      <div className="grid grid-cols-3 gap-2">
                         <div>
-                          <label className="block text-[11px] text-slate-500 font-medium mb-1">Cash</label>
+                          <label className="block text-[11px] text-slate-500 mb-1">Cash (₹)</label>
                           <input
                             type="number"
                             placeholder="0"
                             value={cashAmount}
                             onChange={e => setCashAmount(e.target.value)}
-                            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none font-mono"
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] text-slate-500 font-medium mb-1">UPI</label>
+                          <label className="block text-[11px] text-slate-500 mb-1">UPI (₹)</label>
                           <input
                             type="number"
                             placeholder="0"
                             value={upiAmount}
                             onChange={e => setUpiAmount(e.target.value)}
-                            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none font-mono"
                           />
                         </div>
                         <div>
-                          <label className="block text-[11px] text-slate-500 font-medium mb-1">Card</label>
+                          <label className="block text-[11px] text-slate-500 mb-1">Card (₹)</label>
                           <input
                             type="number"
                             placeholder="0"
                             value={cardAmount}
                             onChange={e => setCardAmount(e.target.value)}
-                            className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg outline-none focus:ring-1 focus:ring-blue-500"
+                            className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none font-mono"
                           />
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {/* Reference Number & Notes */}
+                  {/* Reference & Notes */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Reference / Transaction ID <span className="text-slate-400 font-normal">(Optional)</span>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        UTR / Transaction Reference <span className="text-slate-400 font-normal">(Optional)</span>
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. UTR12345678, Chq #4401"
+                        placeholder="e.g. UTR-987654321, Chq #402"
                         value={referenceNumber}
                         onChange={e => setReferenceNumber(e.target.value)}
-                        className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-500"
                       />
                     </div>
-
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">
-                        Notes / Remarks <span className="text-slate-400 font-normal">(Optional)</span>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Notes / Memo <span className="text-slate-400 font-normal">(Optional)</span>
                       </label>
                       <input
                         type="text"
-                        placeholder="Add a remark or memo..."
+                        placeholder="e.g. Cleared via Bank Transfer"
                         value={paymentNotes}
                         onChange={e => setPaymentNotes(e.target.value)}
-                        className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-500"
                       />
                     </div>
                   </div>
 
-                  {/* Submit Button with Rock-Solid Double-Click Protection */}
+                  {/* Submit Button */}
                   <div className="pt-2">
                     <button
                       type="button"
                       onClick={handleAddPayment}
                       disabled={isSubmitting || !isPaymentFormValid}
-                      className={`w-full py-3.5 px-4 rounded-xl font-bold text-white shadow-sm transition-all transform active:scale-98 flex items-center justify-center gap-2 ${
-                        isSubmitting || !isPaymentFormValid
-                          ? 'bg-slate-300 cursor-not-allowed text-slate-500'
-                          : paymentType === 'payment_out'
-                          ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-200'
-                          : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
-                      }`}
+                      className="w-full py-3 px-4 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:cursor-not-allowed"
                     >
                       {isSubmitting ? (
                         <>
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          <span>Recording Payment...</span>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Processing Disbursement...</span>
                         </>
                       ) : (
                         <>
-                          <Check className="w-5 h-5 stroke-[2.5]" />
+                          <Check className="w-4 h-4" />
                           <span>
-                            {paymentType === 'payment_out' ? 'Confirm Payment of ' : 'Record Refund of '}
-                            ₹
+                            Confirm Payment of ₹
                             {paymentAmount
                               ? parseFloat(paymentAmount).toLocaleString('en-IN', {
                                   minimumFractionDigits: 2,
@@ -1472,256 +1799,200 @@ const Suppliers: React.FC = () => {
                 </div>
               )}
 
-              {/* TAB 2: LEDGER HISTORY */}
-              {modalTab === 'history' && (
-                <div className="space-y-4">
-                  {/* History Filter Chips */}
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
-                      <button
-                        onClick={() => setHistoryFilter('all')}
-                        className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
-                          historyFilter === 'all'
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        All Transactions ({supplierPayments.length})
-                      </button>
-                      <button
-                        onClick={() => setHistoryFilter('purchases')}
-                        className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
-                          historyFilter === 'purchases'
-                            ? 'bg-white text-blue-600 shadow-sm'
-                            : 'text-slate-600 hover:text-blue-600'
-                        }`}
-                      >
-                        Purchases Only
-                      </button>
-                      <button
-                        onClick={() => setHistoryFilter('payments')}
-                        className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${
-                          historyFilter === 'payments'
-                            ? 'bg-white text-emerald-600 shadow-sm'
-                            : 'text-slate-600 hover:text-emerald-600'
-                        }`}
-                      >
-                        Payments Only
-                      </button>
+              {/* ================================================================= */}
+              {/* TAB 3: VENDOR PROFILE & TAX DETAILS                               */}
+              {/* ================================================================= */}
+              {modalTab === 'details' && (
+                <div className="max-w-2xl mx-auto bg-white p-5 sm:p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-base">{selectedSupplier.name}</h3>
+                      <p className="text-xs text-slate-400 font-mono">Supplier Account ID: {selectedSupplier.id}</p>
                     </div>
-
                     <button
-                      onClick={() => fetchSupplierPayments(selectedSupplier.id!)}
-                      disabled={isLoadingHistory}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-semibold inline-flex items-center gap-1"
+                      type="button"
+                      onClick={() => {
+                        setShowLedgerModal(false);
+                        openEditModal(selectedSupplier);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isLoadingHistory ? 'animate-spin' : ''}`} />
-                      <span>Refresh</span>
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Edit Information</span>
                     </button>
                   </div>
 
-                  {/* Transactions List */}
-                  {isLoadingHistory ? (
-                    <div className="py-12 text-center text-slate-500">
-                      <Loader2 className="w-8 h-8 animate-spin mx-auto text-blue-600 mb-2" />
-                      <p className="text-sm">Loading transactions...</p>
-                    </div>
-                  ) : filteredTransactions.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400 bg-slate-50 rounded-2xl border border-slate-200">
-                      <Receipt className="w-10 h-10 mx-auto text-slate-300 mb-2" />
-                      <p className="text-sm font-medium text-slate-600">No transactions recorded yet</p>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        Purchase orders and payments will appear here chronologically.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {filteredTransactions.map(tx => {
-                        const isPurchase = tx.type === 'purchase';
-                        const isPaymentOut = tx.type === 'payment_out';
-
-                        return (
-                          <div
-                            key={tx.id}
-                            className="bg-white p-4 rounded-xl border border-slate-200 hover:border-slate-300 transition-colors flex items-center justify-between gap-4"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                                  isPurchase
-                                    ? 'bg-blue-50 text-blue-600 border border-blue-100'
-                                    : isPaymentOut
-                                    ? 'bg-rose-50 text-rose-600 border border-rose-100'
-                                    : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                                }`}
-                              >
-                                {isPurchase ? (
-                                  <ShoppingCart className="w-5 h-5" />
-                                ) : isPaymentOut ? (
-                                  <TrendingDown className="w-5 h-5" />
-                                ) : (
-                                  <TrendingUp className="w-5 h-5" />
-                                )}
-                              </div>
-
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-slate-900 text-sm">
-                                    {isPurchase
-                                      ? 'Purchase Order'
-                                      : isPaymentOut
-                                      ? 'Payment Paid Out'
-                                      : 'Refund Received'}
-                                  </span>
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                      isPurchase
-                                        ? 'bg-blue-100 text-blue-700'
-                                        : isPaymentOut
-                                        ? 'bg-rose-100 text-rose-700'
-                                        : 'bg-emerald-100 text-emerald-700'
-                                    }`}
-                                  >
-                                    {tx.paymentMode}
-                                  </span>
-                                </div>
-
-                                <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
-                                  <span className="flex items-center gap-1">
-                                    <Calendar className="w-3 h-3 text-slate-400" />
-                                    {tx.createdAt.toLocaleDateString('en-IN', {
-                                      day: '2-digit',
-                                      month: 'short',
-                                      year: 'numeric'
-                                    })}
-                                  </span>
-                                  {tx.notes && <span>• {tx.notes}</span>}
-                                  {tx.referenceNumber && <span>• Ref: {tx.referenceNumber}</span>}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-3 flex-shrink-0 text-right">
-                              <div>
-                                <div
-                                  className={`text-base font-extrabold ${
-                                    isPurchase
-                                      ? 'text-slate-900'
-                                      : isPaymentOut
-                                      ? 'text-rose-600'
-                                      : 'text-emerald-600'
-                                  }`}
-                                >
-                                  {isPaymentOut ? '-' : isPurchase ? '' : '+'}₹
-                                  {tx.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                                </div>
-                                {tx.createdByName && (
-                                  <div className="text-[10px] text-slate-400">By {tx.createdByName}</div>
-                                )}
-                              </div>
-
-                              {isPurchase && tx.relatedPurchaseId && (
-                                <button
-                                  onClick={() => {
-                                    setShowLedgerModal(false);
-                                    navigate(`/purchases/${tx.relatedPurchaseId}`);
-                                  }}
-                                  className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                  title="View Purchase Invoice"
-                                >
-                                  <ExternalLink className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 3: SUPPLIER PROFILE */}
-              {modalTab === 'details' && (
-                <div className="max-w-xl mx-auto space-y-4">
-                  <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200 space-y-3">
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-lg">{selectedSupplier.name}</h3>
-                        <p className="text-xs text-slate-500">Supplier Account ID: {selectedSupplier.id}</p>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setShowLedgerModal(false);
-                          openEditModal(selectedSupplier);
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        <span>Edit Details</span>
-                      </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <span className="text-slate-400 block mb-0.5">Contact Person</span>
+                      <span className="font-semibold text-slate-800 text-sm">
+                        {selectedSupplier.contactPerson || 'Not provided'}
+                      </span>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">Contact Person</span>
-                        <span className="font-semibold text-slate-800">
-                          {selectedSupplier.contactPerson || 'Not provided'}
-                        </span>
-                      </div>
+                    <div>
+                      <span className="text-slate-400 block mb-0.5">Phone Number</span>
+                      <a href={`tel:${selectedSupplier.phone}`} className="font-semibold text-blue-600 hover:underline text-sm font-mono">
+                        {selectedSupplier.phone}
+                      </a>
+                    </div>
 
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">Phone Number</span>
-                        <a
-                          href={`tel:${selectedSupplier.phone}`}
-                          className="font-semibold text-blue-600 hover:underline"
-                        >
-                          {selectedSupplier.phone}
-                        </a>
-                      </div>
+                    <div>
+                      <span className="text-slate-400 block mb-0.5">Email Address</span>
+                      <span className="font-medium text-slate-800">
+                        {selectedSupplier.email || 'Not provided'}
+                      </span>
+                    </div>
 
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">Email Address</span>
-                        <span className="font-semibold text-slate-800">
-                          {selectedSupplier.email || 'Not provided'}
-                        </span>
-                      </div>
+                    <div>
+                      <span className="text-slate-400 block mb-0.5">GST Identification Number (GSTIN)</span>
+                      <span className="font-mono font-semibold text-slate-800 text-sm">
+                        {selectedSupplier.gstNumber || 'Unregistered / Not provided'}
+                      </span>
+                    </div>
 
-                      <div>
-                        <span className="text-slate-400 block mb-0.5">GST Number</span>
-                        <span className="font-semibold font-mono text-slate-800">
-                          {selectedSupplier.gstNumber || 'Not provided'}
-                        </span>
-                      </div>
-
-                      <div className="sm:col-span-2">
-                        <span className="text-slate-400 block mb-0.5">Address</span>
-                        <span className="font-medium text-slate-700">
-                          {selectedSupplier.address || 'No address provided'}
-                        </span>
-                      </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-400 block mb-0.5">Business Address</span>
+                      <span className="font-medium text-slate-700">
+                        {selectedSupplier.address || 'No registered address'}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Summary Stat Box */}
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-center">
-                      <div className="text-[10px] text-blue-600 uppercase font-bold">Total Purchases</div>
-                      <div className="text-base font-extrabold text-blue-900 mt-0.5">
+                  <div className="grid grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                      <div className="text-[10px] text-slate-400 uppercase font-semibold">Total Purchases</div>
+                      <div className="text-sm sm:text-base font-bold font-mono text-slate-900 mt-0.5">
                         ₹{selectedSupplier.totalPurchaseAmount.toLocaleString('en-IN')}
                       </div>
                     </div>
-                    <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl text-center">
-                      <div className="text-[10px] text-emerald-600 uppercase font-bold">Total Paid</div>
-                      <div className="text-base font-extrabold text-emerald-900 mt-0.5">
+                    <div className="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-center">
+                      <div className="text-[10px] text-emerald-600 uppercase font-semibold">Total Cleared</div>
+                      <div className="text-sm sm:text-base font-bold font-mono text-emerald-700 mt-0.5">
                         ₹{selectedSupplier.totalPaid.toLocaleString('en-IN')}
                       </div>
                     </div>
-                    <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl text-center">
-                      <div className="text-[10px] text-rose-600 uppercase font-bold">Pending Due</div>
-                      <div className="text-base font-extrabold text-rose-900 mt-0.5">
+                    <div className="p-3 bg-rose-50/60 rounded-xl border border-rose-100 text-center">
+                      <div className="text-[10px] text-rose-600 uppercase font-semibold">Balance Due</div>
+                      <div className="text-sm sm:text-base font-bold font-mono text-rose-700 mt-0.5">
                         ₹{selectedSupplier.totalPending.toLocaleString('en-IN')}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ================================================================= */}
+              {/* TAB 4: PRINTABLE FORMAL STATEMENT VIEW                            */}
+              {/* ================================================================= */}
+              {modalTab === 'print' && (
+                <div className="max-w-3xl mx-auto space-y-4">
+                  <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-200">
+                    <span className="text-xs text-slate-500">
+                      Standard vendor account statement preview for printing or PDF export.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handlePrint}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>Print / Export PDF</span>
+                    </button>
+                  </div>
+
+                  {/* Printable Statement Sheet */}
+                  <div id="printable-statement" className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-300 shadow-sm text-slate-900 font-sans">
+                    {/* Statement Header */}
+                    <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4 mb-4">
+                      <div>
+                        <h2 className="text-xl font-bold tracking-tight uppercase">DIGITAL ZONE</h2>
+                        <p className="text-xs text-slate-600">Central Procurement & Head Office Hub</p>
+                        <p className="text-xs text-slate-500">Statement of Vendor Account</p>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs font-bold uppercase text-slate-500">Generated On</div>
+                        <div className="text-xs font-mono font-semibold">
+                          {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Vendor and Statement Summary */}
+                    <div className="grid grid-cols-2 gap-4 text-xs pb-4 mb-4 border-b border-slate-200">
+                      <div>
+                        <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5">Vendor Details</div>
+                        <div className="font-bold text-sm text-slate-900">{selectedSupplier.name}</div>
+                        {selectedSupplier.contactPerson && <div>Attn: {selectedSupplier.contactPerson}</div>}
+                        <div>Phone: {selectedSupplier.phone}</div>
+                        {selectedSupplier.gstNumber && <div className="font-mono">GSTIN: {selectedSupplier.gstNumber}</div>}
+                        {selectedSupplier.address && <div className="text-slate-600 mt-0.5">{selectedSupplier.address}</div>}
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-[10px] uppercase font-bold text-slate-400 mb-0.5">Account Status</div>
+                        <div className="text-xs">
+                          Total Purchases: <span className="font-mono font-semibold">₹{ledgerSummary.totalDebits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="text-xs">
+                          Total Cleared: <span className="font-mono font-semibold text-emerald-600">₹{ledgerSummary.totalCredits.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="text-sm font-bold mt-1">
+                          Closing Balance:{' '}
+                          <span className={`font-mono ${ledgerSummary.netClosingBalance > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                            ₹{ledgerSummary.netClosingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tabular Statement */}
+                    <table className="w-full text-left border-collapse text-xs mb-6">
+                      <thead>
+                        <tr className="border-b border-slate-300 font-bold uppercase text-[10px] text-slate-600">
+                          <th className="py-2">Date</th>
+                          <th className="py-2">Particulars</th>
+                          <th className="py-2">Ref / Voucher</th>
+                          <th className="py-2 text-right">Debit (+)</th>
+                          <th className="py-2 text-right">Credit (-)</th>
+                          <th className="py-2 text-right">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {computedLedger.map((row, idx) => (
+                          <tr key={idx}>
+                            <td className="py-2 text-slate-600 font-mono">
+                              {row.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </td>
+                            <td className="py-2 font-medium">
+                              {row.type === 'purchase'
+                                ? 'Purchase Invoiced'
+                                : row.type === 'payment_out'
+                                ? `Disbursement (${row.paymentMode})`
+                                : 'Refund Credit'}
+                              {row.notes ? ` — ${row.notes}` : ''}
+                            </td>
+                            <td className="py-2 font-mono text-slate-500">
+                              {row.referenceNumber || '—'}
+                            </td>
+                            <td className="py-2 text-right font-mono">
+                              {row.debit > 0 ? `₹${row.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                            </td>
+                            <td className="py-2 text-right font-mono text-emerald-700">
+                              {row.credit > 0 ? `₹${row.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                            </td>
+                            <td className="py-2 text-right font-mono font-bold">
+                              ₹{row.runningBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {/* Signature block */}
+                    <div className="pt-8 flex items-center justify-between text-xs text-slate-500 border-t border-slate-200">
+                      <div>Authorized Seal & Signature</div>
+                      <div className="font-mono text-[10px]">Page 1 of 1 • System Generated Ledger Statement</div>
                     </div>
                   </div>
                 </div>
@@ -1729,17 +2000,14 @@ const Suppliers: React.FC = () => {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 px-6 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
-              <span className="text-xs text-slate-400">
-                Created on {selectedSupplier.createdAt.toLocaleDateString('en-IN')}
-              </span>
+            <div className="p-3 sm:p-4 px-6 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs text-slate-400">
+              <span>Account Registered {selectedSupplier.createdAt.toLocaleDateString('en-IN')}</span>
               <button
                 type="button"
                 onClick={() => setShowLedgerModal(false)}
-                disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200/70 rounded-xl transition-colors"
+                className="px-4 py-2 font-semibold text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
               >
-                Close
+                Close Ledger
               </button>
             </div>
           </div>
@@ -1750,19 +2018,20 @@ const Suppliers: React.FC = () => {
       {/* MODAL 2: ADD NEW SUPPLIER MODAL                                           */}
       {/* ========================================================================= */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
+            <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-xl">
-                  <Plus className="w-5 h-5 stroke-[2.5]" />
+                <div className="p-2 bg-blue-50 text-blue-600 rounded-lg border border-blue-100">
+                  <Plus className="w-4 h-4" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Add New Supplier</h2>
-                  <p className="text-xs text-slate-500">Register a new vendor or wholesale supplier</p>
+                  <h2 className="text-base font-bold text-slate-900">Add New Supplier</h2>
+                  <p className="text-xs text-slate-500">Register vendor or wholesale supplier account</p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setShowAddModal(false)}
                 disabled={isSubmitting}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
@@ -1771,9 +2040,9 @@ const Suppliers: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleAddSupplier} className="p-6 space-y-4">
+            <form onSubmit={handleAddSupplier} className="p-5 sm:p-6 space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Supplier / Company Name *
                 </label>
                 <input
@@ -1783,13 +2052,13 @@ const Suppliers: React.FC = () => {
                   value={supplierForm.name}
                   onChange={e => setSupplierForm({ ...supplierForm, name: e.target.value })}
                   disabled={isSubmitting}
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Phone Number *
                   </label>
                   <input
@@ -1799,12 +2068,12 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.phone}
                     onChange={e => setSupplierForm({ ...supplierForm, phone: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Contact Person
                   </label>
                   <input
@@ -1813,14 +2082,14 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.contactPerson}
                     onChange={e => setSupplierForm({ ...supplierForm, contactPerson: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Email Address
                   </label>
                   <input
@@ -1829,13 +2098,13 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.email}
                     onChange={e => setSupplierForm({ ...supplierForm, email: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    GST Number
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GSTIN Number
                   </label>
                   <input
                     type="text"
@@ -1843,13 +2112,13 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.gstNumber}
                     onChange={e => setSupplierForm({ ...supplierForm, gstNumber: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm uppercase bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs uppercase bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Business Address
                 </label>
                 <textarea
@@ -1858,31 +2127,31 @@ const Suppliers: React.FC = () => {
                   value={supplierForm.address}
                   onChange={e => setSupplierForm({ ...supplierForm, address: e.target.value })}
                   disabled={isSubmitting}
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 />
               </div>
 
-              <div className="flex items-center gap-3 pt-3">
+              <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
                   disabled={isSubmitting}
-                  className="flex-1 py-2.5 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200"
+                  className="flex-1 py-2 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !supplierForm.name.trim() || !supplierForm.phone.trim()}
-                  className="flex-1 py-2.5 px-4 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 py-2 px-3 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-2xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       <span>Saving...</span>
                     </>
                   ) : (
-                    <span>Add Supplier</span>
+                    <span>Register Supplier</span>
                   )}
                 </button>
               </div>
@@ -1895,19 +2164,20 @@ const Suppliers: React.FC = () => {
       {/* MODAL 3: EDIT SUPPLIER MODAL                                              */}
       {/* ========================================================================= */}
       {showEditModal && selectedSupplier && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200">
+            <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-slate-100 text-slate-700 rounded-xl">
-                  <Edit2 className="w-5 h-5" />
+                <div className="p-2 bg-slate-100 text-slate-700 rounded-lg">
+                  <Edit2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900">Edit Supplier</h2>
+                  <h2 className="text-base font-bold text-slate-900">Edit Supplier</h2>
                   <p className="text-xs text-slate-500">Update supplier contact & business information</p>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setShowEditModal(false)}
                 disabled={isSubmitting}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
@@ -1916,9 +2186,9 @@ const Suppliers: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleEditSupplier} className="p-6 space-y-4">
+            <form onSubmit={handleEditSupplier} className="p-5 sm:p-6 space-y-3.5">
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Supplier / Company Name *
                 </label>
                 <input
@@ -1927,13 +2197,13 @@ const Suppliers: React.FC = () => {
                   value={supplierForm.name}
                   onChange={e => setSupplierForm({ ...supplierForm, name: e.target.value })}
                   disabled={isSubmitting}
-                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Phone Number *
                   </label>
                   <input
@@ -1942,12 +2212,12 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.phone}
                     onChange={e => setSupplierForm({ ...supplierForm, phone: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Contact Person
                   </label>
                   <input
@@ -1955,14 +2225,14 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.contactPerson}
                     onChange={e => setSupplierForm({ ...supplierForm, contactPerson: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Email Address
                   </label>
                   <input
@@ -1970,26 +2240,26 @@ const Suppliers: React.FC = () => {
                     value={supplierForm.email}
                     onChange={e => setSupplierForm({ ...supplierForm, email: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-lg outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    GST Number
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GSTIN Number
                   </label>
                   <input
                     type="text"
                     value={supplierForm.gstNumber}
                     onChange={e => setSupplierForm({ ...supplierForm, gstNumber: e.target.value })}
                     disabled={isSubmitting}
-                    className="w-full px-3.5 py-2.5 text-sm uppercase bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-2 text-xs uppercase bg-white border border-slate-300 rounded-lg outline-none font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Business Address
                 </label>
                 <textarea
@@ -1997,27 +2267,27 @@ const Suppliers: React.FC = () => {
                   value={supplierForm.address}
                   onChange={e => setSupplierForm({ ...supplierForm, address: e.target.value })}
                   disabled={isSubmitting}
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg outline-none"
                 />
               </div>
 
-              <div className="flex items-center gap-3 pt-3">
+              <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowEditModal(false)}
                   disabled={isSubmitting}
-                  className="flex-1 py-2.5 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200"
+                  className="flex-1 py-2 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isSubmitting || !supplierForm.name.trim() || !supplierForm.phone.trim()}
-                  className="flex-1 py-2.5 px-4 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 py-2 px-3 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-2xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       <span>Saving Changes...</span>
                     </>
                   ) : (
