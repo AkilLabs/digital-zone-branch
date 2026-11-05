@@ -373,7 +373,7 @@ const PurchaseDetail: React.FC = () => {
             {/* Print All Labels */}
             <button
               onClick={openPrintAllModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
             >
               <Printer className="w-4 h-4" />
               <span>Print Barcode Labels</span>
@@ -382,7 +382,7 @@ const PurchaseDetail: React.FC = () => {
             {/* Edit Purchase */}
             <button
               onClick={() => navigate(isIMEI ? `/edit-purchase-imei/${id}` : `/edit-purchase/${id}`)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer"
             >
               <Edit className="w-4 h-4" />
               <span>Edit Voucher</span>
@@ -562,7 +562,7 @@ const PurchaseDetail: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={openPrintAllModal}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
                 <span>Print All Labels</span>
@@ -687,7 +687,7 @@ const PurchaseDetail: React.FC = () => {
                       <button
                         onClick={() => handlePrintLabel(item)}
                         title="Print Barcode Label"
-                        className="p-1.5 text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center"
+                        className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center"
                       >
                         <Printer className="w-4 h-4" />
                       </button>
@@ -740,7 +740,7 @@ const PurchaseDetail: React.FC = () => {
                   </div>
                   <button
                     onClick={() => handlePrintLabel(item)}
-                    className="p-1.5 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors cursor-pointer"
+                    className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
                     title="Print label"
                   >
                     <Printer className="w-4 h-4" />
@@ -926,17 +926,17 @@ const PurchaseDetail: React.FC = () => {
             onClick={() => setShowPrintModal(false)}
           >
             <div
-              className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md border border-slate-200"
+              className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6 w-full max-w-md border border-slate-200/90"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-purple-100 text-purple-700 rounded-xl">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
                     <Printer className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Print Product Labels</h3>
-                    <p className="text-xs text-slate-500">Configure sticker quantity</p>
+                    <h3 className="text-base font-bold text-slate-900">Print Barcode Labels</h3>
+                    <p className="text-xs text-slate-500">Configure sticker copies to print</p>
                   </div>
                 </div>
                 <button
@@ -947,20 +947,20 @@ const PurchaseDetail: React.FC = () => {
                 </button>
               </div>
 
-              <div className="mb-5 bg-purple-50/70 p-3.5 rounded-xl border border-purple-200 text-xs space-y-1.5">
+              <div className="mb-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-600">Product:</span>
-                  <span className="font-bold text-slate-900">{productToPrint.name}</span>
+                  <span className="text-slate-500 font-medium">Product Item:</span>
+                  <span className="font-bold text-slate-900 truncate max-w-[220px]">{productToPrint.name}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-600">Purchase Quantity:</span>
-                  <span className="font-bold text-purple-700 font-mono">{productToPrint.quantity} units</span>
+                  <span className="text-slate-500 font-medium">Inward Stock Quantity:</span>
+                  <span className="font-bold text-blue-700 font-mono">{productToPrint.quantity} units</span>
                 </div>
               </div>
 
               <div className="mb-5">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Number of Labels to Print
+                  Number of Copies
                 </label>
                 <input
                   type="number"
@@ -968,7 +968,7 @@ const PurchaseDetail: React.FC = () => {
                   max="1000"
                   value={printQuantity}
                   onChange={(e) => setPrintQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 font-mono font-bold text-lg text-center"
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-mono font-bold text-lg text-center"
                 />
                 <div className="mt-2.5 flex gap-2">
                   {[1, 5, 10].map(qty => (
@@ -984,7 +984,7 @@ const PurchaseDetail: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setPrintQuantity(productToPrint.quantity)}
-                    className="flex-1 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                    className="flex-1 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                   >
                     Match ({productToPrint.quantity})
                   </button>
@@ -993,17 +993,19 @@ const PurchaseDetail: React.FC = () => {
 
               <div className="flex gap-2.5">
                 <button
+                  type="button"
                   onClick={() => setShowPrintModal(false)}
-                  className="flex-1 bg-slate-100 text-slate-700 py-2.5 px-4 rounded-xl hover:bg-slate-200 transition-colors text-xs font-bold cursor-pointer"
+                  className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={confirmPrintLabel}
-                  className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2.5 px-4 rounded-xl transition-all text-xs font-bold shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white py-2.5 px-4 rounded-xl transition-all text-xs font-bold shadow-xs hover:shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
-                  Print {printQuantity} Label{printQuantity > 1 ? 's' : ''}
+                  <span>Print {printQuantity} Sticker{printQuantity > 1 ? 's' : ''}</span>
                 </button>
               </div>
             </div>
@@ -1017,18 +1019,18 @@ const PurchaseDetail: React.FC = () => {
             onClick={() => setShowPrintAllModal(false)}
           >
             <div
-              className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col border border-slate-200"
+              className="bg-white rounded-2xl shadow-2xl p-5 sm:p-6 w-full max-w-xl max-h-[85vh] flex flex-col border border-slate-200/90"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 bg-purple-100 text-purple-700 rounded-xl">
+                  <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
                     <Printer className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Bulk Label Printing</h3>
+                    <h3 className="text-base font-bold text-slate-900">Batch Barcode Printing</h3>
                     <p className="text-xs text-slate-500">
-                      Selected items: {selectedItems.length} of {purchase.items.length}
+                      Select items and configure copies • {selectedItems.length} of {purchase.items.length} selected
                     </p>
                   </div>
                 </div>
@@ -1043,12 +1045,14 @@ const PurchaseDetail: React.FC = () => {
               {/* Quick Actions Bar */}
               <div className="mb-3.5 flex gap-2 flex-wrap text-xs">
                 <button
+                  type="button"
                   onClick={toggleAllSelection}
                   className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition-colors cursor-pointer"
                 >
                   {selectedItems.length === purchase.items.length ? 'Deselect All' : 'Select All'}
                 </button>
                 <button
+                  type="button"
                   onClick={() => {
                     const updates: { [key: string]: number } = {};
                     purchase.items.forEach((_, idx) => updates[idx] = 1);
@@ -1059,14 +1063,15 @@ const PurchaseDetail: React.FC = () => {
                   Set All to 1
                 </button>
                 <button
+                  type="button"
                   onClick={() => {
                     const updates: { [key: string]: number } = {};
                     purchase.items.forEach((item, idx) => updates[idx] = item.quantity);
                     setPrintQuantities(updates);
                   }}
-                  className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-semibold transition-colors cursor-pointer"
+                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg font-semibold transition-colors cursor-pointer"
                 >
-                  Match Purchase Quantities
+                  Match Inward Stock
                 </button>
               </div>
 
@@ -1078,24 +1083,25 @@ const PurchaseDetail: React.FC = () => {
                     <div
                       key={index}
                       className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                        isSelected ? 'bg-purple-50/60 border-purple-200' : 'bg-slate-50/60 border-slate-200 opacity-60'
+                        isSelected ? 'bg-blue-50/50 border-blue-200 shadow-2xs' : 'bg-slate-50/60 border-slate-200 opacity-60'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => toggleItemSelection(index)}
-                        className="w-4 h-4 text-purple-600 rounded cursor-pointer"
+                        className="w-4 h-4 text-blue-600 rounded cursor-pointer"
                       />
                       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleItemSelection(index)}>
                         <p className="font-bold text-slate-900 truncate text-xs">{item.productName}</p>
                         <div className="flex gap-2 text-[11px] text-slate-500 mt-0.5">
-                          <span>Inward Qty: <strong className="text-slate-800">{item.quantity}</strong></span>
+                          <span>Stock: <strong className="text-slate-800">{item.quantity}</strong></span>
                           <span>• {item.brand} {item.model ? `(${item.model})` : ''}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button
+                          type="button"
                           onClick={() => updatePrintQuantity(index, Math.max(1, (printQuantities[index] || 1) - 1))}
                           disabled={!isSelected}
                           className="w-7 h-7 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-40 rounded-lg font-bold text-xs flex items-center justify-center cursor-pointer"
@@ -1112,6 +1118,7 @@ const PurchaseDetail: React.FC = () => {
                           className="w-14 px-1.5 py-1 border border-slate-300 rounded-lg text-center font-mono font-bold text-xs disabled:opacity-40"
                         />
                         <button
+                          type="button"
                           onClick={() => updatePrintQuantity(index, Math.min(1000, (printQuantities[index] || 1) + 1))}
                           disabled={!isSelected}
                           className="w-7 h-7 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-40 rounded-lg font-bold text-xs flex items-center justify-center cursor-pointer"
@@ -1127,18 +1134,20 @@ const PurchaseDetail: React.FC = () => {
               {/* Action Buttons */}
               <div className="flex gap-2.5 pt-3 border-t border-slate-200">
                 <button
+                  type="button"
                   onClick={() => setShowPrintAllModal(false)}
-                  className="flex-1 bg-slate-100 text-slate-700 py-2.5 px-4 rounded-xl hover:bg-slate-200 text-xs font-bold cursor-pointer"
+                  className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={confirmPrintAllLabels}
                   disabled={selectedItems.length === 0}
-                  className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2.5 px-4 rounded-xl text-xs font-bold shadow-xs disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white py-2.5 px-4 rounded-xl text-xs font-bold shadow-xs hover:shadow-sm disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Printer className="w-4 h-4" />
-                  Print ({selectedItems.reduce((acc, idx) => acc + (printQuantities[idx] || 1), 0)}) Labels
+                  <span>Print ({selectedItems.reduce((acc, idx) => acc + (printQuantities[idx] || 1), 0)}) Labels</span>
                 </button>
               </div>
             </div>

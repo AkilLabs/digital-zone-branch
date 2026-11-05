@@ -1342,7 +1342,7 @@ const Products: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handlePrintLabel(product)}
-                              className="p-1.5 text-purple-600 hover:bg-purple-50 rounded transition-colors"
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
                               title="Print Label"
                             >
                               <Printer className="w-4 h-4" />
@@ -1544,7 +1544,7 @@ const Products: React.FC = () => {
                                 type="button"
                                 onClick={() => handlePrintLabel(product)}
                                 title="Print label"
-                                className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                               >
                                 <Printer className="h-4 w-4" />
                               </button>
@@ -1796,7 +1796,7 @@ const Products: React.FC = () => {
                   setSelectedProductForDetails(null);
                   handlePrintLabel(p);
                 }}
-                className="w-full bg-purple-600 text-white py-2.5 px-4 rounded-lg hover:bg-purple-700 font-semibold flex items-center justify-center gap-2 text-sm shadow-sm"
+                className="w-full bg-blue-600 text-white py-2.5 px-4 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2 text-sm shadow-sm"
               >
                 <Printer className="h-4 w-4" />
                 Print Label
@@ -1906,7 +1906,7 @@ const Products: React.FC = () => {
               <button
                 type="button"
                 onClick={confirmPrintLabel}
-                className="flex-1 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-xs font-bold text-white shadow-sm flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm flex items-center justify-center gap-1.5"
               >
                 <Printer className="h-4 w-4" />
                 Print {printQuantity}
@@ -1993,7 +1993,7 @@ const Products: React.FC = () => {
               <button
                 type="button"
                 onClick={confirmPrintAllLabels}
-                className="flex-1 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-xs font-bold text-white shadow-sm flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm flex items-center justify-center gap-1.5"
               >
                 <Printer className="h-4 w-4" />
                 Print All Labels
