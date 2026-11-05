@@ -368,6 +368,7 @@ export interface PurchaseItem {
   taxPercent?: number;
   highestDiscountLimit?: number;
   gstEnabled?: boolean;
+  baseCost?: number;
 }
 
 export interface Purchase {
