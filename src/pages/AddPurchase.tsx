@@ -1,13 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToast } from '../hooks/useToast';
 import Navbar from '../components/Navbar';
-import { Package, DollarSign, Plus, Trash2, ShoppingCart, Receipt, Save, Building } from 'lucide-react';
-import type { Purchase, PurchaseItem, PaymentMode, PaymentSplit, Product, Brand, Category } from '../types';
-import { collection, addDoc, getDocs, query, where, updateDoc, doc, increment, Timestamp, orderBy, limit, getDoc, deleteDoc } from 'firebase/firestore';
+import {
+  Package, DollarSign, Plus, Trash2, Save,
+  Check, ArrowRight, ArrowLeft, AlertCircle, X,
+  CreditCard, Banknote, QrCode, Split, Calendar, FileText, UserPlus, Phone, Hash, Truck,
+  ChevronLeft, ChevronRight, CheckCircle2, Receipt, Eye, EyeOff,
+  AlertTriangle, Upload, Download, Search
+} from 'lucide-react';
+import type { Purchase, PurchaseItem, Supplier, PaymentMode, PaymentSplit, Product, Brand, Category } from '../types';
+import {
+  collection, addDoc, getDocs, query, where, updateDoc, doc, increment,
+  Timestamp, orderBy, limit, getDoc, deleteDoc
+} from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { generateProductCode } from '../utils/productCode';
 import { syncStoreProducts } from '../utils/productSyncCache';
@@ -16,134 +24,153 @@ import { MultiStepLoader } from '../components/ui/multi-step-loader';
 import SearchableSelect from '../components/SearchableSelect';
 import * as XLSX from 'xlsx';
 
+const getInitialItem = (defaultTax = 18): PurchaseItem => ({
+  productName: '',
+  brand: '',
+  model: '',
+  category: '',
+  quantity: 1,
+  costPerUnit: 0,
+  totalCost: 0,
+  mrp: 0,
+  mop: 0,
+  hcsCode: '',
+  taxPercent: defaultTax,
+  highestDiscountLimit: 0
+});
+
 const AddPurchase: React.FC = () => {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore, currentHub } = useStore();
+  const { getCollectionRef, getDocRef, currentHub } = useStore();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEditMode = !!id;
   const [originalPurchase, setOriginalPurchase] = useState<any>(null);
   const { showToast } = useToast();
 
-  const [selectedSupplierId, setSelectedSupplierId] = useState('hq-hub');
-  const [selectedSupplierName, setSelectedSupplierName] = useState('HQ Central Hub');
+  // Navigation / Stepper State: 1: Supplier, 2: Products & Inventory, 3: Payment & Summary
+  const [pageStep, setPageStep] = useState<1 | 2 | 3>(1);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [showSupplierModal, setShowSupplierModal] = useState(false);
+  const [showProductName, setShowProductName] = useState(false);
 
+  // Supplier state
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [selectedSupplierName, setSelectedSupplierName] = useState('');
+
+  // Master Data
   const [brands, setBrands] = useState<Brand[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
 
+  // Invoice & Documentation
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [purchaseDate, setPurchaseDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
+
+  // Payment Settlement
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cash');
   const [paidAmount, setPaidAmount] = useState('');
-
-  // Payment split fields
   const [cashAmount, setCashAmount] = useState('');
   const [upiAmount, setUpiAmount] = useState('');
   const [cardAmount, setCardAmount] = useState('');
 
+  // GST Configuration
   const [isGstPurchase, setIsGstPurchase] = useState<boolean>(false);
   const [defaultTaxPercent, setDefaultTaxPercent] = useState<number>(18);
 
-  const [items, setItems] = useState<PurchaseItem[]>([{
-    productName: '',
-    brand: '',
-    model: '',
-    category: '',
-    quantity: 1,
-    costPerUnit: 0,
-    totalCost: 0,
-    mrp: 0,
-    taxPercent: 0,
-    hcsCode: ''
-  }]);
-  // Track whether each item row corresponds to an existing product
+  // Products Table State
+  const [items, setItems] = useState<PurchaseItem[]>([getInitialItem(0)]);
   const [itemIsExistingProduct, setItemIsExistingProduct] = useState<boolean[]>([false]);
-
   const [itemProductCodes, setItemProductCodes] = useState<string[]>(['']);
   const [itemExistingStock, setItemExistingStock] = useState<number[]>([0]);
   const [nextProductCodeNumber, setNextProductCodeNumber] = useState<number | null>(null);
 
+  // Submission & Loader State
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Multi-step loader state
   const [multiStepLoading, setMultiStepLoading] = useState(false);
   const [loadingStates, setLoadingStates] = useState<Array<{ text: string }>>([]);
 
-  // Product search modal
-  // popup is removed; using inline dropdown instead
+  // Product catalog modal state
+  const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const searchContainerRef = useRef<HTMLDivElement | null>(null);
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
-  const tableWrapperRef = useRef<HTMLDivElement | null>(null);
-  const importFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [dropdownPosition, setDropdownPosition] = useState<{ left: number; top: number; width: number } | null>(null);
-  const [dropdownFocusedIndex, setDropdownFocusedIndex] = useState<number | null>(null);
-  const searchDebounceRef = useRef<number | null>(null);
   const [searching, setSearching] = useState(false);
-  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Draft auto-save state
-  const [lastSaved, setLastSaved] = useState<string | null>(null);
+  // Cell editing for encoded prices
   const [activeCell, setActiveCell] = useState<{ rowIndex: number; field: string; value: string } | null>(null);
 
+  // New supplier form
+  const [newSupplier, setNewSupplier] = useState({
+    name: '',
+    contactPerson: '',
+    phone: '',
+    email: '',
+    address: '',
+    gstNumber: ''
+  });
 
+  // Draft auto-save timestamp
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+
+  // Initial load
   useEffect(() => {
+    fetchSuppliers();
     fetchBrandsAndCategories();
 
     if (isEditMode) {
       fetchPurchaseForEdit();
     } else {
-      // Restore draft data from localStorage
+      const savedDraft = localStorage.getItem('addPurchaseDraft');
+      let hasRestoredCodes = false;
+      let restoredItemsLength = 1;
 
-    const savedDraft = localStorage.getItem('addPurchaseDraft');
-    let hasRestoredCodes = false;
-    let restoredItemsLength = 1;
+      if (savedDraft) {
+        try {
+          const draft = JSON.parse(savedDraft);
+          if (draft.selectedSupplierId) setSelectedSupplierId(draft.selectedSupplierId);
+          if (draft.selectedSupplierName) setSelectedSupplierName(draft.selectedSupplierName);
+          if (draft.invoiceNumber) setInvoiceNumber(draft.invoiceNumber);
+          if (draft.purchaseDate) setPurchaseDate(draft.purchaseDate);
+          if (draft.notes) setNotes(draft.notes);
+          if (draft.paymentMode) setPaymentMode(draft.paymentMode);
+          if (draft.paidAmount) setPaidAmount(draft.paidAmount);
+          if (draft.cashAmount) setCashAmount(draft.cashAmount);
+          if (draft.upiAmount) setUpiAmount(draft.upiAmount);
+          if (draft.cardAmount) setCardAmount(draft.cardAmount);
+          if (draft.isGstPurchase !== undefined) setIsGstPurchase(Boolean(draft.isGstPurchase));
+          if (draft.defaultTaxPercent !== undefined) setDefaultTaxPercent(Number(draft.defaultTaxPercent) || 18);
+          if (draft.showProductName !== undefined) setShowProductName(Boolean(draft.showProductName));
 
-    if (savedDraft) {
-      try {
-        const draft = JSON.parse(savedDraft);
-        // Restore all form fields
-        if (draft.selectedSupplierId) setSelectedSupplierId(draft.selectedSupplierId);
-        if (draft.selectedSupplierName) setSelectedSupplierName(draft.selectedSupplierName);
-        if (draft.invoiceNumber) setInvoiceNumber(draft.invoiceNumber);
-        if (draft.notes) setNotes(draft.notes);
-        if (draft.paymentMode) setPaymentMode(draft.paymentMode);
-        if (draft.paidAmount) setPaidAmount(draft.paidAmount);
-        if (draft.cashAmount) setCashAmount(draft.cashAmount);
-        if (draft.upiAmount) setUpiAmount(draft.upiAmount);
-        if (draft.cardAmount) setCardAmount(draft.cardAmount);
-        if (draft.isGstPurchase !== undefined) setIsGstPurchase(Boolean(draft.isGstPurchase));
-        if (draft.defaultTaxPercent !== undefined) setDefaultTaxPercent(Number(draft.defaultTaxPercent) || 18);
-        
-        if (draft.items && draft.items.length > 0) {
-          setItems(draft.items);
-          restoredItemsLength = draft.items.length;
+          if (draft.items && draft.items.length > 0) {
+            setItems(draft.items);
+            restoredItemsLength = draft.items.length;
+          }
+
+          if (draft.itemProductCodes && draft.itemProductCodes.length === restoredItemsLength) {
+            setItemProductCodes(draft.itemProductCodes);
+            hasRestoredCodes = true;
+          }
+
+          if (draft.itemIsExistingProduct) {
+            const isExisting = [...draft.itemIsExistingProduct];
+            while (isExisting.length < restoredItemsLength) isExisting.push(false);
+            setItemIsExistingProduct(isExisting);
+          }
+
+          if (draft.itemExistingStock) {
+            const stock = [...draft.itemExistingStock];
+            while (stock.length < restoredItemsLength) stock.push(0);
+            setItemExistingStock(stock);
+          }
+
+          showToast('Purchase draft restored', 'info');
+        } catch (error) {
+          console.error('Error restoring purchase draft:', error);
         }
-
-        if (draft.itemProductCodes && draft.itemProductCodes.length === restoredItemsLength) {
-          setItemProductCodes(draft.itemProductCodes);
-          hasRestoredCodes = true;
-        }
-
-        if (draft.itemIsExistingProduct) {
-          const isExisting = [...draft.itemIsExistingProduct];
-          while (isExisting.length < restoredItemsLength) isExisting.push(false);
-          setItemIsExistingProduct(isExisting);
-        }
-        
-        if (draft.itemExistingStock) {
-          const stock = [...draft.itemExistingStock];
-          while (stock.length < restoredItemsLength) stock.push(0);
-          setItemExistingStock(stock);
-        }
-
-        showToast('Draft restored', 'info');
-      } catch (error) {
-        console.error('Error restoring draft:', error);
       }
-    }
 
       initializeProductCode(!hasRestoredCodes, restoredItemsLength);
     }
@@ -160,10 +187,11 @@ const AddPurchase: React.FC = () => {
         setSelectedSupplierId(data.supplierId || '');
         setSelectedSupplierName(data.supplierName || '');
         setInvoiceNumber(data.invoiceNumber || '');
+        if (data.purchaseDate) setPurchaseDate(data.purchaseDate);
         setNotes(data.notes || '');
         setPaymentMode(data.paymentMode || 'cash');
         setPaidAmount(data.paidAmount ? String(data.paidAmount) : '');
-        
+
         if (data.paymentSplit) {
           setCashAmount(data.paymentSplit.cash ? String(data.paymentSplit.cash) : '');
           setUpiAmount(data.paymentSplit.upi ? String(data.paymentSplit.upi) : '');
@@ -179,7 +207,7 @@ const AddPurchase: React.FC = () => {
           })));
           setItemProductCodes(data.items.map((i: any) => i.productCode || ''));
           setItemIsExistingProduct(data.items.map(() => true));
-          setItemExistingStock(data.items.map(() => 0)); // Not critical for edit
+          setItemExistingStock(data.items.map(() => 0));
         }
       }
     } catch (error) {
@@ -188,13 +216,14 @@ const AddPurchase: React.FC = () => {
     }
   };
 
-  // Auto-save draft to localStorage whenever form data changes
+  // Auto-save draft
   useEffect(() => {
     if (isEditMode) return;
     const draftData = {
       selectedSupplierId,
       selectedSupplierName,
       invoiceNumber,
+      purchaseDate,
       notes,
       paymentMode,
       paidAmount,
@@ -203,6 +232,7 @@ const AddPurchase: React.FC = () => {
       cardAmount,
       isGstPurchase,
       defaultTaxPercent,
+      showProductName,
       items,
       itemProductCodes,
       itemIsExistingProduct,
@@ -210,7 +240,6 @@ const AddPurchase: React.FC = () => {
       savedAt: new Date().toISOString()
     };
 
-    // Only save if there's meaningful data
     if (selectedSupplierId || items.some(item => item.productName || item.brand || item.model)) {
       localStorage.setItem('addPurchaseDraft', JSON.stringify(draftData));
       setLastSaved(new Date().toLocaleTimeString());
@@ -219,6 +248,7 @@ const AddPurchase: React.FC = () => {
     selectedSupplierId,
     selectedSupplierName,
     invoiceNumber,
+    purchaseDate,
     notes,
     paymentMode,
     paidAmount,
@@ -227,6 +257,7 @@ const AddPurchase: React.FC = () => {
     cardAmount,
     isGstPurchase,
     defaultTaxPercent,
+    showProductName,
     items,
     itemProductCodes,
     itemIsExistingProduct,
@@ -236,11 +267,10 @@ const AddPurchase: React.FC = () => {
   const clearDraft = () => {
     localStorage.removeItem('addPurchaseDraft');
     setLastSaved(null);
-
-    // Reset form to initial state
     setSelectedSupplierId('');
     setSelectedSupplierName('');
     setInvoiceNumber('');
+    setPurchaseDate(new Date().toISOString().split('T')[0]);
     setNotes('');
     setPaymentMode('cash');
     setPaidAmount('');
@@ -248,33 +278,21 @@ const AddPurchase: React.FC = () => {
     setUpiAmount('');
     setCardAmount('');
     setIsGstPurchase(false);
-    setItems([{
-      productName: '',
-      brand: '',
-      model: '',
-      category: '',
-      quantity: 1,
-      costPerUnit: 0,
-      totalCost: 0,
-      mrp: 0,
-      taxPercent: 0
-    }]);
-
+    setDefaultTaxPercent(18);
+    setItems([getInitialItem(0)]);
     setItemIsExistingProduct([false]);
     setItemExistingStock([0]);
     initializeProductCode(true, 1);
-
-    showToast('Draft cleared', 'info');
+    setShowClearModal(false);
+    setPageStep(1);
+    showToast('Purchase draft cleared', 'info');
   };
-
 
   const fetchBrandsAndCategories = async () => {
     try {
-      // Brands are global master data (root-level), not hub-scoped
       const brandsSnapshot = await getDocs(query(collection(db, 'brands'), orderBy('name', 'asc')));
       setBrands(brandsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Brand)));
 
-      // Categories are global master data (root-level), not hub-scoped
       const categoriesSnapshot = await getDocs(query(collection(db, 'categories'), orderBy('name', 'asc')));
       setCategories(categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
     } catch (error) {
@@ -284,17 +302,14 @@ const AddPurchase: React.FC = () => {
 
   const initializeProductCode = async (setInitialCode = true, itemsCount = 1) => {
     try {
-      // generateProductCode() returns the next available code from database
-      const nextCode = await generateProductCode(getCollectionRef('products'));
+      const nextCode = await generateProductCode(collection(db, 'products'));
       const codeNumber = parseInt(nextCode, 10);
 
       if (Number.isNaN(codeNumber)) {
         throw new Error('Invalid product code format');
       }
 
-      // Store the base number for generating subsequent codes
       setNextProductCodeNumber(codeNumber);
-      // Set the first item's code
       if (setInitialCode) {
         const newCodes = [];
         for (let i = 0; i < itemsCount; i++) {
@@ -304,7 +319,6 @@ const AddPurchase: React.FC = () => {
       }
     } catch (error) {
       console.error('Error initializing product code:', error);
-      // Fallback to default
       setNextProductCodeNumber(1);
       if (setInitialCode) {
         const newCodes = [];
@@ -322,6 +336,75 @@ const AddPurchase: React.FC = () => {
     return String(codeNumber).padStart(8, '0');
   };
 
+  const fetchSuppliers = async () => {
+    try {
+      const suppliersRef = collection(db, 'suppliers');
+      const q = query(suppliersRef, where('isActive', '==', true));
+      const snapshot = await getDocs(q);
+      const suppliersList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Supplier[];
+      suppliersList.sort((a, b) => a.name.localeCompare(b.name));
+      setSuppliers(suppliersList);
+    } catch (error) {
+      console.error('Error fetching suppliers:', error);
+      showToast('Failed to load suppliers', 'error');
+    }
+  };
+
+  const handleSupplierChange = (supplierId: string) => {
+    setSelectedSupplierId(supplierId);
+    const supplier = suppliers.find(s => s.id === supplierId);
+    setSelectedSupplierName(supplier?.name || '');
+  };
+
+  const addNewSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSupplier.name.trim() || !newSupplier.phone.trim()) {
+      showToast('Supplier name and phone are required', 'error');
+      return;
+    }
+
+    try {
+      const supplierData: Omit<Supplier, 'id'> = {
+        name: newSupplier.name.trim(),
+        contactPerson: newSupplier.contactPerson.trim(),
+        phone: newSupplier.phone.trim(),
+        email: newSupplier.email.trim(),
+        address: newSupplier.address.trim(),
+        gstNumber: newSupplier.gstNumber.trim().toUpperCase(),
+        totalPurchaseAmount: 0,
+        totalPaid: 0,
+        totalPending: 0,
+        isActive: true,
+        createdAt: new Date(),
+        createdBy: currentUser?.uid || '',
+        createdByName: currentUser?.displayName || ''
+      };
+
+      const docRef = await addDoc(collection(db, 'suppliers'), supplierData);
+
+      showToast('Supplier added successfully!', 'success');
+      setShowSupplierModal(false);
+      setNewSupplier({
+        name: '',
+        contactPerson: '',
+        phone: '',
+        email: '',
+        address: '',
+        gstNumber: ''
+      });
+
+      await fetchSuppliers();
+      setSelectedSupplierId(docRef.id);
+      setSelectedSupplierName(supplierData.name);
+    } catch (error) {
+      console.error('Error adding supplier:', error);
+      showToast('Failed to add supplier', 'error');
+    }
+  };
+
   const applyHcsCodeToAllRows = (sourceRowIndex: number) => {
     const sourceCode = String(items[sourceRowIndex]?.hcsCode || '').trim().toUpperCase();
     if (!sourceCode) {
@@ -332,193 +415,7 @@ const AddPurchase: React.FC = () => {
       ...item,
       hcsCode: sourceCode
     })));
-    showToast('HSN code applied to all rows', 'success');
-  };
-
-  const handleItemChange = (index: number, field: keyof PurchaseItem, value: any) => {
-    const newItems = [...items];
-
-    // Convert to uppercase if it's a text field
-    let processedValue = value;
-    if (typeof value === 'string' && ['productName', 'brand', 'model', 'category', 'hcsCode'].includes(field)) {
-      processedValue = value.toUpperCase();
-    }
-
-    newItems[index] = { ...newItems[index], [field]: processedValue };
-
-    // Calculate total cost for the item
-    if (field === 'quantity' || field === 'costPerUnit' || field === 'taxPercent') {
-      const valQ = field === 'quantity' ? value : newItems[index].quantity;
-      const valC = field === 'costPerUnit' ? value : newItems[index].costPerUnit;
-      const valT = field === 'taxPercent' ? value : (newItems[index].taxPercent ?? (isGstPurchase ? defaultTaxPercent : 0));
-
-      const quantity = (valQ === '' || valQ === undefined) ? 0 : (Number(valQ) || 0);
-      const costPerUnit = (valC === '' || valC === undefined) ? 0 : (Number(valC) || 0);
-      const taxPercent = isGstPurchase ? ((valT === '' || valT === undefined) ? 0 : (Number(valT) || 0)) : 0;
-
-      const costWithGst = costPerUnit + (costPerUnit * taxPercent / 100);
-      newItems[index].totalCost = isGstPurchase ? (quantity * costWithGst) : (quantity * costPerUnit);
-    }
-
-    // Update product name when brand, model, or category changes
-    if (field === 'brand' || field === 'model' || field === 'category') {
-      const brand = newItems[index].brand || '';
-      const model = newItems[index].model || '';
-      const category = newItems[index].category || '';
-      newItems[index].productName = `${brand} ${model} ${category}`.trim();
-    }
-
-    setItems(newItems);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>, rowIndex: number, colIndex: number) => {
-    // Block invalid number characters for numeric inputs (quantity: 4, cost: 5, mrp: 6)
-    // We allow navigation keys etc, but block e, E, +, - which are valid in type="number" but unwanted here
-    if ([4, 5, 6].includes(colIndex) && ['e', 'E', '+', '-'].includes(e.key)) {
-      e.preventDefault();
-      return;
-    }
-
-    // COPY FROM ABOVE SHORTCUT (Ctrl + Right Arrow)
-    if (e.key === 'ArrowRight' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      if (rowIndex > 0) {
-        const prevItem = items[rowIndex - 1];
-        let field: keyof PurchaseItem | null = null;
-        // Map colIndex to field based on render order
-        // 0: product, 1: brand, 2: model, 3: category, 4: quantity, 5: cost, 6: mrp
-        switch (colIndex) {
-          case 0: field = 'productName'; break;
-          case 1: field = 'brand'; break;
-          case 2: field = 'model'; break;
-          case 3: field = 'category'; break;
-          case 4: field = 'quantity'; break;
-          case 5: field = 'costPerUnit'; break;
-          case 6: field = 'mrp'; break;
-        }
-
-        if (field) {
-          const value = prevItem[field];
-          handleItemChange(rowIndex, field, value);
-
-          // Automatically move to next cell
-          const nextColIndex = colIndex + 1;
-          const totalCols = 7;
-
-          // Use setTimeout ensures focus happens after any potential re-renders
-          setTimeout(() => {
-            if (nextColIndex < totalCols) {
-              const nextInput = document.querySelector(
-                `[data-row="${rowIndex}"][data-col="${nextColIndex}"]`
-              ) as HTMLElement;
-              if (nextInput) nextInput.focus();
-            }
-          }, 0);
-        }
-      }
-      return;
-    }
-
-    if (e.key === 'Enter') {
-      e.preventDefault();
-
-      const totalCols = 7; // productName, brand, model, category, quantity, costPerUnit, mrp
-      const nextColIndex = colIndex + 1;
-
-      if (nextColIndex < totalCols) {
-        // Move to next column in same row
-        const nextInput = document.querySelector(
-          `[data-row="${rowIndex}"][data-col="${nextColIndex}"]`
-        ) as HTMLElement;
-        if (nextInput) nextInput.focus();
-      } else {
-        // Move to first column of next row
-        if (rowIndex === items.length - 1) {
-          // Add new row if at last row
-          addItem();
-          setTimeout(() => {
-            const nextInput = document.querySelector(
-              `[data-row="${rowIndex + 1}"][data-col="0"]`
-            ) as HTMLElement;
-            if (nextInput) nextInput.focus();
-          }, 50);
-        } else {
-          // Move to next existing row
-          const nextInput = document.querySelector(
-            `[data-row="${rowIndex + 1}"][data-col="0"]`
-          ) as HTMLElement;
-          if (nextInput) nextInput.focus();
-        }
-      }
-      return;
-    }
-
-    // ARROW KEY NAVIGATION
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-      const input = e.currentTarget;
-      // Detailed check for number inputs which don't support selectionStart
-      const isNumber = input instanceof HTMLInputElement && input.type === 'number';
-      const isSelect = input instanceof HTMLSelectElement;
-
-      let shouldMove = false;
-
-      if (e.key === 'ArrowUp') {
-        shouldMove = true;
-      } else if (e.key === 'ArrowDown') {
-        shouldMove = true;
-      } else if (e.key === 'ArrowLeft') {
-        if (isSelect) {
-          // For select, only move if modifier key is pressed or special handling? 
-          // Actually, left/right changes options in select. Let's ONLY move if valid.
-          // But user might want to move to previous cell.
-          // Let's rely on Shift+Tab or just simple Tab for Selects. 
-          // OR allow moving if it was ALREADY handled (bubbles?) No.
-          // For now, let's disable Left/Right nav out of Select to avoid annoyance 
-          // unless we detect we are at start/end options which is hard.
-          // Disabling Left/Right cell nav for Selects is safest.
-          shouldMove = false;
-        } else if (isNumber) {
-          shouldMove = true;
-        } else {
-          // Move only if cursor is at the beginning
-          if ((input as HTMLInputElement).selectionStart === 0 && (input as HTMLInputElement).selectionEnd === 0) {
-            shouldMove = true;
-          }
-        }
-      } else if (e.key === 'ArrowRight') {
-        if (isSelect) {
-          shouldMove = false;
-        } else if (isNumber) {
-          shouldMove = true;
-        } else {
-          // Move only if cursor is at the end
-          if ((input as HTMLInputElement).selectionStart === (input as HTMLInputElement).value.length && (input as HTMLInputElement).selectionEnd === (input as HTMLInputElement).value.length) {
-            shouldMove = true;
-          }
-        }
-      }
-
-      if (shouldMove) {
-        let targetRow = rowIndex;
-        let targetCol = colIndex;
-
-        if (e.key === 'ArrowUp') targetRow--;
-        if (e.key === 'ArrowDown') targetRow++;
-        if (e.key === 'ArrowLeft') targetCol--;
-        if (e.key === 'ArrowRight') targetCol++;
-
-        // Boundary checks
-        if (targetRow >= 0 && targetRow < items.length && targetCol >= 0 && targetCol < 7) {
-          e.preventDefault();
-          const targetInput = document.querySelector(
-            `[data-row="${targetRow}"][data-col="${targetCol}"]`
-          ) as HTMLElement;
-          if (targetInput) {
-            targetInput.focus();
-          }
-        }
-      }
-    }
+    showToast('Applied HSN code to all rows', 'success');
   };
 
   const toggleGstPurchase = (enable: boolean) => {
@@ -536,23 +433,67 @@ const AddPurchase: React.FC = () => {
     }));
   };
 
-  const addItem = () => {
+  const handleItemChange = (index: number, field: keyof PurchaseItem, value: any) => {
+    const newItems = [...items];
+    let processedValue = value;
+    if (typeof value === 'string' && ['productName', 'brand', 'model', 'category', 'hcsCode'].includes(field)) {
+      processedValue = value.toUpperCase();
+    }
+
+    newItems[index] = { ...newItems[index], [field]: processedValue };
+
+    if (field === 'quantity' || field === 'costPerUnit' || field === 'taxPercent') {
+      const valQ = field === 'quantity' ? value : newItems[index].quantity;
+      const valC = field === 'costPerUnit' ? value : newItems[index].costPerUnit;
+      const valT = field === 'taxPercent' ? value : (newItems[index].taxPercent ?? (isGstPurchase ? defaultTaxPercent : 0));
+
+      const quantity = (valQ === '' || valQ === undefined) ? 0 : (Number(valQ) || 0);
+      const costPerUnit = (valC === '' || valC === undefined) ? 0 : (Number(valC) || 0);
+      const taxPercent = isGstPurchase ? ((valT === '' || valT === undefined) ? 0 : (Number(valT) || 0)) : 0;
+
+      const costWithGst = costPerUnit + (costPerUnit * taxPercent / 100);
+      newItems[index].totalCost = isGstPurchase ? (quantity * costWithGst) : (quantity * costPerUnit);
+    }
+
+    if (field === 'brand' || field === 'model' || field === 'category') {
+      const brand = newItems[index].brand || '';
+      const model = newItems[index].model || '';
+      const category = newItems[index].category || '';
+      newItems[index].productName = `${brand} ${model} ${category}`.trim();
+    }
+
+    setItems(newItems);
+  };
+
+  const addItem = (duplicatePrevious = false) => {
     const newIndex = items.length;
     const newCode = getNextProductCodeForItem(newIndex);
     const tax = isGstPurchase ? defaultTaxPercent : 0;
-    const lastHcsCode = items[items.length - 1]?.hcsCode || '';
-    setItems([...items, {
-      productName: '',
-      brand: '',
-      model: '',
-      category: '',
-      quantity: 1,
-      costPerUnit: 0,
-      totalCost: 0,
-      mrp: 0,
-      taxPercent: tax,
-      hcsCode: isGstPurchase ? lastHcsCode : ''
-    }]);
+    const lastItem = items[items.length - 1];
+
+    if (duplicatePrevious && lastItem) {
+      setItems([...items, {
+        ...lastItem,
+        quantity: 1,
+        totalCost: isGstPurchase
+          ? (Number(lastItem.costPerUnit) * (1 + (Number(lastItem.taxPercent || tax) / 100)))
+          : Number(lastItem.costPerUnit)
+      }]);
+    } else {
+      setItems([...items, {
+        productName: '',
+        brand: '',
+        model: '',
+        category: '',
+        quantity: 1,
+        costPerUnit: 0,
+        totalCost: 0,
+        mrp: 0,
+        mop: 0,
+        taxPercent: tax,
+        hcsCode: isGstPurchase ? (lastItem?.hcsCode || '') : ''
+      }]);
+    }
 
     setItemProductCodes([...itemProductCodes, newCode]);
     setItemIsExistingProduct([...itemIsExistingProduct, false]);
@@ -565,42 +506,126 @@ const AddPurchase: React.FC = () => {
       setItemProductCodes(itemProductCodes.filter((_, i) => i !== index));
       setItemIsExistingProduct(itemIsExistingProduct.filter((_, i) => i !== index));
       setItemExistingStock(itemExistingStock.filter((_, i) => i !== index));
+    } else {
+      showToast('At least one product line is required', 'error');
     }
   };
 
-  const searchProducts = async (searchQuery: string) => {
-    if (!searchQuery.trim()) {
+  // Keyboard Navigation across Table
+  // Col mapping:
+  // 0: Brand
+  // 1: Model
+  // 2: Category
+  // 3: ProductName (skipped if hidden)
+  // 4: Qty
+  // 5: Cost
+  // 6: HSN Code (only when isGstPurchase)
+  // 7: MOP
+  // 8: MRP
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLElement>,
+    rowIndex: number,
+    colIndex: number
+  ) => {
+    const totalEditableCols = isGstPurchase ? 9 : 8;
+
+    if (e.key === 'ArrowUp') {
+      if (rowIndex > 0) {
+        e.preventDefault();
+        const target = document.getElementById(`cell-${rowIndex - 1}-${colIndex}`);
+        target?.focus();
+      }
+    } else if (e.key === 'ArrowDown') {
+      if (rowIndex < items.length - 1) {
+        e.preventDefault();
+        const target = document.getElementById(`cell-${rowIndex + 1}-${colIndex}`);
+        target?.focus();
+      }
+    } else if (e.key === 'ArrowLeft') {
+      const input = e.target as HTMLInputElement;
+      if (!input || (input.selectionStart === 0 && input.selectionEnd === 0)) {
+        if (colIndex > 0) {
+          e.preventDefault();
+          const prevCol = (colIndex === 4 && !showProductName) ? 2 : colIndex - 1;
+          const target = document.getElementById(`cell-${rowIndex}-${prevCol}`);
+          target?.focus();
+        }
+      }
+    } else if (e.key === 'ArrowRight') {
+      const input = e.target as HTMLInputElement;
+      if (!input || (input.selectionStart === input.value?.length)) {
+        if (colIndex < totalEditableCols - 1) {
+          e.preventDefault();
+          const nextCol = (colIndex === 2 && !showProductName) ? 4 : colIndex + 1;
+          const target = document.getElementById(`cell-${rowIndex}-${nextCol}`);
+          target?.focus();
+        }
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const isShiftEnter = e.shiftKey;
+      if (isShiftEnter) {
+        addItem(true);
+        setTimeout(() => {
+          const nextTarget = document.getElementById(`cell-${items.length}-0`);
+          nextTarget?.focus();
+        }, 70);
+        return;
+      }
+
+      // If at last col:
+      const lastCol = isGstPurchase ? 8 : 7;
+      if (colIndex >= lastCol) {
+        if (rowIndex === items.length - 1) {
+          addItem(false);
+          setTimeout(() => {
+            const nextTarget = document.getElementById(`cell-${rowIndex + 1}-0`);
+            nextTarget?.focus();
+          }, 70);
+        } else {
+          const nextTarget = document.getElementById(`cell-${rowIndex + 1}-0`);
+          nextTarget?.focus();
+        }
+      } else {
+        const nextCol = (colIndex === 2 && !showProductName) ? 4 : colIndex + 1;
+        const target = document.getElementById(`cell-${rowIndex}-${nextCol}`);
+        target?.focus();
+      }
+    }
+  };
+
+  // Product Search / Selection
+  // Product Catalog Search & Selection
+  const searchProducts = async (queryStr: string) => {
+    if (!queryStr.trim()) {
       setSearchResults([]);
-      setIsDropdownOpen(false);
       setSearching(false);
       return;
     }
 
     setSearching(true);
     try {
-      // Search across local Delta-Synced catalog (0 Firestore reads on search keystrokes!)
-      const products = await syncStoreProducts(currentStore?.id);
-
-      // Filter products that match the search query in name, brand, model, or category
-      const qLower = searchQuery.toLowerCase();
+      const products = await syncStoreProducts(null);
+      const qLower = queryStr.toLowerCase();
       const filtered = products.filter(product => {
         const name = typeof product.name === 'string' ? product.name.toLowerCase() : '';
         const brand = typeof product.brand === 'string' ? product.brand.toLowerCase() : '';
         const model = typeof product.model === 'string' ? product.model.toLowerCase() : '';
         const category = typeof product.category === 'string' ? product.category.toLowerCase() : '';
+        const code = product.productCode ? String(product.productCode).toLowerCase() : '';
 
         return (
           name.includes(qLower) ||
           brand.includes(qLower) ||
           model.includes(qLower) ||
           category.includes(qLower) ||
-          (product.productCode && String(product.productCode).toLowerCase().includes(qLower))
+          code.includes(qLower)
         );
       });
 
-      const topResults = filtered.slice(0, 10);
-      setSearchResults(topResults);
-      setIsDropdownOpen(topResults.length > 0);
+      setSearchResults(filtered.slice(0, 15));
     } catch (error) {
       console.error('Error searching products:', error);
       showToast('Failed to search products', 'error');
@@ -609,204 +634,46 @@ const AddPurchase: React.FC = () => {
     }
   };
 
-  const selectProduct = (product: Product, rowIndex: number) => {
-    const code = product.productCode || '';
-    // Check if the product already exists in another row
-    const existingIndex = itemProductCodes.findIndex((c, i) => c && c === code && i !== rowIndex);
-
-    if (existingIndex !== -1) {
-      // Merge current row into existing row: sum quantities and update pricing
-      const mergedItems = [...items];
-      const src = mergedItems[rowIndex];
-      const dest = mergedItems[existingIndex];
-
-      const srcQty = src.quantity || 0;
-      const destQty = dest.quantity || 0;
-      const newQty = destQty + srcQty;
-
-      // Prefer the selected product's cost/mrp (rounded) for the merged row
-      const pBaseCost = (product.baseCost !== undefined && product.baseCost > 0) ? Number(product.baseCost) : (product.cost ? Math.round(product.cost) : dest.costPerUnit);
-      dest.costPerUnit = pBaseCost;
-      dest.mrp = product.mrp ? Math.round(product.mrp) : dest.mrp;
-      dest.quantity = newQty;
-      const tax = isGstPurchase ? (product.taxPercent !== undefined ? Number(product.taxPercent) : defaultTaxPercent) : 0;
-      dest.taxPercent = tax;
-      const costWithGst = dest.costPerUnit + (dest.costPerUnit * tax / 100);
-      dest.totalCost = isGstPurchase ? (dest.quantity * costWithGst) : (dest.quantity * dest.costPerUnit);
-
-      // Update existing stock for destination (keep inventory value)
-      const mergedExistingStock = [...itemExistingStock];
-      mergedExistingStock[existingIndex] = product.quantity || mergedExistingStock[existingIndex] || 0;
-
-      // Remove the source row
-      mergedItems.splice(rowIndex, 1);
-
-      // Update product codes and existing flags accordingly
-      const mergedCodes = [...itemProductCodes];
-      mergedCodes.splice(rowIndex, 1);
-
-      const mergedIsExisting = [...itemIsExistingProduct];
-      mergedIsExisting.splice(rowIndex, 1);
-
-      setItems(mergedItems);
-      setItemProductCodes(mergedCodes);
-      setItemIsExistingProduct(mergedIsExisting);
-      setItemExistingStock(mergedExistingStock);
-
-      // Keep dropdown closed and clear search
-      setIsDropdownOpen(false);
-      setSearchQuery('');
-      setSearchResults([]);
-
-      // Focus the merged row
-      setSelectedRowIndex(existingIndex > rowIndex ? existingIndex - 1 : existingIndex);
-      return;
-    }
-
-    const newItems = [...items];
-    const pBaseCost = (product.baseCost !== undefined && product.baseCost > 0) ? Number(product.baseCost) : (product.cost ? Number(product.cost) : 0);
-    const itemTax = isGstPurchase ? (product.taxPercent !== undefined ? Number(product.taxPercent) : defaultTaxPercent) : 0;
-    const itemQty = newItems[rowIndex].quantity && newItems[rowIndex].quantity > 0 ? newItems[rowIndex].quantity : 1;
+  const handleSelectCatalogProduct = (product: Product) => {
+    const pBaseCost = (product.baseCost !== undefined && product.baseCost > 0)
+      ? Number(product.baseCost)
+      : (product.cost ? Number(product.cost) : 0);
+    const itemTax = isGstPurchase
+      ? (product.taxPercent !== undefined ? Number(product.taxPercent) : defaultTaxPercent)
+      : 0;
     const itemCostWithGst = pBaseCost + (pBaseCost * itemTax / 100);
 
-    newItems[rowIndex] = {
-      ...newItems[rowIndex],
+    const newItem: PurchaseItem = {
       productName: product.name,
-      brand: product.brand,
+      brand: product.brand || '',
       model: product.model || '',
-      category: product.category,
+      category: product.category || '',
       costPerUnit: pBaseCost,
-      mrp: product.mrp ? Number(product.mrp) : 0,
+      mrp: product.mrp ? Number(product.mrp) : pBaseCost,
+      mop: product.mop ? Number(product.mop) : pBaseCost,
       taxPercent: itemTax,
       hcsCode: product.hcsCode || '',
-      quantity: itemQty,
-      totalCost: isGstPurchase ? (itemQty * itemCostWithGst) : (itemQty * pBaseCost)
+      quantity: 1,
+      totalCost: isGstPurchase ? itemCostWithGst : pBaseCost
     };
-    setItems(newItems);
-    // Update selected product code for this row
-    const newCodes = [...itemProductCodes];
-    newCodes[rowIndex] = code || newCodes[rowIndex] || '';
-    setItemProductCodes(newCodes);
-    // set existing stock for this row
-    const newExisting = [...itemExistingStock];
-    while (newExisting.length <= rowIndex) newExisting.push(0);
-    newExisting[rowIndex] = product.quantity || 0;
-    setItemExistingStock(newExisting);
-    // Mark this row as an existing product so brand/model/category become read-only
-    const newIsExisting = [...itemIsExistingProduct];
-    // Ensure array is large enough
-    while (newIsExisting.length <= rowIndex) newIsExisting.push(false);
-    newIsExisting[rowIndex] = true;
-    setItemIsExistingProduct(newIsExisting);
-    // Clear search state and close dropdown
-    setIsDropdownOpen(false);
-    setSearchQuery('');
-    setSearchResults([]);
-  };
 
-  const openProductSearch = (rowIndex: number) => {
-    setSelectedRowIndex(rowIndex);
-    setIsDropdownOpen(true);
-    const currentName = items[rowIndex]?.productName || '';
-    setSearchQuery(currentName);
-    searchProducts(currentName);
-    setDropdownFocusedIndex(0);
-  };
-
-  const computeDropdownPosition = () => {
-    const el = searchContainerRef.current;
-    if (!el) {
-      setDropdownPosition(null);
-      return;
+    if (items.length === 1 && !items[0].brand && !items[0].model && !items[0].costPerUnit) {
+      setItems([newItem]);
+      setItemProductCodes([product.productCode || getNextProductCodeForItem(0)]);
+      setItemIsExistingProduct([true]);
+      setItemExistingStock([product.quantity || 0]);
+    } else {
+      setItems(prev => [...prev, newItem]);
+      setItemProductCodes(prev => [...prev, product.productCode || getNextProductCodeForItem(prev.length)]);
+      setItemIsExistingProduct(prev => [...prev, true]);
+      setItemExistingStock(prev => [...prev, product.quantity || 0]);
     }
-    const rect = el.getBoundingClientRect();
-    // Use fixed positioning relative to viewport to avoid transformed/overflow parents
-    // Expand width to match the table wrapper if available and visible
-    const tableEl = tableWrapperRef.current;
-    if (tableEl) {
-      const tableRect = tableEl.getBoundingClientRect();
-      // Only use table width if it's visible (width > 0)
-      if (tableRect.width > 0) {
-        setDropdownPosition({ left: tableRect.left, top: rect.bottom, width: tableRect.width });
-        return;
-      }
-    }
-    // Mobile: Return null to disable Portal and use inline absolute dropdown
-    setDropdownPosition(null);
+
+    setIsCatalogModalOpen(false);
+    showToast(`Added "${product.name}" to purchase items`, 'success');
   };
 
-  const handleDropdownKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!isDropdownOpen) return;
-    if (!searchResults || searchResults.length === 0) return;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setDropdownFocusedIndex(prev => {
-        if (prev === null) return 0;
-        return Math.min(searchResults.length - 1, prev + 1);
-      });
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setDropdownFocusedIndex(prev => {
-        if (prev === null) return searchResults.length - 1;
-        return Math.max(0, prev - 1);
-      });
-    } else if (e.key === 'Enter') {
-      if (dropdownFocusedIndex !== null) {
-        e.preventDefault();
-        const idx = dropdownFocusedIndex;
-        const product = searchResults[idx];
-        if (product) {
-          selectProduct(product, selectedRowIndex ?? 0);
-          setDropdownFocusedIndex(null);
-        }
-      }
-    } else if (e.key === 'Escape') {
-      setIsDropdownOpen(false);
-      setDropdownFocusedIndex(null);
-      setSelectedRowIndex(null);
-    }
-  };
-
-  // Close dropdown when clicking outside the active search container
-  useEffect(() => {
-    if (!isDropdownOpen) return;
-
-    // compute initial position
-    computeDropdownPosition();
-
-    const handler = (e: MouseEvent) => {
-      const el = searchContainerRef.current;
-      const drop = dropdownRef.current;
-      if (el && el.contains(e.target as Node)) return;
-      if (drop && drop.contains(e.target as Node)) return;
-      setIsDropdownOpen(false);
-      setSelectedRowIndex(null);
-      setDropdownPosition(null);
-    };
-
-    const onScrollOrResize = () => computeDropdownPosition();
-
-    document.addEventListener('mousedown', handler);
-    window.addEventListener('scroll', onScrollOrResize, true);
-    window.addEventListener('resize', onScrollOrResize);
-    const wrapperEl = tableWrapperRef.current;
-    if (wrapperEl) wrapperEl.addEventListener('scroll', onScrollOrResize);
-
-    return () => {
-      document.removeEventListener('mousedown', handler);
-      window.removeEventListener('scroll', onScrollOrResize, true);
-      window.removeEventListener('resize', onScrollOrResize);
-      if (wrapperEl) wrapperEl.removeEventListener('scroll', onScrollOrResize);
-    };
-  }, [isDropdownOpen]);
-
-  // Cleanup debounce timer on unmount
-  useEffect(() => {
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    };
-  }, []);
-
+  // Totals calculation
   const calculateTotals = () => {
     const totalQuantity = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
     const totalAmount = items.reduce((sum, item) => sum + (Number(item.totalCost) || 0), 0);
@@ -819,19 +686,19 @@ const AddPurchase: React.FC = () => {
     return { totalQuantity, totalAmount, baseAmount, totalGstAmount };
   };
 
-  const normalizeHeader = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const { totalQuantity, totalAmount, baseAmount, totalGstAmount } = calculateTotals();
+  const effectivePaidAmount = paymentMode === 'credit' ? 0 : (parseFloat(paidAmount) || 0);
+  const pendingAmount = Math.max(0, totalAmount - effectivePaidAmount);
 
+  // Excel Import / Export
+  const normalizeHeader = (value: unknown) => String(value ?? '').trim().toLowerCase();
   const getCellValue = (row: Record<string, unknown>, keys: string[]) => {
     for (const key of Object.keys(row)) {
-      if (keys.includes(normalizeHeader(key))) {
-        return row[key];
-      }
+      if (keys.includes(normalizeHeader(key))) return row[key];
     }
     return undefined;
   };
-
   const toText = (value: unknown) => String(value ?? '').trim();
-
   const toNumber = (value: unknown) => {
     if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
     const parsed = parseFloat(String(value ?? '').replace(/[^\d.-]/g, ''));
@@ -841,7 +708,6 @@ const AddPurchase: React.FC = () => {
   const importFromExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-
     if (!file) return;
 
     try {
@@ -857,19 +723,13 @@ const AddPurchase: React.FC = () => {
 
       if (summarySheetName) {
         const summaryRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[summarySheetName], { defval: '' });
-        const summaryMap = new Map(
-          summaryRows.map(row => [normalizeHeader(row.Field), row.Value])
-        );
-
+        const summaryMap = new Map(summaryRows.map(row => [normalizeHeader(row.Field), row.Value]));
         const supplierName = toText(summaryMap.get('supplier'));
         const supplierId = toText(summaryMap.get('supplier id'));
         const invoice = toText(summaryMap.get('invoice number'));
         const noteValue = toText(summaryMap.get('notes'));
         const payment = toText(summaryMap.get('payment mode')).toLowerCase() as PaymentMode;
         const paid = toText(summaryMap.get('paid amount'));
-        const cash = toText(summaryMap.get('cash amount'));
-        const upi = toText(summaryMap.get('upi amount'));
-        const card = toText(summaryMap.get('card amount'));
 
         if (supplierName) setSelectedSupplierName(supplierName);
         if (supplierId) setSelectedSupplierId(supplierId);
@@ -877,9 +737,6 @@ const AddPurchase: React.FC = () => {
         if (noteValue) setNotes(noteValue);
         if (payment) setPaymentMode(payment);
         if (paid) setPaidAmount(paid);
-        if (cash) setCashAmount(cash);
-        if (upi) setUpiAmount(upi);
-        if (card) setCardAmount(card);
       }
 
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[itemsSheetName], { defval: '' });
@@ -889,22 +746,20 @@ const AddPurchase: React.FC = () => {
       }
 
       const importedItems = rows.map((row) => {
-        const productName = toText(getCellValue(row, ['product name', 'name'])) || `${toText(getCellValue(row, ['brand']))} ${toText(getCellValue(row, ['model']))} ${toText(getCellValue(row, ['category']))}`.trim();
         const brand = toText(getCellValue(row, ['brand']));
         const model = toText(getCellValue(row, ['model']));
         const category = toText(getCellValue(row, ['category']));
-        const imei = toText(getCellValue(row, ['imei']));
-        const hcsCode = toText(getCellValue(row, ['hcs code', 'hcscode', 'hsn code', 'hsncode', 'hsn']));
+        const productName = toText(getCellValue(row, ['product name', 'name'])) || `${brand} ${model} ${category}`.trim();
         const quantity = Math.max(1, Math.round(toNumber(getCellValue(row, ['quantity', 'qty'])) || 1));
         const costPerUnit = toNumber(getCellValue(row, ['cost/unit', 'cost per unit', 'cost']));
         const mrp = toNumber(getCellValue(row, ['mrp']));
-        const totalCost = toNumber(getCellValue(row, ['total cost', 'total']));
         const mop = toNumber(getCellValue(row, ['mop']));
+        const totalCost = toNumber(getCellValue(row, ['total cost', 'total']));
+        const hcsCode = toText(getCellValue(row, ['hcs code', 'hcscode', 'hsn code', 'hsncode', 'hsn']));
         const taxPercent = toNumber(getCellValue(row, ['tax %', 'tax', 'tax percent']));
-        const highestDiscountLimit = toNumber(getCellValue(row, ['highest discount limit', 'discount limit']));
 
         const normalizedItem: PurchaseItem = {
-          productName: productName || `${brand} ${model} ${category}`.trim() || imei || 'IMPORTED ITEM',
+          productName: productName || `${brand} ${model} ${category}`.trim() || 'IMPORTED ITEM',
           brand,
           model,
           category,
@@ -912,13 +767,10 @@ const AddPurchase: React.FC = () => {
           costPerUnit,
           totalCost: totalCost > 0 ? totalCost : quantity * costPerUnit,
           mrp: mrp > 0 ? mrp : costPerUnit,
-          imei,
+          mop: mop > 0 ? mop : costPerUnit,
           hcsCode,
-          mop,
-          taxPercent,
-          highestDiscountLimit
+          taxPercent
         };
-
         return normalizedItem;
       });
 
@@ -929,16 +781,14 @@ const AddPurchase: React.FC = () => {
       });
 
       const hasTax = importedItems.some(it => (it.taxPercent || 0) > 0);
-      if (hasTax) {
-        setIsGstPurchase(true);
-      }
+      if (hasTax) setIsGstPurchase(true);
 
       setItems(importedItems);
       setItemProductCodes(importedCodes);
       setItemIsExistingProduct(importedItems.map(() => false));
       setItemExistingStock(importedItems.map(() => 0));
 
-      showToast(`Imported ${importedItems.length} item${importedItems.length === 1 ? '' : 's'} from Excel`, 'success');
+      showToast(`Imported ${importedItems.length} items from Excel`, 'success');
     } catch (error) {
       console.error('Error importing Excel file:', error);
       showToast('Failed to import Excel file', 'error');
@@ -947,18 +797,15 @@ const AddPurchase: React.FC = () => {
 
   const exportToExcel = () => {
     try {
-      const { totalQuantity, totalAmount, baseAmount, totalGstAmount } = calculateTotals();
-      const paid = parseFloat(paidAmount) || 0;
-      const pending = totalAmount - paid;
-
       const summaryData = [
         { Field: 'Supplier', Value: selectedSupplierName || '' },
         { Field: 'Supplier ID', Value: selectedSupplierId || '' },
         { Field: 'Invoice Number', Value: invoiceNumber || '' },
+        { Field: 'Purchase Date', Value: purchaseDate || '' },
         { Field: 'Notes', Value: notes || '' },
         { Field: 'Payment Mode', Value: paymentMode },
-        { Field: 'Paid Amount', Value: paid },
-        { Field: 'Pending Amount', Value: pending },
+        { Field: 'Paid Amount', Value: effectivePaidAmount },
+        { Field: 'Pending Amount', Value: pendingAmount },
         { Field: 'Total Quantity', Value: totalQuantity },
         { Field: 'Total Amount', Value: totalAmount },
         ...(isGstPurchase ? [
@@ -969,19 +816,18 @@ const AddPurchase: React.FC = () => {
 
       const itemRows = items.map((item, index) => ({
         '#': index + 1,
-        'Product Name': item.productName || `${item.brand} ${item.model} ${item.category}`.trim(),
+        'Product Code': itemProductCodes[index] || '',
         'Brand': item.brand,
         'Model': item.model || '',
         'Category': item.category,
+        'Product Name': item.productName || `${item.brand} ${item.model} ${item.category}`.trim(),
         'Quantity': Number(item.quantity) || 0,
         'Cost/Unit': Number(item.costPerUnit) || 0,
-        'MRP': Number(item.mrp) || 0,
-        'Total Cost': Number(item.totalCost) || 0,
-        'IMEI': item.imei || '',
-        'HSN Code': item.hcsCode || '',
         'MOP': Number(item.mop) || 0,
+        'MRP': Number(item.mrp) || 0,
+        'HSN Code': item.hcsCode || '',
         'Tax %': Number(item.taxPercent) || 0,
-        'Highest Discount Limit': Number(item.highestDiscountLimit) || 0
+        'Total Cost': Number(item.totalCost) || 0
       }));
 
       const wb = XLSX.utils.book_new();
@@ -991,30 +837,142 @@ const AddPurchase: React.FC = () => {
       XLSX.utils.book_append_sheet(wb, summaryWs, 'Purchase Summary');
       XLSX.utils.book_append_sheet(wb, itemsWs, 'Purchase Items');
 
-      const datePart = new Date().toISOString().split('T')[0];
+      const datePart = purchaseDate || new Date().toISOString().split('T')[0];
       const supplierPart = (selectedSupplierName || 'purchase').replace(/[^a-z0-9]+/gi, '_').toLowerCase();
-      XLSX.writeFile(wb, `purchase_draft_${supplierPart}_${datePart}.xlsx`);
+      XLSX.writeFile(wb, `purchase_non_imei_${supplierPart}_${datePart}.xlsx`);
     } catch (error) {
-      console.error('Error exporting purchase draft to Excel:', error);
+      console.error('Error exporting purchase to Excel:', error);
       showToast('Failed to export Excel file', 'error');
+    }
+  };
+
+  // Validation routines
+  const validateStep1 = () => {
+    if (!selectedSupplierId?.trim()) {
+      showToast('Supplier Required: Please select a supplier to proceed', 'error');
+      return false;
+    }
+    return true;
+  };
+
+  const validateStep2 = () => {
+    if (items.length === 0) {
+      showToast('Please add at least one product line', 'error');
+      return false;
+    }
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.brand?.trim()) {
+        showToast(`Line #${i + 1}: Brand is required`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-0`)?.focus(), 70);
+        return false;
+      }
+      if (!item.model?.trim()) {
+        showToast(`Line #${i + 1} (${item.brand}): Model is required`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-1`)?.focus(), 70);
+        return false;
+      }
+      if (!item.category?.trim()) {
+        showToast(`Line #${i + 1} (${item.brand} ${item.model}): Category is required`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-2`)?.focus(), 70);
+        return false;
+      }
+      if (!item.quantity || Number(item.quantity) < 1) {
+        showToast(`Line #${i + 1} (${item.brand} ${item.model}): Quantity must be at least 1 unit`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-4`)?.focus(), 70);
+        return false;
+      }
+      if (Number(item.costPerUnit) <= 0) {
+        showToast(`Line #${i + 1} (${item.brand} ${item.model}): Cost per unit must be greater than 0`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-5`)?.focus(), 70);
+        return false;
+      }
+      if (isGstPurchase && !item.hcsCode?.trim()) {
+        showToast(`Line #${i + 1} (${item.brand} ${item.model}): HSN Code is required for GST purchases`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-6`)?.focus(), 70);
+        return false;
+      }
+      if (!item.mop || Number(item.mop) <= 0) {
+        const mopCol = isGstPurchase ? 7 : 6;
+        showToast(`Line #${i + 1} (${item.brand} ${item.model}): MOP is required and must be greater than 0`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-${mopCol}`)?.focus(), 70);
+        return false;
+      }
+      if (!item.mrp || Number(item.mrp) <= 0) {
+        const mrpCol = isGstPurchase ? 8 : 7;
+        showToast(`Line #${i + 1} (${item.brand} ${item.model}): MRP is required and must be greater than 0`, 'error');
+        setTimeout(() => document.getElementById(`cell-${i}-${mrpCol}`)?.focus(), 70);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const validateForSave = () => {
+    if (!validateStep1()) {
+      setPageStep(1);
+      return false;
+    }
+    if (!validateStep2()) {
+      setPageStep(2);
+      return false;
+    }
+
+    if (paymentMode === 'split') {
+      const cash = parseFloat(cashAmount) || 0;
+      const upi = parseFloat(upiAmount) || 0;
+      const card = parseFloat(cardAmount) || 0;
+      const totalSplit = cash + upi + card;
+      const paid = parseFloat(paidAmount) || 0;
+
+      if (totalSplit !== paid) {
+        showToast(`Split Mismatch: Cash (₹${cash}) + UPI (₹${upi}) + Card (₹${card}) = ₹${totalSplit}, but Paid Amount is ₹${paid}`, 'error');
+        setPageStep(3);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const handleStepNavigation = (targetStep: 1 | 2 | 3) => {
+    if (targetStep === pageStep) return;
+    if (targetStep === 1) {
+      setPageStep(1);
+      return;
+    }
+    if (targetStep === 2) {
+      if (!validateStep1()) return;
+      setPageStep(2);
+      return;
+    }
+    if (targetStep === 3) {
+      if (!validateStep1()) {
+        setPageStep(1);
+        return;
+      }
+      if (!validateStep2()) {
+        setPageStep(2);
+        return;
+      }
+      setPageStep(3);
+      return;
     }
   };
 
   const generatePurchaseNumber = async () => {
     try {
       const purchasesRef = getCollectionRef('purchases');
-      
-      // Query the latest purchases to determine the next sequential number
       const qLatest = query(purchasesRef, orderBy('createdAt', 'desc'), limit(20));
       const snapshot = await getDocs(qLatest);
 
       let nextNumber = 1;
       if (!snapshot.empty) {
-        // Find the latest document that has a valid purchaseNumber containing digits
         for (const docSnap of snapshot.docs) {
           const data = docSnap.data() as Purchase;
           const purchaseNum = data.purchaseNumber || '';
-          // Extract the numeric part at the end
           const match = purchaseNum.match(/\d+$/);
           if (match) {
             const lastNum = parseInt(match[0], 10);
@@ -1026,7 +984,6 @@ const AddPurchase: React.FC = () => {
         }
       }
 
-      // Collision/concurrency guard: check if the candidate number is already used in the database
       let candidateNumber = nextNumber;
       let isUsed = true;
       while (isUsed) {
@@ -1044,32 +1001,26 @@ const AddPurchase: React.FC = () => {
       return `PUR-${String(candidateNumber).padStart(4, '0')}`;
     } catch (error) {
       console.error('Error generating purchase number:', error);
-      // Absolute fallback using timestamp to ensure uniqueness and prevent failure
       return `PUR-${Date.now()}`;
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const effectiveSupplierId = selectedSupplierId || 'hq-hub';
-    const effectiveSupplierName = selectedSupplierName || 'HQ Central Hub';
-
-    if (items.some(item => !item.brand.trim() || !item.category.trim() || item.quantity <= 0 || item.costPerUnit <= 0)) {
-      showToast('Please fill in all item details correctly', 'error');
-      return;
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
     }
+
+    if (!validateForSave()) return;
 
     setIsSubmitting(true);
 
     try {
-      const { totalQuantity, totalAmount, baseAmount, totalGstAmount } = calculateTotals();
-      const paid = parseFloat(paidAmount) || 0;
+      const paid = effectivePaidAmount;
       const isCredit = paymentMode === 'credit';
-      const pending = totalAmount - paid;
+      const pending = pendingAmount;
 
       let paymentStatus: 'paid' | 'pending' | 'unpaid' = 'unpaid';
-
       if (paid >= totalAmount) {
         paymentStatus = 'paid';
       } else if (paid > 0) {
@@ -1078,55 +1029,37 @@ const AddPurchase: React.FC = () => {
         paymentStatus = 'unpaid';
       }
 
-      // Handle payment split
       let paymentSplit: PaymentSplit | undefined;
       if (paymentMode === 'split') {
         const cash = parseFloat(cashAmount) || 0;
         const upi = parseFloat(upiAmount) || 0;
         const card = parseFloat(cardAmount) || 0;
-
-        if (cash + upi + card !== paid) {
-          showToast('Payment split amounts must equal paid amount', 'error');
-          setIsSubmitting(false);
-          return;
-        }
-
         paymentSplit = { cash, upi, card };
       }
 
-      // Build loading states with product names
       const states: Array<{ text: string }> = [];
-      states.push({ text: 'Validating supplier and payment...' });
+      states.push({ text: 'Validating procurement details and supplier...' });
       items.forEach((item) => {
-        const productName = `${item.brand} ${item.model} ${item.category}`.trim();
-        states.push({ text: `Saving ${productName}...` });
+        const pName = `${item.brand} ${item.model} ${item.category}`.trim();
+        states.push({ text: `Adding ${pName} (${item.quantity} units) to Central Warehouse...` });
       });
-      states.push({ text: 'Updating supplier totals...' });
-      states.push({ text: 'Finalizing purchase...' });
-      states.push({ text: `✓ Purchase saved successfully!` });
+      states.push({ text: 'Posting supplier ledger transactions...' });
+      states.push({ text: 'Finalizing purchase voucher...' });
+      states.push({ text: '✓ Non-IMEI Purchase recorded successfully!' });
 
       setLoadingStates(states);
       setMultiStepLoading(true);
 
       if (isEditMode && originalPurchase) {
-        states.push({ text: 'Reverting previous purchase data...' });
-        setLoadingStates([...states]);
-        
-        // Revert supplier totals if tied to an external supplier
-        if (originalPurchase.supplierId && originalPurchase.supplierId !== 'hq-hub') {
-          try {
-            const supplierRef = doc(db, 'suppliers', originalPurchase.supplierId);
-            await updateDoc(supplierRef, {
-              totalPurchaseAmount: increment(-originalPurchase.totalAmount),
-              totalPaid: increment(-originalPurchase.paidAmount),
-              totalPending: increment(-originalPurchase.pendingAmount)
-            });
-          } catch (e) {
-            console.warn('Could not revert external supplier totals:', e);
-          }
-        }
+        // Revert supplier totals
+        const supplierRef = doc(db, 'suppliers', originalPurchase.supplierId);
+        await updateDoc(supplierRef, {
+          totalPurchaseAmount: increment(-originalPurchase.totalAmount),
+          totalPaid: increment(-originalPurchase.paidAmount),
+          totalPending: increment(-originalPurchase.pendingAmount)
+        });
 
-        // Revert inventory quantities
+        // Revert inventory
         for (const origItem of originalPurchase.items) {
           if (!origItem.productCode) continue;
           const productsRef = getCollectionRef('products');
@@ -1149,7 +1082,6 @@ const AddPurchase: React.FC = () => {
         }
       }
 
-      // Check if products already exist in HQ Hub master catalog and get their codes
       const finalProductCodes: string[] = [];
       const rootProductsRef = collection(db, 'products');
       for (let index = 0; index < items.length; index++) {
@@ -1162,16 +1094,18 @@ const AddPurchase: React.FC = () => {
           const productDoc = snapshot.docs[0];
           finalProductCodes.push(productDoc.data().productCode);
         } else {
-          finalProductCodes.push(itemProductCodes[index]);
+          finalProductCodes.push(itemProductCodes[index] || getNextProductCodeForItem(index));
         }
       }
 
-      const purchaseNumber = await generatePurchaseNumber();
+      const purchaseNumber = isEditMode && originalPurchase?.purchaseNumber
+        ? originalPurchase.purchaseNumber
+        : await generatePurchaseNumber();
 
       const purchaseData: any = {
         purchaseNumber,
-        supplierId: effectiveSupplierId,
-        supplierName: effectiveSupplierName,
+        supplierId: selectedSupplierId,
+        supplierName: selectedSupplierName,
         hubId: currentHub?.id || 'digital_zone_hq',
         items: items.map((item, index) => {
           const cost = Number(item.costPerUnit) || 0;
@@ -1189,6 +1123,7 @@ const AddPurchase: React.FC = () => {
             taxPercent: tax,
             totalCost: Number(item.totalCost) || 0,
             mrp: Number(item.mrp) || 0,
+            mop: Number(item.mop) || 0,
             hcsCode: item.hcsCode || '',
             gstEnabled: isGstPurchase
           };
@@ -1203,36 +1138,33 @@ const AddPurchase: React.FC = () => {
         paymentMode,
         paymentStatus,
         isCredit,
-        creditCleared: 0, // No clearances yet
+        creditCleared: 0,
         isIMEIPurchase: false,
+        purchaseDate: purchaseDate || new Date().toISOString().split('T')[0],
         createdAt: new Date(),
         createdBy: currentUser?.uid || '',
         createdByName: currentUser?.displayName || ''
       };
 
       if (paymentSplit) purchaseData.paymentSplit = paymentSplit;
-      if (invoiceNumber.trim()) purchaseData.invoiceNumber = invoiceNumber;
-      if (notes.trim()) purchaseData.notes = notes;
+      if (invoiceNumber.trim()) purchaseData.invoiceNumber = invoiceNumber.trim();
+      if (notes.trim()) purchaseData.notes = notes.trim();
 
       let purchaseRefId = '';
       if (isEditMode && id) {
-        // Update purchase in Firestore (Always stored in HQ Hub)
         const purchaseRef = doc(db, 'purchases', id);
         purchaseData.updatedAt = new Date();
         purchaseData.createdAt = originalPurchase.createdAt;
         purchaseData.createdBy = originalPurchase.createdBy;
         purchaseData.createdByName = originalPurchase.createdByName;
-        purchaseData.purchaseNumber = originalPurchase.purchaseNumber;
-        
         await updateDoc(purchaseRef, purchaseData);
         purchaseRefId = id;
       } else {
-        // Add purchase to Firestore (Always HQ Hub Root)
         const purchaseRef = await addDoc(collection(db, 'purchases'), purchaseData);
         purchaseRefId = purchaseRef.id;
       }
 
-      // Record purchase transaction in supplier history (Root)
+      // Record purchase transaction
       await addDoc(collection(db, 'supplierPayments'), {
         supplierId: selectedSupplierId,
         supplierName: selectedSupplierName,
@@ -1246,7 +1178,7 @@ const AddPurchase: React.FC = () => {
         createdByName: currentUser?.displayName || ''
       });
 
-      // If a payment was made during purchase, record it as a payment transaction
+      // Record immediate payment out if paid > 0
       if (paid > 0) {
         const paymentRecord: any = {
           supplierId: selectedSupplierId,
@@ -1261,28 +1193,19 @@ const AddPurchase: React.FC = () => {
           createdByName: currentUser?.displayName || ''
         };
         if (paymentSplit) paymentRecord.paymentSplit = paymentSplit;
-
         await addDoc(collection(db, 'supplierPayments'), paymentRecord);
       }
 
-      // Update supplier totals (Root) only if an external supplier is associated (Hub procurement)
-      if (effectiveSupplierId && effectiveSupplierId !== 'hq-hub') {
-        try {
-          const supplierRef = doc(db, 'suppliers', effectiveSupplierId);
-          const updateData: any = {
-            totalPurchaseAmount: increment(totalAmount),
-            totalPaid: increment(paid),
-            totalPending: increment(pending),
-            updatedAt: Timestamp.now()
-          };
-          await updateDoc(supplierRef, updateData);
-        } catch (e) {
-          console.warn('Could not update external supplier totals:', e);
-        }
-      }
+      // Update supplier balance
+      const supplierRef = doc(db, 'suppliers', selectedSupplierId);
+      await updateDoc(supplierRef, {
+        totalPurchaseAmount: increment(totalAmount),
+        totalPaid: increment(paid),
+        totalPending: increment(pending),
+        updatedAt: Timestamp.now()
+      });
 
-      // Add products to HQ Hub inventory (Root master catalog) - Never directly write to branch inventory
-      const savedProductDocIds: string[] = [];
+      // Update HQ Central Warehouse Catalog & Stock
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
         const productName = `${item.brand} ${item.model} ${item.category}`.trim();
@@ -1291,14 +1214,11 @@ const AddPurchase: React.FC = () => {
         const costWithGst = baseCost + (baseCost * tax / 100);
         const effectiveCost = isGstPurchase && tax > 0 ? costWithGst : baseCost;
 
-        // Check if product already exists in root catalog
         const q = query(rootProductsRef, where('name', '==', productName));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
-          // Update existing product: increment quantity and update price fields
           const productDoc = snapshot.docs[0];
-          savedProductDocIds.push(productDoc.id);
           const existingData: any = productDoc.data();
 
           const updateData: any = {
@@ -1321,13 +1241,12 @@ const AddPurchase: React.FC = () => {
 
           await updateDoc(doc(db, 'products', productDoc.id), updateData);
         } else {
-          // Create new product in HQ master catalog
           const brand = item.brand && item.brand.trim() ? item.brand : 'Unknown Brand';
           const model = item.model && item.model.trim() ? item.model : 'N/A';
           const category = item.category && item.category.trim() ? item.category : 'General';
           const code = finalProductCodes[index] || getNextProductCodeForItem(index);
 
-          const newDocRef = await addDoc(rootProductsRef, {
+          await addDoc(rootProductsRef, {
             productCode: code,
             name: productName || `${brand} ${model} ${category}`.trim(),
             model,
@@ -1351,460 +1270,348 @@ const AddPurchase: React.FC = () => {
             createdBy: currentUser?.uid || '',
             createdByName: currentUser?.displayName || ''
           });
-          savedProductDocIds.push(newDocRef.id);
         }
       }
 
-      showToast(`Purchase ${purchaseNumber} ${isEditMode ? 'updated' : 'added'} to HQ Central Warehouse successfully!`, 'success');
+      showToast(`Purchase ${purchaseNumber} saved to Central Warehouse successfully!`, 'success');
 
-      // Keep loader visible for a moment to show final success message
       setTimeout(async () => {
         setMultiStepLoading(false);
-
-        // Clear the draft from localStorage
         localStorage.removeItem('addPurchaseDraft');
-
-        // Reset form
-        setSelectedSupplierId('');
-        setSelectedSupplierName('');
-        setInvoiceNumber('');
-        setNotes('');
-        setPaymentMode('cash');
-        setPaidAmount('');
-        setCashAmount('');
-        setUpiAmount('');
-        setCardAmount('');
-        setIsGstPurchase(false);
-        setItems([{
-          productName: '',
-          brand: '',
-          model: '',
-          category: '',
-          quantity: 1,
-          costPerUnit: 0,
-          totalCost: 0,
-          mrp: 0,
-          taxPercent: 0
-        }]);
-
-        await initializeProductCode();
         navigate('/purchases');
+      }, 1400);
 
-      }, 1500);
     } catch (error) {
-      console.error('Error adding purchase:', error);
-      showToast('Failed to add purchase', 'error');
+      console.error('Error saving purchase:', error);
+      showToast('Failed to save purchase. Please review fields and try again.', 'error');
       setMultiStepLoading(false);
-    } finally {
       setIsSubmitting(false);
     }
   };
 
-  const { totalQuantity, totalAmount, baseAmount, totalGstAmount } = calculateTotals();
-  const pendingAmount = totalAmount - (parseFloat(paidAmount) || 0);
+  const stepsMeta = [
+    { number: 1, title: 'Supplier & Source', subtitle: 'Vendor info & document details' },
+    { number: 2, title: 'Products & Inventory', subtitle: `${items.length} lines • ${totalQuantity} units` },
+    { number: 3, title: 'Payment & Summary', subtitle: `₹${totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })} settlement` }
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50/50 pb-16">
       <Navbar />
-      {/* Hide number input spinners for quantity/cost/mrp */}
       <style>{`
-        /* Hide number input spinners (Chrome, Edge, Safari) */
         input[type=number]::-webkit-outer-spin-button,
         input[type=number]::-webkit-inner-spin-button {
           -webkit-appearance: none;
           margin: 0;
         }
-        /* Hide number input spinners in Firefox */
         input[type=number] {
           -moz-appearance: textfield;
         }
       `}</style>
-      <div className="max-w-full mx-auto px-2 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-8">
-        {/* Header */}
-        <div className="mb-6">
-            <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 flex items-center gap-3">
-                <ShoppingCart className="w-7 h-7 sm:w-8 sm:h-8 text-blue-600" />
-                Add Purchase
-              </h1>
-              <p className="text-gray-600 mt-1">{isEditMode ? 'Edit an existing purchase' : 'Add bulk product purchases from suppliers'}</p>
-            </div>
 
-            {/* Auto-save Status & Clear Draft */}
-            <div className="flex flex-col items-end gap-2">
-              {!isEditMode && lastSaved && (
-                <div className="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 px-2 py-1 rounded-md">
-                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  Draft saved at {lastSaved}
-                </div>
-              )}
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => importFileInputRef.current?.click()}
-                    className="text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 px-2 py-1 rounded-md transition-colors font-medium border border-emerald-200"
-                  >
-                    Import Excel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={exportToExcel}
-                    className="text-xs text-blue-700 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-md transition-colors font-medium border border-blue-200"
-                  >
-                    Export Excel
-                  </button>
-                  {!isEditMode && lastSaved && (
-                    <button
-                      type="button"
-                      onClick={clearDraft}
-                      className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-md transition-colors font-medium"
-                    >
-                      Clear Draft
-                    </button>
-                  )}
-                </div>
-                <input
-                  ref={importFileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls"
-                  className="hidden"
-                  onChange={importFromExcel}
-                />
+      <main className="w-full px-3 sm:px-6 lg:px-8 py-6 pb-24 sm:pb-12">
+
+        {/* ================= PAGE TITLE / HEADER ================= */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-200/80 mb-6">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                {isEditMode ? 'Edit Non-IMEI Purchase' : 'New Non-IMEI Purchase'}
+              </h1>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200/60">
+                General Inventory
+              </span>
             </div>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1">
+              Procure non-serialized inventory, manage warehouse stock levels, and settle supplier balances.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            {lastSaved && (
+              <span className="text-[11px] text-slate-400 font-mono hidden sm:inline-block mr-1">
+                Draft auto-saved: {lastSaved}
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowClearModal(true)}
+              className="px-3 py-1.5 text-xs font-medium text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200/80 rounded-lg transition-colors cursor-pointer"
+            >
+              Clear Draft
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('/purchases')}
+              className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              View Purchases
+            </button>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Procurement Source (Central Hub) */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Building className="w-5 h-5 text-blue-600" />
-                Procurement Source
-              </h2>
-              <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-medium border border-blue-200">
-                HQ Hub Procurement
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Supplier / Procurement Origin
-                </label>
-                <div className="px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-800 font-medium flex items-center justify-between">
-                  <span>HQ Central Hub</span>
-                  <span className="text-xs text-blue-600 bg-white px-2 py-0.5 rounded border border-gray-200">Centralized</span>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  External vendors and suppliers are exclusively managed at HQ Hub.
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Invoice / Reference Number
-                </label>
-                <input
-                  type="text"
-                  value={invoiceNumber}
-                  onChange={(e) => setInvoiceNumber(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Invoice or challan number"
-                />
-              </div>
-            </div>
+        {/* ================= MOBILE STEPPER BAR ================= */}
+        <div className="md:hidden mb-5 bg-white p-2 rounded-xl border border-slate-200 shadow-2xs">
+          <div className="grid grid-cols-3 gap-1 text-center">
+            {stepsMeta.map((s) => {
+              const isCurrent = pageStep === s.number;
+              const isDone = pageStep > s.number;
+              return (
+                <button
+                  key={s.number}
+                  type="button"
+                  onClick={() => handleStepNavigation(s.number as 1 | 2 | 3)}
+                  className={`py-2 px-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${isCurrent
+                      ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                      : isDone
+                        ? 'bg-emerald-50 text-emerald-800'
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                >
+                  <div className="flex items-center justify-center gap-1.5">
+                    {isDone ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    ) : (
+                      <span className="text-[11px]">{s.number}.</span>
+                    )}
+                    <span className="truncate">{s.title.split(' ')[0]}</span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
+        </div>
 
-          {/* Product Items - Excel-like Table */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Package className="w-5 h-5 text-blue-600" />
-                Product Items
-              </h2>
+        {/* ================= 2-COLUMN WORKSPACE: LEFT RAIL + MAIN VIEW ================= */}
+        <div className="flex flex-col lg:flex-row items-start gap-6 w-full">
 
-              {/* GST Purchase Toggle */}
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex rounded-lg border border-gray-300 p-0.5 bg-gray-100">
-                  <button
-                    type="button"
-                    onClick={() => toggleGstPurchase(false)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                      !isGstPurchase
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-800'
-                    }`}
-                  >
-                    Non-GST
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleGstPurchase(true)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 ${
-                      isGstPurchase
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'text-gray-500 hover:text-emerald-700'
-                    }`}
-                  >
-                    <Receipt className="w-3.5 h-3.5" />
-                    GST Purchase
-                  </button>
-                </div>
-
-                {isGstPurchase && (
-                  <div className="flex items-center gap-1.5 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-xs">
-                    <span className="text-emerald-800 font-semibold">Default Tax:</span>
-                    <select
-                      value={defaultTaxPercent}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setDefaultTaxPercent(val);
-                        setItems(prev => prev.map(it => {
-                          const cost = Number(it.costPerUnit) || 0;
-                          const qty = Number(it.quantity) || 0;
-                          const tax = (it.taxPercent && it.taxPercent !== defaultTaxPercent) ? it.taxPercent : val;
-                          const costWithGst = cost + (cost * tax / 100);
-                          return {
-                            ...it,
-                            taxPercent: tax,
-                            totalCost: qty * costWithGst
-                          };
-                        }));
-                      }}
-                      className="bg-white border border-emerald-300 text-emerald-900 rounded font-bold px-2 py-0.5 text-xs focus:ring-1 focus:ring-emerald-500"
-                    >
-                      <option value={0}>0%</option>
-                      <option value={5}>5%</option>
-                      <option value={12}>12%</option>
-                      <option value={18}>18%</option>
-                      <option value={28}>28%</option>
-                    </select>
-                  </div>
+          {/* ================= DESKTOP STEPPER RAIL (COLLAPSIBLE) ================= */}
+          <aside className={`hidden md:block transition-all duration-200 shrink-0 ${isSidebarCollapsed ? 'w-14' : 'w-64'
+            }`}>
+            <nav className="sticky top-20 bg-white rounded-xl border border-slate-200/90 p-3 shadow-2xs space-y-2">
+              <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-100">
+                {!isSidebarCollapsed && (
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Procurement Steps
+                  </span>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                  className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors ml-auto cursor-pointer"
+                  title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar for more workspace'}
+                >
+                  {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+                </button>
               </div>
-            </div>
 
-            {/* Mobile View: Item Cards */}
-            <div className="block sm:hidden space-y-4 mb-4">
-              {items.map((item, rowIndex) => (
-                <div key={rowIndex} className={`bg-gray-50 rounded-lg p-3 border border-gray-200 relative shadow-sm ${selectedRowIndex === rowIndex ? 'z-10 ring-1 ring-blue-300' : 'z-0'}`}>
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-gray-500">#{rowIndex + 1}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeItem(rowIndex)}
-                          className={`text-red-500 bg-white p-1 rounded-full border border-gray-200 ${items.length <= 1 ? 'hidden' : ''}`}
-                        >
-                          <Trash2 size={12} />
-                        </button>
+              {stepsMeta.map((s) => {
+                const isCurrent = pageStep === s.number;
+                const isDone = pageStep > s.number;
+
+                return (
+                  <button
+                    key={s.number}
+                    type="button"
+                    onClick={() => handleStepNavigation(s.number as 1 | 2 | 3)}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-lg text-left transition-all cursor-pointer ${isCurrent
+                        ? 'bg-blue-50 text-blue-700 font-semibold border border-blue-200/80 shadow-2xs'
+                        : isDone
+                          ? 'text-slate-700 hover:bg-slate-50'
+                          : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50/60'
+                      }`}
+                  >
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono shrink-0 transition-colors ${isCurrent
+                        ? 'bg-blue-600 text-white font-bold'
+                        : isDone
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                      {isDone ? <Check className="w-4 h-4 text-emerald-700" /> : s.number}
+                    </div>
+
+                    {!isSidebarCollapsed && (
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs truncate">{s.title}</div>
+                        <div className="text-[10px] text-slate-400 truncate mt-0.5">{s.subtitle}</div>
                       </div>
-                      <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 mt-1 inline-block">
-                        {itemProductCodes[rowIndex] || '—'}
-                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {!isSidebarCollapsed && selectedSupplierName && (
+                <div className="mt-3 pt-2.5 border-t border-slate-100 text-[11px] space-y-1">
+                  <div className="text-slate-400 text-[10px] uppercase font-bold">Selected Vendor</div>
+                  <div className="font-semibold text-slate-800 truncate" title={selectedSupplierName}>
+                    {selectedSupplierName}
+                  </div>
+                  {invoiceNumber && (
+                    <div className="text-slate-500 font-mono text-[10px] truncate">
+                      Ref: {invoiceNumber}
                     </div>
-                    <div className="flex flex-col items-end">
-                      <span className="text-[10px] text-gray-400 uppercase font-medium">Total</span>
-                      <span className="text-sm font-bold text-green-600">{encodePrice(item.totalCost)}</span>
+                  )}
+                </div>
+              )}
+            </nav>
+          </aside>
+
+          {/* ================= MAIN CONTENT (Steps 1, 2, 3) ================= */}
+          <div className="flex-1 min-w-0 w-full space-y-6">
+
+            {/* ================= STEP 1: SUPPLIER & DOCUMENTATION ================= */}
+            {pageStep === 1 && (
+              <div className="space-y-5 w-full">
+
+                {/* Supplier Selection Card */}
+                <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-xs">
+                  <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-slate-100">
+                    <div>
+                      <h2 className="text-sm font-semibold text-slate-900 tracking-tight flex items-center gap-2">
+                        <Truck className="w-4 h-4 text-blue-600" />
+                        <span>Supplier & Source Vendor</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        The supplier is the sole product origin for this procurement batch.
+                      </p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSupplierModal(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>+ Add New Supplier</span>
+                    </button>
                   </div>
 
-                  <div className="space-y-3">
-                    {/* Product Name Search */}
+                  <div className="space-y-4">
                     <div>
-                      <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Product Name</label>
-                      <div className="relative w-full" ref={selectedRowIndex === rowIndex ? searchContainerRef : undefined}>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={item.productName || `${item.brand} ${item.model} ${item.category}`.trim()}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              handleItemChange(rowIndex, 'productName', value);
-                              setSelectedRowIndex(rowIndex);
-                              setSearchQuery(value);
-                              if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-                              searchDebounceRef.current = window.setTimeout(() => {
-                                searchProducts(value);
-                              }, 250);
-                            }}
-                            onFocus={() => { setSelectedRowIndex(rowIndex); if (searchQuery.trim()) setIsDropdownOpen(true); }}
-                            className="w-full pl-3 pr-8 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white"
-                            placeholder="Search product..."
-                          />
-                          <button
-                            type="button"
-                            onClick={() => openProductSearch(rowIndex)}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-600"
-                          >
-                            <Package size={16} />
-                          </button>
-
-                          {/* Mobile Inline Dropdown (Absolute) */}
-                          {selectedRowIndex === rowIndex && isDropdownOpen && !dropdownPosition && (
-                            <div className="absolute top-full left-0 w-full z-50 bg-white shadow-xl border border-gray-200 rounded-lg max-h-60 overflow-y-auto mt-1">
-                              {searching ? (
-                                <div className="p-3 text-center">
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mx-auto"></div>
-                                </div>
-                              ) : searchResults.length > 0 ? (
-                                <div>
-                                  {searchResults.map((product) => (
-                                    <div
-                                      key={product.id}
-                                      onMouseDown={(e) => {
-                                        // Use onMouseDown to trigger before blur events
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        selectProduct(product, rowIndex);
-                                      }}
-                                      className="px-3 py-2 border-b border-gray-100 last:border-0 hover:bg-blue-50 active:bg-blue-100 cursor-pointer"
-                                    >
-                                      <div className="flex flex-col">
-                                        <div className="flex justify-between items-start">
-                                          <span className="text-sm font-medium text-gray-900 truncate pr-2">{product.name}</span>
-                                          <span className="text-xs font-mono text-blue-600 whitespace-nowrap">{product.productCode}</span>
-                                        </div>
-                                        <div className="flex justify-between items-center mt-1 text-xs text-gray-500">
-                                          <span className="truncate max-w-[60%]">{product.brand} {product.model}</span>
-                                          <div className="flex gap-3">
-                                            <span>Qty: {product.quantity}</span>
-                                            <span className="font-semibold text-gray-900">₹{product.cost}</span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="p-3 text-center text-xs text-gray-500">No products found</div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Select Supplier *
+                      </label>
+                      <select
+                        value={selectedSupplierId}
+                        onChange={(e) => handleSupplierChange(e.target.value)}
+                        className="w-full px-3 py-2.5 text-xs border border-slate-300 rounded-lg bg-white text-slate-900 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none transition-colors"
+                      >
+                        <option value="">-- Choose a Supplier --</option>
+                        {suppliers.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} {s.phone ? `(${s.phone})` : ''} {s.gstNumber ? `• GST: ${s.gstNumber}` : ''}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
-                    {/* Brand & Model */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Brand</label>
-                        <div className="relative border border-gray-300 rounded-lg bg-white overflow-hidden">
-                          <SearchableSelect
-                            options={brands.map(b => ({ id: b.id || '', name: b.name }))}
-                            value={item.brand}
-                            onChange={(value) => handleItemChange(rowIndex, 'brand', value)}
-                            placeholder="Select"
-                            disabled={itemIsExistingProduct[rowIndex]}
-                            className="!border-0 !bg-transparent !py-2"
-                          />
+                    {!selectedSupplierId && (
+                      <div className="p-3 bg-amber-50/80 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="font-semibold block">Supplier Selection Required</strong>
+                          <span>Please select a supplier from the list above or click "+ Add New Supplier" to unlock Step 2 (Products & Inventory).</span>
                         </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Model</label>
-                        <input
-                          type="text"
-                          value={item.model}
-                          onChange={(e) => handleItemChange(rowIndex, 'model', e.target.value)}
-                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white"
-                          placeholder="mx-100"
-                          disabled={itemIsExistingProduct[rowIndex]}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Category & Stock */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Category</label>
-                        <div className="relative border border-gray-300 rounded-lg bg-white overflow-hidden">
-                          <SearchableSelect
-                            options={categories.map(c => ({ id: c.id || '', name: c.name }))}
-                            value={item.category}
-                            onChange={(value) => handleItemChange(rowIndex, 'category', value)}
-                            placeholder="Select"
-                            disabled={itemIsExistingProduct[rowIndex]}
-                            className="!border-0 !bg-transparent !py-2"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">In Stock</label>
-                        <div className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-100 rounded-lg text-gray-600">
-                          {itemExistingStock[rowIndex] ?? 0}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* HSN Code if GST enabled */}
-                    {isGstPurchase && (
-                      <div className="bg-emerald-50/60 p-2.5 rounded-lg border border-emerald-200">
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="text-[10px] font-bold text-emerald-800 uppercase flex items-center gap-1">
-                            <span>HSN Code</span>
-                            <span className="text-emerald-600 font-normal text-[9px]">(Non-IMEI GST)</span>
-                          </label>
-                          {items.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => applyHcsCodeToAllRows(rowIndex)}
-                              className="text-[10px] text-blue-600 font-semibold hover:text-blue-700 hover:underline"
-                            >
-                              Apply to all rows
-                            </button>
-                          )}
-                        </div>
-                        <input
-                          type="text"
-                          value={item.hcsCode || ''}
-                          onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
-                          className="w-full px-3 py-1.5 text-sm border border-emerald-300 rounded-md focus:ring-2 focus:ring-emerald-500 bg-white font-mono uppercase"
-                          placeholder="ENTER HSN CODE"
-                        />
                       </div>
                     )}
 
-                    {/* Qty, Cost, MRP, and Tax % if GST enabled */}
-                    <div className={`grid ${isGstPurchase ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'} gap-2`}>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block text-blue-700">Qty *</label>
-                        <input
-                          type="number"
-                          value={item.quantity}
-                          onChange={(e) => handleItemChange(rowIndex, 'quantity', e.target.value === '' ? '' : parseInt(e.target.value))}
-                          className="w-full px-1 py-2 text-sm border-2 border-blue-100 rounded-lg focus:ring-2 focus:ring-blue-500 text-center bg-white font-bold text-gray-900"
-                          min="0"
-                        />
+                    {selectedSupplierId && (() => {
+                      const sup = suppliers.find(s => s.id === selectedSupplierId);
+                      if (!sup) return null;
+                      return (
+                        <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200/80 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-700">
+                          <div className="font-semibold text-slate-900">
+                            {sup.name}
+                          </div>
+                          {sup.contactPerson && (
+                            <span className="text-slate-500">
+                              Contact: <strong>{sup.contactPerson}</strong>
+                            </span>
+                          )}
+                          {sup.phone && (
+                            <span className="flex items-center gap-1 text-slate-600">
+                              <Phone className="w-3 h-3 text-slate-400" />
+                              <span>{sup.phone}</span>
+                            </span>
+                          )}
+                          {sup.gstNumber && (
+                            <span className="flex items-center gap-1 font-mono text-slate-600">
+                              <Hash className="w-3 h-3 text-slate-400" />
+                              <span>GSTIN: {sup.gstNumber}</span>
+                            </span>
+                          )}
+                          {sup.address && (
+                            <span className="text-slate-500 truncate max-w-sm">
+                              {sup.address}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Invoice, Date & GST Card */}
+                <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-xs">
+                  <div className="pb-3.5 mb-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-sm font-semibold text-slate-900 tracking-tight flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-blue-600" />
+                        <span>Invoice & Tax Configuration</span>
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Specify vendor invoice reference, date, and tax application.
+                      </p>
+                    </div>
+
+                    {/* GST Purchase Toggle */}
+                    <div className="flex items-center gap-2">
+                      <div className="inline-flex rounded-lg border border-slate-200 p-0.5 bg-slate-100 text-xs font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => toggleGstPurchase(false)}
+                          className={`px-3 py-1 rounded-md transition-all cursor-pointer ${!isGstPurchase
+                              ? 'bg-white text-slate-900 shadow-2xs'
+                              : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                        >
+                          Non-GST
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleGstPurchase(true)}
+                          className={`px-3 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${isGstPurchase
+                              ? 'bg-emerald-600 text-white shadow-2xs'
+                              : 'text-slate-500 hover:text-emerald-700'
+                            }`}
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          <span>GST Purchase</span>
+                        </button>
                       </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">Cost {isGstPurchase ? '(Base)' : ''}</label>
-                        <input
-                          type="text"
-                          value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'costPerUnit' 
-                            ? activeCell.value 
-                            : (item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit))}
-                          onChange={(e) => {
-                            const rawValue = e.target.value.toUpperCase();
-                            setActiveCell({ rowIndex, field: 'costPerUnit', value: rawValue });
-                            const val = decodePrice(rawValue);
-                            handleItemChange(rowIndex, 'costPerUnit', isNaN(val) ? 0 : val);
-                          }}
-                          onFocus={() => setActiveCell({ rowIndex, field: 'costPerUnit', value: item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit) })}
-                          onBlur={() => setActiveCell(null)}
-                          className="w-full px-1 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-center bg-white"
-                        />
-                      </div>
+
                       {isGstPurchase && (
-                        <div>
-                          <label className="text-[10px] font-bold text-emerald-700 uppercase mb-1 block">Tax %</label>
+                        <div className="flex items-center gap-1 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 text-xs">
+                          <span className="text-emerald-800 font-semibold">Default Tax:</span>
                           <select
-                            value={item.taxPercent ?? defaultTaxPercent}
-                            onChange={(e) => handleItemChange(rowIndex, 'taxPercent', parseInt(e.target.value))}
-                            className="w-full px-1 py-2 text-sm border border-emerald-300 rounded-lg focus:ring-2 focus:ring-emerald-500 text-center bg-emerald-50/50 font-bold text-emerald-800"
+                            value={defaultTaxPercent}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setDefaultTaxPercent(val);
+                              setItems(prev => prev.map(it => {
+                                const cost = Number(it.costPerUnit) || 0;
+                                const qty = Number(it.quantity) || 0;
+                                const tax = val;
+                                const costWithGst = cost + (cost * tax / 100);
+                                return {
+                                  ...it,
+                                  taxPercent: tax,
+                                  totalCost: qty * costWithGst
+                                };
+                              }));
+                            }}
+                            className="bg-white border border-emerald-300 text-emerald-900 rounded font-bold px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-emerald-500"
                           >
                             <option value={0}>0%</option>
                             <option value={5}>5%</option>
@@ -1814,660 +1621,1263 @@ const AddPurchase: React.FC = () => {
                           </select>
                         </div>
                       )}
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-500 uppercase mb-1 block">MRP</label>
-                        <input
-                          type="number"
-                          value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'mrp' ? activeCell.value : (item.mrp || '')}
-                          onChange={(e) => {
-                            const valStr = e.target.value;
-                            setActiveCell({ rowIndex, field: 'mrp', value: valStr });
-                            handleItemChange(rowIndex, 'mrp', valStr === '' ? '' : parseFloat(valStr));
-                          }}
-                          onFocus={() => setActiveCell({ rowIndex, field: 'mrp', value: String(item.mrp || '') })}
-                          onBlur={() => setActiveCell(null)}
-                          className="w-full px-1 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-center bg-white"
-                          step="0.01"
-                        />
-                      </div>
                     </div>
-                    {isGstPurchase && (
-                      <div className="flex justify-between items-center text-xs px-2.5 py-1.5 bg-emerald-50 rounded-lg border border-emerald-100 text-emerald-800">
-                        <span className="font-medium">Cost + GST / Unit:</span>
-                        <span className="font-bold text-emerald-900">
-                          ₹{((Number(item.costPerUnit) || 0) * (1 + (Number(item.taxPercent ?? defaultTaxPercent) / 100))).toFixed(2)}
-                        </span>
-                      </div>
-                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1">
+                        <Hash className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Supplier Invoice / Challan Number</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={invoiceNumber}
+                        onChange={(e) => setInvoiceNumber(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs text-slate-900 bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none transition-colors font-mono"
+                        placeholder="e.g. INV-9021 or CH-881"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Purchase Date</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={purchaseDate}
+                        onChange={(e) => setPurchaseDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs text-slate-900 bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Purchase Notes / Internal Remarks (Optional)
+                      </label>
+                      <textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        rows={2}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs text-slate-900 bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none transition-colors"
+                        placeholder="Remarks about shipment batch, warranty, damage inspection, or courier tracking..."
+                      />
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
 
-            <div ref={tableWrapperRef} className="hidden sm:block overflow-x-auto overflow-y-visible">
-              <table className="w-full border-collapse border border-gray-300">
-                <thead>
-                  <tr className="bg-gradient-to-r from-blue-50 to-indigo-50">
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 w-8">#</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 min-w-[120px]">Product Code</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 min-w-[180px]">Product Name</th>
-                    {isGstPurchase && (
-                      <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-emerald-800 min-w-[120px] bg-emerald-50/50">
-                        <div className="flex items-center justify-between gap-1">
-                          <span>HSN Code</span>
-                          {items.length > 1 && (
+                {/* Step 1 Bottom Nav */}
+                <div className="bg-white rounded-xl border border-slate-200/90 px-5 py-4 flex items-center justify-between shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/purchases')}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (validateStep1()) {
+                        setPageStep(2);
+                      }
+                    }}
+                    className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-semibold text-white shadow-xs transition-all cursor-pointer ${selectedSupplierId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-400 hover:bg-slate-500'
+                      }`}
+                  >
+                    <span>Proceed to Step 2: Products & Inventory</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STEP 2: PRODUCTS & INVENTORY PRICING ================= */}
+            {pageStep === 2 && (
+              <div className="space-y-5 w-full">
+                <div className="bg-white rounded-xl border border-slate-200/90 overflow-hidden shadow-2xs">
+
+                  {/* Top Action Toolbar */}
+                  <div className="p-3.5 sm:px-5 sm:py-3 border-b border-slate-200/80 bg-slate-50/50 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => addItem(false)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 rounded-lg text-xs font-semibold border border-slate-200 transition-colors cursor-pointer shadow-2xs"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Add Product Line</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          setSearchResults([]);
+                          setIsCatalogModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-700 hover:text-slate-900 hover:bg-slate-50 rounded-lg text-xs font-semibold border border-slate-200 transition-colors cursor-pointer shadow-2xs"
+                      >
+                        <Search className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Search Catalog</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowProductName(!showProductName)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${showProductName
+                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                          }`}
+                        title="Toggle Product Name column visibility"
+                      >
+                        {showProductName ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        <span>Product Name</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={importFileInputRef}
+                        type="file"
+                        accept=".xlsx, .xls"
+                        onChange={importFromExcel}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => importFileInputRef.current?.click()}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-medium border border-slate-200 transition-colors cursor-pointer"
+                        title="Import items from Excel spreadsheet"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-slate-500" />
+                        <span className="hidden sm:inline">Import Excel</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={exportToExcel}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white text-slate-700 hover:bg-slate-50 rounded-lg text-xs font-medium border border-slate-200 transition-colors cursor-pointer"
+                        title="Export current draft to Excel"
+                      >
+                        <Download className="w-3.5 h-3.5 text-slate-500" />
+                        <span className="hidden sm:inline">Export Excel</span>
+                      </button>
+
+                      <span className="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
+                        {items.length} lines • {totalQuantity} units
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Mobile View: Item Cards */}
+                  <div className="block sm:hidden divide-y divide-slate-100 p-3 space-y-4">
+                    {items.map((item, rowIndex) => {
+                      const cost = Number(item.costPerUnit) || 0;
+                      const qty = Math.max(1, Number(item.quantity) || 1);
+                      const tax = isGstPurchase ? (Number(item.taxPercent) || defaultTaxPercent) : 0;
+                      const costWithGstPerUnit = cost + (cost * tax / 100);
+                      const totalCostWithGst = isGstPurchase ? (costWithGstPerUnit * qty) : (cost * qty);
+                      const mrpVal = Number(item.mrp) || 0;
+                      const profitMargin = mrpVal - (isGstPurchase ? costWithGstPerUnit : cost);
+
+                      return (
+                        <div key={rowIndex} className="bg-slate-50/60 rounded-xl p-3 border border-slate-200 space-y-3">
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[11px] font-mono font-bold flex items-center justify-center">
+                                {rowIndex + 1}
+                              </span>
+                              <span className="text-xs font-mono text-blue-700 font-semibold">
+                                {itemProductCodes[rowIndex] || '—'}
+                              </span>
+                            </div>
+
                             <button
                               type="button"
-                              onClick={() => applyHcsCodeToAllRows(0)}
-                              className="text-[10px] text-emerald-700 hover:text-emerald-900 underline font-normal normal-case"
-                              title="Apply row 1 HSN to all rows"
+                              onClick={() => removeItem(rowIndex)}
+                              className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50 cursor-pointer"
                             >
-                              All
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                        </div>
-                      </th>
-                    )}
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 min-w-[120px]">Brand *</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 min-w-[120px]">Model</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 min-w-[120px]">Category *</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 w-24">In Stock</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 w-24">Add Qty *</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 w-32">{isGstPurchase ? 'Base Cost/Unit' : 'Cost/Unit'}</th>
-                    {isGstPurchase && (
-                      <>
-                        <th className="border border-gray-300 px-3 py-2 text-center text-xs font-semibold text-emerald-800 w-24 bg-emerald-50/50">Tax %</th>
-                        <th className="border border-gray-300 px-3 py-2 text-right text-xs font-semibold text-blue-700 w-32 bg-blue-50/50">Cost+GST/Unit</th>
-                      </>
-                    )}
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 w-32">MRP (₹)</th>
-                    <th className="border border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 w-32">Total Cost</th>
-                    <th className="border border-gray-300 px-3 py-2 text-center text-xs font-semibold text-gray-700 w-20">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, rowIndex) => (
-                    <tr key={rowIndex} className="hover:bg-blue-50 transition-colors">
-                      <td className="border border-gray-300 px-3 py-2 text-center text-sm font-medium text-gray-600 bg-gray-50">
-                        {rowIndex + 1}
-                      </td>
-                      <td className="border border-gray-300 px-3 py-2 text-sm font-mono text-blue-600 bg-blue-50 font-semibold">
-                        {itemProductCodes[rowIndex] || ''}
-                      </td>
-                      <td className="border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 bg-gray-50">
-                        <div className="flex items-center gap-2">
-                          <div className="relative w-full" ref={selectedRowIndex === rowIndex ? searchContainerRef : undefined}>
-                            <input
-                              type="text"
-                              value={item.productName || `${item.brand} ${item.model} ${item.category}`.trim()}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                handleItemChange(rowIndex, 'productName', value);
-                                setSelectedRowIndex(rowIndex);
-                                setSearchQuery(value);
-                                if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-                                searchDebounceRef.current = window.setTimeout(() => {
-                                  searchProducts(value);
-                                }, 250);
-                              }}
-                              onFocus={() => { setSelectedRowIndex(rowIndex); if (searchQuery.trim()) setIsDropdownOpen(true); }}
-                              onKeyDown={(e) => {
-                                if (isDropdownOpen && selectedRowIndex === rowIndex) {
-                                  handleDropdownKeyDown(e as React.KeyboardEvent<HTMLInputElement>);
-                                } else {
-                                  handleKeyDown(e, rowIndex, 0);
-                                }
-                              }}
-                              data-row={rowIndex}
-                              data-col={0}
-                              className="flex-1 px-3 py-2 text-sm border-0 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-transparent"
-                              placeholder="Product name or search..."
-                            />
-
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => openProductSearch(rowIndex)}
-                            className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors"
-                            title="Search existing product"
-                          >
-                            <Package className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                      {isGstPurchase && (
-                        <td className="border border-gray-300 p-0 bg-emerald-50/20">
-                          <div className="relative flex items-center">
-                            <input
-                              type="text"
-                              value={item.hcsCode || ''}
-                              onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
-                              className="w-full px-3 py-2 text-sm border-0 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-transparent uppercase font-mono"
-                              placeholder="HSN CODE"
-                            />
-                            {items.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => applyHcsCodeToAllRows(rowIndex)}
-                                className="mr-1 px-1.5 py-0.5 text-[9px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded font-semibold whitespace-nowrap"
-                                title="Apply this HSN code to all rows"
-                              >
-                                All
-                              </button>
+
+                          <div className="space-y-2">
+                            <div>
+                              <label className="text-[11px] text-slate-500 block mb-1">Brand *</label>
+                              <SearchableSelect
+                                id={`cell-${rowIndex}-0-m`}
+                                options={brands.map(b => ({ id: b.id || '', name: b.name }))}
+                                value={item.brand}
+                                onChange={(value) => handleItemChange(rowIndex, 'brand', value)}
+                                placeholder="Select Brand"
+                                className="w-full"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] text-slate-500 block mb-1">Model *</label>
+                              <input
+                                id={`cell-${rowIndex}-1-m`}
+                                type="text"
+                                value={item.model}
+                                onChange={(e) => handleItemChange(rowIndex, 'model', e.target.value)}
+                                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white uppercase"
+                                placeholder="e.g. 15 PRO"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] text-slate-500 block mb-1">Category *</label>
+                              <SearchableSelect
+                                id={`cell-${rowIndex}-2-m`}
+                                options={categories.map(c => ({ id: c.id || '', name: c.name }))}
+                                value={item.category}
+                                onChange={(value) => handleItemChange(rowIndex, 'category', value)}
+                                placeholder="Select Category"
+                                className="w-full"
+                              />
+                            </div>
+
+                            {showProductName && (
+                              <div>
+                                <label className="text-[11px] text-slate-500 block mb-1">Product Name</label>
+                                <input
+                                  type="text"
+                                  readOnly
+                                  value={item.productName || `${item.brand} ${item.model} ${item.category}`.trim()}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-slate-100 text-slate-600 font-medium"
+                                />
+                              </div>
                             )}
-                          </div>
-                        </td>
-                      )}
-                      <td className="border border-gray-300 p-0">
-                        <SearchableSelect
-                          options={brands.map(b => ({ id: b.id || '', name: b.name }))}
-                          value={item.brand}
-                          onChange={(value) => handleItemChange(rowIndex, 'brand', value)}
-                          onKeyDown={(e) => handleKeyDown(e, rowIndex, 1)}
-                          data-row={rowIndex}
-                          data-col={1}
-                          placeholder="Select Brand"
-                          disabled={itemIsExistingProduct[rowIndex]}
-                        />
-                      </td>
-                      <td className="border border-gray-300 p-0">
-                        <input
-                          type="text"
-                          value={item.model}
-                          onChange={(e) => handleItemChange(rowIndex, 'model', e.target.value)}
-                          onKeyDown={(e) => handleKeyDown(e, rowIndex, 2)}
-                          data-row={rowIndex}
-                          data-col={2}
-                          className="w-full px-3 py-2 text-sm border-0 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-transparent"
-                          placeholder="Model"
-                          disabled={itemIsExistingProduct[rowIndex]}
-                        />
-                      </td>
-                      <td className="border border-gray-300 p-0">
-                        <SearchableSelect
-                          options={categories.map(c => ({ id: c.id || '', name: c.name }))}
-                          value={item.category}
-                          onChange={(value) => handleItemChange(rowIndex, 'category', value)}
 
-                          onKeyDown={(e) => handleKeyDown(e, rowIndex, 3)}
-                          data-row={rowIndex}
-                          data-col={3}
-                          placeholder="Select Category"
-                          disabled={itemIsExistingProduct[rowIndex]}
-                        />
-                      </td>
-                      <td className="border border-gray-300 p-0 text-right px-3 py-2 text-sm text-gray-700">
-                        {itemExistingStock[rowIndex] ?? 0}
-                      </td>
-                      <td className="border border-gray-300 p-0">
-                        <input
-                          type="number"
-                          value={item.quantity}
-                          onChange={(e) => handleItemChange(rowIndex, 'quantity', e.target.value === '' ? '' : parseInt(e.target.value))}
-                          onFocus={(e) => e.target.select()}
-                          onBlur={() => {
-                            if ((item.quantity as any) === '' || item.quantity === undefined) {
-                              handleItemChange(rowIndex, 'quantity', 0);
-                            }
-                          }}
-                          onKeyDown={(e) => handleKeyDown(e, rowIndex, 4)}
-                          data-row={rowIndex}
-                          data-col={4}
-                          className="w-full px-3 py-2 text-sm border-0 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-transparent text-right"
-                          min="0"
-                          step="1"
-                          required
-                        />
-                      </td>
-                      <td className="border border-gray-300 p-0">
-                        <input
-                          type="text"
-                          value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'costPerUnit' 
-                            ? activeCell.value 
-                            : (item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit))}
-                          onChange={(e) => {
-                            const rawValue = e.target.value.toUpperCase();
-                            setActiveCell({ rowIndex, field: 'costPerUnit', value: rawValue });
-                            const val = decodePrice(rawValue);
-                            handleItemChange(rowIndex, 'costPerUnit', isNaN(val) ? 0 : val);
-                          }}
-                          onFocus={(e) => {
-                            e.target.select();
-                            setActiveCell({ rowIndex, field: 'costPerUnit', value: item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit) });
-                          }}
-                          onBlur={() => {
-                            setActiveCell(null);
-                            if ((item.costPerUnit as any) === '' || item.costPerUnit === undefined) {
-                              handleItemChange(rowIndex, 'costPerUnit', 0);
-                            }
-                          }}
-                          onKeyDown={(e) => handleKeyDown(e, rowIndex, 5)}
-                          data-row={rowIndex}
-                          data-col={5}
-                          className="w-full px-3 py-2 text-sm border-0 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-transparent text-right"
-                          required
-                        />
-                      </td>
-                      {isGstPurchase && (
-                        <>
-                          <td className="border border-gray-300 p-0 bg-emerald-50/20">
-                            <select
-                              value={item.taxPercent ?? defaultTaxPercent}
-                              onChange={(e) => handleItemChange(rowIndex, 'taxPercent', parseInt(e.target.value))}
-                              className="w-full px-2 py-2 text-sm border-0 focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-transparent text-center font-semibold text-emerald-800 cursor-pointer"
-                            >
-                              <option value={0}>0%</option>
-                              <option value={5}>5%</option>
-                              <option value={12}>12%</option>
-                              <option value={18}>18%</option>
-                              <option value={28}>28%</option>
-                            </select>
-                          </td>
-                          <td className="border border-gray-300 px-3 py-2 text-sm text-right font-medium text-blue-700 bg-blue-50/30">
-                            {(Number(item.costPerUnit) || 0) > 0 ? `₹${((Number(item.costPerUnit) || 0) * (1 + (Number(item.taxPercent ?? defaultTaxPercent) / 100))).toFixed(2)}` : '—'}
-                          </td>
-                        </>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[11px] font-semibold text-slate-900 block mb-1">Qty *</label>
+                                <input
+                                  id={`cell-${rowIndex}-4-m`}
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity || ''}
+                                  onChange={(e) => handleItemChange(rowIndex, 'quantity', parseInt(e.target.value, 10) || 1)}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-300 rounded-md text-center font-bold bg-white"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="text-[11px] text-slate-700 block mb-1">Cost *</label>
+                                <input
+                                  id={`cell-${rowIndex}-5-m`}
+                                  type="text"
+                                  value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'costPerUnit'
+                                    ? activeCell.value
+                                    : (item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit))}
+                                  onChange={(e) => {
+                                    const rawValue = e.target.value.toUpperCase();
+                                    setActiveCell({ rowIndex, field: 'costPerUnit', value: rawValue });
+                                    const val = decodePrice(rawValue);
+                                    handleItemChange(rowIndex, 'costPerUnit', isNaN(val) ? 0 : val);
+                                  }}
+                                  onFocus={() => setActiveCell({ rowIndex, field: 'costPerUnit', value: item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit) })}
+                                  onBlur={() => setActiveCell(null)}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md text-center bg-white"
+                                  placeholder="0.00"
+                                />
+                              </div>
+                            </div>
+
+                            {isGstPurchase && (
+                              <div className="grid grid-cols-2 gap-2 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100">
+                                <div>
+                                  <label className="text-[11px] font-semibold text-emerald-800 block mb-1">HSN Code *</label>
+                                  <input
+                                    type="text"
+                                    value={item.hcsCode || ''}
+                                    onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
+                                    placeholder="HSN"
+                                    className="w-full px-2 py-1 text-xs border border-emerald-200 rounded bg-white font-mono uppercase"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[11px] text-emerald-800 block mb-1">Tax %</label>
+                                  <select
+                                    value={item.taxPercent ?? defaultTaxPercent}
+                                    onChange={(e) => handleItemChange(rowIndex, 'taxPercent', Number(e.target.value))}
+                                    className="w-full px-2 py-1 text-xs border border-emerald-200 rounded bg-white text-emerald-900 font-semibold"
+                                  >
+                                    <option value={0}>0%</option>
+                                    <option value={5}>5%</option>
+                                    <option value={12}>12%</option>
+                                    <option value={18}>18%</option>
+                                    <option value={28}>28%</option>
+                                  </select>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[11px] text-slate-500 block mb-1">MOP (₹) *</label>
+                                <input
+                                  type="number"
+                                  value={item.mop || ''}
+                                  onChange={(e) => handleItemChange(rowIndex, 'mop', parseFloat(e.target.value) || 0)}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md text-center bg-white"
+                                  placeholder="0.00"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[11px] text-slate-500 block mb-1">MRP (₹) *</label>
+                                <input
+                                  type="number"
+                                  value={item.mrp || ''}
+                                  onChange={(e) => handleItemChange(rowIndex, 'mrp', parseFloat(e.target.value) || 0)}
+                                  className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md text-center bg-white"
+                                  placeholder="0.00"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 bg-white p-2 rounded border border-slate-200 text-center text-[11px]">
+                              <div>
+                                <span className="text-slate-400 block text-[10px]">Cost+GST</span>
+                                <span className="font-medium text-slate-800">₹{costWithGstPerUnit.toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block text-[10px]">Total Cost</span>
+                                <span className="font-medium text-slate-800">₹{totalCostWithGst.toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block text-[10px]">Margin</span>
+                                <span className={profitMargin >= 0 ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>
+                                  ₹{profitMargin.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop Spreadsheet Table */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="w-full text-xs text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-600 font-medium">
+                          <th className="px-3 py-2.5 w-10 text-center">#</th>
+                          <th className="px-2 py-2.5 w-24">Code</th>
+                          <th className="px-3 py-2.5 min-w-[130px]">Brand *</th>
+                          <th className="px-3 py-2.5 min-w-[110px]">Model *</th>
+                          <th className="px-3 py-2.5 min-w-[130px]">Category *</th>
+                          {showProductName && <th className="px-3 py-2.5 min-w-[190px]">Product Name</th>}
+                          <th className="px-2 py-2.5 w-16 text-center text-slate-400">Stock</th>
+                          <th className="px-3 py-2.5 w-20 text-center font-semibold text-slate-900 bg-slate-100/70">Qty *</th>
+                          <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">Cost *</th>
+                          {isGstPurchase && (
+                            <>
+                              <th className="px-2 py-2.5 min-w-[110px] bg-emerald-50/40 text-emerald-900">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span>HSN *</span>
+                                  {items.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => applyHcsCodeToAllRows(0)}
+                                      className="text-[10px] text-emerald-700 hover:text-emerald-900 underline font-normal normal-case cursor-pointer"
+                                      title="Copy line 1 HSN to all rows"
+                                    >
+                                      All
+                                    </button>
+                                  )}
+                                </div>
+                              </th>
+                              <th className="px-2 py-2.5 w-20 text-center bg-emerald-50/40 text-emerald-900">Tax %</th>
+                              <th className="px-2 py-2.5 w-24 text-right text-slate-600 font-medium bg-slate-100/40">Cost+GST</th>
+                            </>
+                          )}
+                          <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MOP (₹) *</th>
+                          <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MRP (₹) *</th>
+                          <th className="px-2 py-2.5 w-24 text-right font-medium text-slate-900">Total Cost</th>
+                          <th className="px-2 py-2.5 w-20 text-right text-slate-500">Margin</th>
+                          <th className="px-3 py-2.5 w-10 text-center"></th>
+                        </tr>
+                      </thead>
+
+                      <tbody className="divide-y divide-slate-100">
+                        {items.map((item, rowIndex) => {
+                          const cost = Number(item.costPerUnit) || 0;
+                          const qty = Math.max(1, Number(item.quantity) || 1);
+                          const tax = isGstPurchase ? (Number(item.taxPercent) || defaultTaxPercent) : 0;
+                          const costWithGstPerUnit = cost + (cost * tax / 100);
+                          const totalCostWithGst = isGstPurchase ? (costWithGstPerUnit * qty) : (cost * qty);
+                          const mrpVal = Number(item.mrp) || 0;
+                          const profitMargin = mrpVal - (isGstPurchase ? costWithGstPerUnit : cost);
+
+                          return (
+                            <tr key={rowIndex} className="hover:bg-slate-50/70 transition-colors">
+                              {/* # Row Index */}
+                              <td className="px-3 py-2 text-center text-slate-400 font-mono text-[11px]">
+                                {rowIndex + 1}
+                              </td>
+
+                              {/* Product Code */}
+                              <td className="px-2 py-2 font-mono text-[11px] text-blue-600 font-semibold truncate">
+                                {itemProductCodes[rowIndex] || '—'}
+                              </td>
+
+                              {/* Brand (Col 0) */}
+                              <td className="px-2 py-1.5">
+                                <SearchableSelect
+                                  id={`cell-${rowIndex}-0`}
+                                  options={brands.map(b => ({ id: b.id || '', name: b.name }))}
+                                  value={item.brand}
+                                  onChange={(value) => handleItemChange(rowIndex, 'brand', value)}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 0)}
+                                  placeholder="Select Brand"
+                                  className="border-0! bg-transparent! py-1! text-xs!"
+                                />
+                              </td>
+
+                              {/* Model (Col 1) */}
+                              <td className="px-2 py-1.5">
+                                <input
+                                  id={`cell-${rowIndex}-1`}
+                                  type="text"
+                                  value={item.model}
+                                  onChange={(e) => handleItemChange(rowIndex, 'model', e.target.value)}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 1)}
+                                  className="w-full px-2 py-1 text-xs border border-slate-200 rounded uppercase bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                                  placeholder="Model *"
+                                />
+                              </td>
+
+                              {/* Category (Col 2) */}
+                              <td className="px-2 py-1.5">
+                                <SearchableSelect
+                                  id={`cell-${rowIndex}-2`}
+                                  options={categories.map(c => ({ id: c.id || '', name: c.name }))}
+                                  value={item.category}
+                                  onChange={(value) => handleItemChange(rowIndex, 'category', value)}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 2)}
+                                  placeholder="Select Category"
+                                  className="border-0! bg-transparent! py-1! text-xs!"
+                                />
+                              </td>
+
+                              {/* Product Name (Col 3 - Non-Editable) */}
+                              {showProductName && (
+                                <td className="px-2 py-1.5">
+                                  <input
+                                    id={`cell-${rowIndex}-3`}
+                                    type="text"
+                                    readOnly
+                                    tabIndex={-1}
+                                    value={item.productName || `${item.brand} ${item.model} ${item.category}`.trim()}
+                                    className="w-full px-2 py-1 text-xs border border-slate-200 rounded bg-slate-100 text-slate-600 font-medium cursor-not-allowed select-none truncate outline-none"
+                                    placeholder="Auto-generated"
+                                    title="Auto-generated from Brand, Model & Category"
+                                  />
+                                </td>
+                              )}
+
+                              {/* In Stock count */}
+                              <td className="px-2 py-2 text-center font-mono text-slate-400 text-[11px]">
+                                {itemExistingStock[rowIndex] ?? 0}
+                              </td>
+
+                              {/* Qty (Col 4) */}
+                              <td className="px-2 py-1.5 bg-slate-50/60">
+                                <input
+                                  id={`cell-${rowIndex}-4`}
+                                  type="number"
+                                  min="1"
+                                  value={item.quantity || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    handleItemChange(rowIndex, 'quantity', val === '' ? '' : parseInt(val, 10) || 1);
+                                  }}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 4)}
+                                  onBlur={() => {
+                                    if (!item.quantity || Number(item.quantity) < 1) {
+                                      handleItemChange(rowIndex, 'quantity', 1);
+                                    }
+                                  }}
+                                  className="w-full px-2 py-1 text-xs border border-slate-300 rounded text-center font-semibold text-slate-900 bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                                />
+                              </td>
+
+                              {/* Cost (Col 5) */}
+                              <td className="px-2 py-1.5 min-w-[130px]">
+                                <input
+                                  id={`cell-${rowIndex}-5`}
+                                  type="text"
+                                  value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'costPerUnit'
+                                    ? activeCell.value
+                                    : (item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit))}
+                                  onChange={(e) => {
+                                    const rawValue = e.target.value.toUpperCase();
+                                    setActiveCell({ rowIndex, field: 'costPerUnit', value: rawValue });
+                                    const val = decodePrice(rawValue);
+                                    handleItemChange(rowIndex, 'costPerUnit', isNaN(val) ? 0 : val);
+                                  }}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 5)}
+                                  onFocus={() => setActiveCell({ rowIndex, field: 'costPerUnit', value: item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit) })}
+                                  onBlur={() => setActiveCell(null)}
+                                  className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded text-right font-mono font-medium bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                                  placeholder="Cost *"
+                                />
+                              </td>
+
+                              {/* HSN & Tax % (When GST is enabled) */}
+                              {isGstPurchase && (
+                                <>
+                                  <td className="px-2 py-1.5 min-w-[110px] bg-emerald-50/20">
+                                    <input
+                                      id={`cell-${rowIndex}-6`}
+                                      type="text"
+                                      value={item.hcsCode || ''}
+                                      onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 6)}
+                                      className="w-full px-2 py-1 text-xs border border-emerald-200 rounded uppercase font-mono bg-white focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none"
+                                      placeholder="HSN *"
+                                    />
+                                  </td>
+
+                                  <td className="px-2 py-1.5 bg-emerald-50/20">
+                                    <select
+                                      value={item.taxPercent ?? defaultTaxPercent}
+                                      onChange={(e) => handleItemChange(rowIndex, 'taxPercent', Number(e.target.value))}
+                                      className="w-full px-1.5 py-1 text-xs border border-emerald-200 rounded bg-white text-emerald-900 font-semibold focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none"
+                                    >
+                                      <option value={0}>0%</option>
+                                      <option value={5}>5%</option>
+                                      <option value={12}>12%</option>
+                                      <option value={18}>18%</option>
+                                      <option value={28}>28%</option>
+                                    </select>
+                                  </td>
+
+                                  <td className="px-2 py-2 text-xs text-right text-slate-700 font-mono font-medium bg-slate-50/60 w-24">
+                                    {cost > 0 ? `₹${costWithGstPerUnit.toFixed(2)}` : '—'}
+                                  </td>
+                                </>
+                              )}
+
+                              {/* MOP (Col 6 or 7) */}
+                              <td className="px-2 py-1.5 min-w-[130px]">
+                                <input
+                                  id={`cell-${rowIndex}-${isGstPurchase ? 7 : 6}`}
+                                  type="number"
+                                  value={item.mop || ''}
+                                  onChange={(e) => handleItemChange(rowIndex, 'mop', parseFloat(e.target.value) || 0)}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, isGstPurchase ? 7 : 6)}
+                                  className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded text-right font-mono font-medium bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                                  placeholder="0.00"
+                                />
+                              </td>
+
+                              {/* MRP (Col 7 or 8) */}
+                              <td className="px-2 py-1.5 min-w-[130px]">
+                                <input
+                                  id={`cell-${rowIndex}-${isGstPurchase ? 8 : 7}`}
+                                  type="number"
+                                  value={item.mrp || ''}
+                                  onChange={(e) => handleItemChange(rowIndex, 'mrp', parseFloat(e.target.value) || 0)}
+                                  onKeyDown={(e) => handleCellKeyDown(e, rowIndex, isGstPurchase ? 8 : 7)}
+                                  className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded text-right font-mono font-medium bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                                  placeholder="0.00"
+                                />
+                              </td>
+
+                              {/* Total Cost Display */}
+                              <td className="px-2 py-2 text-xs text-right font-mono font-semibold text-slate-900 w-24">
+                                ₹{totalCostWithGst.toFixed(2)}
+                              </td>
+
+                              {/* Margin Display */}
+                              <td className="px-2 py-2 text-xs text-right font-mono w-20">
+                                <span className={profitMargin >= 0 ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}>
+                                  {mrpVal > 0 ? `₹${profitMargin.toFixed(2)}` : '—'}
+                                </span>
+                              </td>
+
+                              {/* Actions */}
+                              <td className="px-3 py-2 text-center w-10">
+                                <button
+                                  type="button"
+                                  onClick={() => removeItem(rowIndex)}
+                                  className={`text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 transition-colors cursor-pointer ${items.length <= 1 ? 'opacity-30 cursor-not-allowed' : ''
+                                    }`}
+                                  disabled={items.length <= 1}
+                                  title="Delete product line"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Step 2 Bottom Action Bar */}
+                  <div className="p-4 bg-slate-50/70 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPageStep(1)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Back to Supplier</span>
+                    </button>
+
+                    <div className="flex items-center gap-4">
+                      <div className="hidden sm:flex items-center gap-3 text-xs text-slate-600">
+                        <span>Total Items: <strong className="text-slate-900">{items.length}</strong></span>
+                        <span className="text-slate-300">•</span>
+                        <span>Quantity: <strong className="text-slate-900">{totalQuantity}</strong></span>
+                        <span className="text-slate-300">•</span>
+                        <span>Subtotal: <strong className="text-blue-700 font-mono">₹{totalAmount.toFixed(2)}</strong></span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (validateStep2()) {
+                            setPageStep(3);
+                          }
+                        }}
+                        className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-xs transition-all cursor-pointer"
+                      >
+                        <span>Proceed to Step 3: Payment & Summary</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ================= STEP 3: PAYMENT SETTLEMENT & SUMMARY ================= */}
+            {pageStep === 3 && (
+              <div className="space-y-6 w-full">
+
+                {/* Metrics Banner */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full">
+                  {/* Supplier Card */}
+                  <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                        <span className="font-semibold uppercase tracking-wider text-[11px] text-slate-400">Supplier</span>
+                        <Truck className="w-4 h-4 text-slate-600" />
+                      </div>
+                      <div className="text-sm font-bold text-slate-900 truncate" title={selectedSupplierName}>
+                        {selectedSupplierName || 'No Supplier'}
+                      </div>
+                      {invoiceNumber && (
+                        <div className="text-xs font-mono text-slate-500 truncate mt-0.5">
+                          Inv #{invoiceNumber}
+                        </div>
                       )}
-                      <td className="border border-gray-300 p-0">
-                        <input
-                          type="number"
-                          value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'mrp' ? activeCell.value : (item.mrp || '')}
-                          onChange={(e) => {
-                            const valStr = e.target.value;
-                            setActiveCell({ rowIndex, field: 'mrp', value: valStr });
-                            handleItemChange(rowIndex, 'mrp', valStr === '' ? '' : parseFloat(valStr));
-                          }}
-                          onFocus={(e) => {
-                            e.target.select();
-                            setActiveCell({ rowIndex, field: 'mrp', value: String(item.mrp || '') });
-                          }}
-                          onBlur={() => {
-                            setActiveCell(null);
-                            if ((item.mrp as any) === '' || item.mrp === undefined) {
-                              handleItemChange(rowIndex, 'mrp', 0);
-                            }
-                          }}
-                          onKeyDown={(e) => handleKeyDown(e, rowIndex, 6)}
-                          data-row={rowIndex}
-                          data-col={6}
-                          className="w-full px-3 py-2 text-sm border-0 focus:ring-2 focus:ring-blue-500 focus:outline-none bg-transparent text-right"
-                          step="0.01"
-                          min="0"
-                        />
-                      </td>
-                      <td className="border border-gray-300 px-3 py-2 text-sm font-semibold text-right text-blue-600 bg-blue-50">
-                        {encodePrice(item.totalCost)}
-                      </td>
-                      <td className="border border-gray-300 px-2 py-2 text-center space-x-1">
-                        {/* Search moved to Product Name column; keep delete button only */}
-                        {items.length > 1 && (
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Date:</span>
+                      <span className="font-mono">{purchaseDate}</span>
+                    </div>
+                  </div>
+
+                  {/* Quantity & Items */}
+                  <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                        <span className="font-semibold uppercase tracking-wider text-[11px] text-slate-400">Inventory Items</span>
+                        <Package className="w-4 h-4 text-slate-600" />
+                      </div>
+                      <div className="text-xl font-bold font-mono text-slate-900">
+                        {totalQuantity} <span className="text-xs font-sans font-normal text-slate-500">Total Units</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Product Lines:</span>
+                      <span className="font-bold text-slate-800">{items.length} Lines</span>
+                    </div>
+                  </div>
+
+                  {/* Valuation & Tax */}
+                  <div className="bg-white rounded-xl border border-slate-200/90 p-4 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                        <span className="font-semibold uppercase tracking-wider text-[11px] text-slate-400">Tax Valuation</span>
+                        <Receipt className="w-4 h-4 text-slate-600" />
+                      </div>
+                      <div className="flex items-baseline justify-between text-xs">
+                        <span className="text-slate-500">Base Cost:</span>
+                        <span className="font-mono font-semibold text-slate-800">₹{baseAmount.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 pt-2 border-t border-slate-100 flex items-baseline justify-between text-xs">
+                      <span className="text-slate-500">GST ({isGstPurchase ? `${defaultTaxPercent}%` : '0%'}):</span>
+                      <span className="font-mono font-semibold text-blue-600">+₹{totalGstAmount.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {/* Grand Total */}
+                  <div className="bg-gradient-to-br from-blue-50/80 via-slate-50 to-indigo-50/50 rounded-xl border border-blue-200 p-4 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between text-xs text-blue-700 mb-1">
+                        <span className="font-bold uppercase tracking-wider text-[11px]">Gross Payable</span>
+                        <DollarSign className="w-4 h-4 text-blue-700" />
+                      </div>
+                      <div className="text-xl font-bold font-mono text-blue-950">
+                        ₹{totalAmount.toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between mt-3 text-xs">
+                      <span className="text-slate-500">Paid:</span>
+                      <span className="font-mono font-semibold text-emerald-700">₹{effectivePaidAmount.toFixed(2)}</span>
+                      <span className="text-slate-300">•</span>
+                      <span className="text-slate-500">Due:</span>
+                      <span className={`font-mono font-semibold ${pendingAmount > 0 ? 'text-amber-700' : 'text-slate-700'}`}>
+                        ₹{pendingAmount.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2-Column Responsive Workspace */}
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 w-full">
+
+                  {/* Left Column: Settlement Controls (7 cols) */}
+                  <div className="xl:col-span-7 space-y-6">
+                    <div className="bg-white rounded-xl border border-slate-200/90 p-5 sm:p-6 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-5 border-b border-slate-100">
+                        <div>
+                          <h2 className="text-sm font-semibold text-slate-900 tracking-tight flex items-center gap-2">
+                            <DollarSign className="w-4 h-4 text-blue-600" />
+                            <span>Payment Settlement</span>
+                          </h2>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Choose payment method and record immediate or ledger transaction values.
+                          </p>
+                        </div>
+
+                        {paymentMode !== 'credit' && totalAmount > 0 && (
                           <button
                             type="button"
-                            onClick={() => removeItem(rowIndex)}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors"
-                            title="Delete row"
+                            onClick={() => {
+                              setPaidAmount(totalAmount.toString());
+                              if (paymentMode === 'split') {
+                                setCashAmount(totalAmount.toString());
+                                setUpiAmount('0');
+                                setCardAmount('0');
+                              }
+                            }}
+                            className="text-xs text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg font-semibold transition-colors cursor-pointer"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            Fill Full Total (₹{totalAmount.toFixed(2)})
                           </button>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  {isGstPurchase && (
-                    <>
-                      <tr className="bg-gray-50 text-xs font-semibold">
-                        <td colSpan={8} className="border border-gray-300 px-3 py-1.5 text-gray-600 text-right">
-                          Base Amount (before GST):
-                        </td>
-                        <td className="border border-gray-300 px-3 py-1.5 text-gray-900 text-right">
-                          {totalQuantity}
-                        </td>
-                        <td colSpan={3} className="border border-gray-300 px-3 py-1.5 text-gray-700 text-right font-semibold">
-                          ₹{baseAmount.toFixed(2)}
-                        </td>
-                        <td colSpan={3} className="border border-gray-300"></td>
-                      </tr>
-                      <tr className="bg-emerald-50 text-xs font-semibold">
-                        <td colSpan={9} className="border border-gray-300 px-3 py-1.5 text-emerald-800 text-right">
-                          Total GST:
-                        </td>
-                        <td colSpan={3} className="border border-gray-300 px-3 py-1.5 text-emerald-700 font-bold text-right">
-                          +₹{totalGstAmount.toFixed(2)}
-                        </td>
-                        <td colSpan={3} className="border border-gray-300"></td>
-                      </tr>
-                    </>
-                  )}
-                  <tr className="bg-gradient-to-r from-blue-100 to-indigo-100 font-semibold">
-                    <td colSpan={isGstPurchase ? 8 : 7} className="border border-gray-300 px-3 py-2 text-sm text-gray-900 text-right">
-                      Total Quantity:
-                    </td>
-                    <td className="border border-gray-300 px-3 py-2 text-sm text-gray-900 text-right">
-                      {totalQuantity}
-                    </td>
-                    <td colSpan={isGstPurchase ? 4 : 2} className="border border-gray-300 px-3 py-2 text-sm text-gray-900 text-right">
-                      Grand Total:
-                    </td>
-                    <td className="border border-gray-300 px-3 py-2 text-sm text-blue-600 font-bold text-right">
-                      ₹{totalAmount.toFixed(2)}
-                    </td>
-                    <td className="border border-gray-300"></td>
-                  </tr>
-                </tfoot>
-              </table>
+                      </div>
+
+                      {/* Payment Mode Selector */}
+                      <div className="mb-5">
+                        <label className="block text-xs font-semibold text-slate-700 mb-2">
+                          Select Settlement Mode *
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+                          {[
+                            { mode: 'cash' as PaymentMode, label: 'Cash', desc: 'Cash Drawer', icon: Banknote },
+                            { mode: 'upi' as PaymentMode, label: 'UPI / QR', desc: 'Bank Transfer', icon: QrCode },
+                            { mode: 'card' as PaymentMode, label: 'Card', desc: 'POS Terminal', icon: CreditCard },
+                            { mode: 'split' as PaymentMode, label: 'Split', desc: 'Multi-tender', icon: Split },
+                            { mode: 'credit' as PaymentMode, label: 'Credit', desc: 'Vendor Ledger', icon: FileText }
+                          ].map(({ mode, label, desc, icon: Icon }) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => {
+                                setPaymentMode(mode);
+                                if (mode === 'credit') {
+                                  setPaidAmount('0');
+                                  setCashAmount('');
+                                  setUpiAmount('');
+                                  setCardAmount('');
+                                } else if (mode === 'split') {
+                                  const initialPaid = parseFloat(paidAmount) || totalAmount;
+                                  setPaidAmount(initialPaid.toString());
+                                  setCashAmount(initialPaid.toString());
+                                  setUpiAmount('0');
+                                  setCardAmount('0');
+                                }
+                              }}
+                              className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all cursor-pointer ${paymentMode === mode
+                                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs ring-2 ring-blue-600/20'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                                }`}
+                            >
+                              <div className="flex items-center justify-between w-full mb-1.5">
+                                <Icon className={`w-4 h-4 ${paymentMode === mode ? 'text-white' : 'text-slate-600'}`} />
+                                {paymentMode === mode && <Check className="w-3.5 h-3.5 text-white" />}
+                              </div>
+                              <span className="font-semibold text-xs leading-none">{label}</span>
+                              <span className={`text-[10px] mt-1 ${paymentMode === mode ? 'text-blue-100' : 'text-slate-400'}`}>
+                                {desc}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Single Mode Paid Amount */}
+                      {paymentMode !== 'credit' && paymentMode !== 'split' && (
+                        <div className="p-4 bg-slate-50/70 rounded-xl border border-slate-200/90 mb-5 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-semibold text-slate-700">
+                              Paid Amount (₹) *
+                            </label>
+                            <span className="text-[11px] text-slate-400">
+                              Outstanding will reflect on vendor ledger
+                            </span>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold font-mono">₹</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={paidAmount}
+                              onChange={(e) => setPaidAmount(e.target.value)}
+                              placeholder="0.00"
+                              className="w-full pl-8 pr-3 py-2 text-sm font-mono font-semibold rounded-lg border border-slate-200 bg-white text-slate-900 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Split Tender Inputs */}
+                      {paymentMode === 'split' && (
+                        <div className="p-4 bg-slate-50/70 rounded-xl border border-slate-200/90 mb-5 space-y-4">
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+                            <span className="text-xs font-semibold text-slate-700">Split Payment Distribution</span>
+                            <span className="text-xs font-mono font-semibold text-blue-700">
+                              Total Paid: ₹{parseFloat(paidAmount) || 0}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                                Cash Tender (₹)
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={cashAmount}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCashAmount(val);
+                                  const total = (parseFloat(val) || 0) + (parseFloat(upiAmount) || 0) + (parseFloat(cardAmount) || 0);
+                                  setPaidAmount(total.toString());
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs font-mono font-medium rounded-lg border border-slate-200 bg-white"
+                                placeholder="0.00"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                                UPI / QR Tender (₹)
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={upiAmount}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setUpiAmount(val);
+                                  const total = (parseFloat(cashAmount) || 0) + (parseFloat(val) || 0) + (parseFloat(cardAmount) || 0);
+                                  setPaidAmount(total.toString());
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs font-mono font-medium rounded-lg border border-slate-200 bg-white"
+                                placeholder="0.00"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                                Card Tender (₹)
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={cardAmount}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCardAmount(val);
+                                  const total = (parseFloat(cashAmount) || 0) + (parseFloat(upiAmount) || 0) + (parseFloat(val) || 0);
+                                  setPaidAmount(total.toString());
+                                }}
+                                className="w-full px-2.5 py-1.5 text-xs font-mono font-medium rounded-lg border border-slate-200 bg-white"
+                                placeholder="0.00"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Credit Notice */}
+                      {paymentMode === 'credit' && (
+                        <div className="p-4 bg-amber-50/80 rounded-xl border border-amber-200 mb-5">
+                          <div className="flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                            <div className="text-xs text-amber-900 space-y-1">
+                              <strong className="block font-semibold">Credit Purchase Mode Active</strong>
+                              <p>
+                                The full invoice value of <strong>₹{totalAmount.toFixed(2)}</strong> will be credited to {selectedSupplierName || 'the supplier'}'s account balance.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Ledger Summary (5 cols) */}
+                  <div className="xl:col-span-5 space-y-6">
+                    <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-xs sticky top-20 space-y-4">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                          Procurement Summary
+                        </span>
+                        <span className="text-xs font-mono text-blue-700 font-semibold">
+                          Non-IMEI Inventory
+                        </span>
+                      </div>
+
+                      <div className="space-y-2.5 text-xs">
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Total Items:</span>
+                          <span className="font-semibold text-slate-800">{items.length} lines</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Total Units:</span>
+                          <span className="font-semibold text-slate-800">{totalQuantity} units</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-slate-600">
+                          <span>Base Cost (Subtotal):</span>
+                          <span className="font-mono font-medium text-slate-800">₹{baseAmount.toFixed(2)}</span>
+                        </div>
+
+                        {isGstPurchase && (
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>GST Amount:</span>
+                            <span className="font-mono font-medium text-blue-600">+₹{totalGstAmount.toFixed(2)}</span>
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-sm font-bold">
+                          <span className="text-slate-900">Total Purchase Value:</span>
+                          <span className="font-mono text-blue-700">₹{totalAmount.toFixed(2)}</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-slate-600">
+                          <span>Paid Amount:</span>
+                          <span className="font-mono font-semibold text-emerald-700">₹{effectivePaidAmount.toFixed(2)}</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
+                          <span className="font-medium text-slate-700">Balance Pending:</span>
+                          <span className={`font-mono font-bold ${pendingAmount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                            ₹{pendingAmount.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Action Buttons */}
+                      <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() => handleSubmit()}
+                          className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-semibold text-xs rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer disabled:bg-slate-400 disabled:cursor-not-allowed"
+                        >
+                          <Save className="w-4 h-4" />
+                          <span>{isSubmitting ? 'Saving to Warehouse...' : 'Save Purchase'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPageStep(2)}
+                          className="w-full py-2 px-4 bg-white hover:bg-slate-50 text-slate-600 font-medium text-xs rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                        >
+                          Back to Products & Inventory
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+
+      {/* ================= CONFIRMATION MODAL: CLEAR DRAFT ================= */}
+      {showClearModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-100 space-y-4">
+            <div className="w-12 h-12 rounded-full bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 mx-auto">
+              <AlertTriangle className="w-6 h-6" />
             </div>
 
-            <div className="mt-4 flex justify-center">
+            <div className="text-center space-y-1">
+              <h3 className="text-base font-bold text-slate-900">
+                Clear Purchase Draft?
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Are you sure you want to discard this purchase draft? All entered supplier details, product lines, and pricing will be permanently cleared.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
               <button
                 type="button"
-                onClick={addItem}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors font-medium border border-blue-200"
+                onClick={() => setShowClearModal(false)}
+                className="flex-1 px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
               >
-                <Plus className="w-5 h-5" />
-                Add New Item
+                No, Keep Editing
+              </button>
+              <button
+                type="button"
+                onClick={clearDraft}
+                className="flex-1 px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:scale-[0.98] rounded-lg transition-colors cursor-pointer"
+              >
+                Yes, Clear Draft
               </button>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Payment Details */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-3 sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <DollarSign className="w-5 h-5 text-blue-600" />
-                Payment Details
-              </h2>
-
-              {/* Quick Actions */}
-              {paymentMode !== 'credit' && totalAmount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setPaidAmount(totalAmount.toString())}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 text-sm font-medium rounded-lg hover:bg-blue-100 transition-colors border border-blue-200"
-                  title="Auto-fill with total amount"
-                >
-                  Fill Total
-                </button>
-              )}
+      {/* ================= MODAL: ADD NEW SUPPLIER ================= */}
+      {showSupplierModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-900">Add New Supplier</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSupplierModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-md"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <form onSubmit={addNewSupplier} className="space-y-3 text-xs">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Payment Mode *
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Supplier / Company Name *
                 </label>
-                <select
-                  value={paymentMode}
-                  onChange={(e) => {
-                    const mode = e.target.value as PaymentMode;
-                    setPaymentMode(mode);
-                    // Clear paid amount when switching to credit
-                    if (mode === 'credit') {
-                      setPaidAmount('0');
-                    }
-                  }}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                <input
+                  type="text"
                   required
-                >
-                  <option value="cash">Cash</option>
-                  <option value="upi">UPI</option>
-                  <option value="card">Card</option>
-                  <option value="split">Split Payment</option>
-                  <option value="credit">Credit</option>
-                </select>
-              </div>
-
-              {/* Show Paid Amount field only when payment mode is NOT credit */}
-              {paymentMode !== 'credit' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Paid Amount (₹)
-                  </label>
-                  <input
-                    type="number"
-                    value={paidAmount}
-                    onChange={(e) => setPaidAmount(e.target.value)}
-                    onWheel={(e) => e.currentTarget.blur()}
-                    className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                  />
-                </div>
-              )}
-
-              {paymentMode === 'split' && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Cash Amount (₹)
-                    </label>
-                    <input
-                      type="number"
-                      value={cashAmount}
-                      onChange={(e) => setCashAmount(e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      UPI Amount (₹)
-                    </label>
-                    <input
-                      type="number"
-                      value={upiAmount}
-                      onChange={(e) => setUpiAmount(e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Card Amount (₹)
-                    </label>
-                    <input
-                      type="number"
-                      value={cardAmount}
-                      onChange={(e) => setCardAmount(e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                    />
-                  </div>
-                </>
-              )}
-
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Notes
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  rows={3}
-                  placeholder="Additional notes about this purchase..."
+                  value={newSupplier.name}
+                  onChange={(e) => setNewSupplier({ ...newSupplier, name: e.target.value })}
+                  placeholder="e.g. Apex Electronics Ltd"
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:border-blue-600 outline-none"
                 />
               </div>
 
-              {/* Credit Payment Information */}
-              {paymentMode === 'credit' && (
-                <div className="sm:col-span-2 bg-amber-50 border border-amber-200 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0">
-                      <svg className="w-5 h-5 text-amber-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="text-sm font-semibold text-amber-900 mb-1">Credit Purchase</h4>
-                      <p className="text-sm text-amber-800 mb-2">
-                        This purchase will be recorded as credit. The full amount of <strong>₹{totalAmount.toFixed(2)}</strong> will be recorded for central accounting.
-                      </p>
-                      <p className="text-sm text-amber-900 font-medium">
-                        💡 External supplier ledger and settlements are centrally managed at HQ Hub.
-                      </p>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Phone Number *
+                  </label>
+                  <input
+                    type="tel"
+                    required
+                    value={newSupplier.phone}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })}
+                    placeholder="e.g. 9876543210"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:border-blue-600 outline-none"
+                  />
                 </div>
-              )}
 
-
-            </div>
-          </div>
-
-          {/* Summary */}
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-sm border border-blue-200 p-4 sm:p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Purchase Summary</h2>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-700">Total Items:</span>
-                <span className="font-semibold text-gray-900">{items.length}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-700">Total Quantity:</span>
-                <span className="font-semibold text-gray-900">{totalQuantity}</span>
-              </div>
-              <div className="flex justify-between items-center text-lg">
-                <span className="font-medium text-gray-900">Total Amount:</span>
-                <span className="font-bold text-blue-600">{encodePrice(totalAmount)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-700">Paid Amount:</span>
-                <span className="font-semibold text-green-600">₹{(parseFloat(paidAmount) || 0).toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center pt-3 border-t border-blue-300">
-                <span className="font-medium text-gray-900">Pending Amount:</span>
-                <span className={`font-bold text-lg ${pendingAmount > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                  ₹{pendingAmount.toFixed(2)}
-                </span>
-              </div>
-
-              {/* Pending Payment Helper */}
-              {pendingAmount > 0 && paymentMode !== 'credit' && (
-                <div className="pt-3 mt-2 border-t border-blue-200">
-                  <div className="flex items-start gap-2 text-sm text-blue-800 bg-blue-100 p-3 rounded-lg">
-                    <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                    </svg>
-                    <p className="flex-1">
-                      Remaining pending balance of <strong>₹{pendingAmount.toFixed(2)}</strong> is tracked centrally at HQ Hub.
-                    </p>
-                  </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Contact Person
+                  </label>
+                  <input
+                    type="text"
+                    value={newSupplier.contactPerson}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, contactPerson: e.target.value })}
+                    placeholder="e.g. Rajesh Kumar"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:border-blue-600 outline-none"
+                  />
                 </div>
-              )}
+              </div>
 
-            </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    GSTIN / Tax ID
+                  </label>
+                  <input
+                    type="text"
+                    value={newSupplier.gstNumber}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, gstNumber: e.target.value.toUpperCase() })}
+                    placeholder="22AAAAA0000A1Z5"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:border-blue-600 outline-none font-mono uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    value={newSupplier.email}
+                    onChange={(e) => setNewSupplier({ ...newSupplier, email: e.target.value })}
+                    placeholder="supplier@example.com"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:border-blue-600 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Billing Address
+                </label>
+                <textarea
+                  rows={2}
+                  value={newSupplier.address}
+                  onChange={(e) => setNewSupplier({ ...newSupplier, address: e.target.value })}
+                  placeholder="Street, City, State, PIN..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:border-blue-600 outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowSupplierModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm cursor-pointer"
+                >
+                  Save Supplier
+                </button>
+              </div>
+            </form>
           </div>
+        </div>
+      )}
 
-          {/* Action Bar */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 mt-6">
-            <div className="hidden sm:flex items-center gap-4 text-sm text-gray-500">
-              <span>Total Items: <strong className="text-gray-900">{items.length}</strong></span>
-              <span className="text-gray-300">|</span>
-              <span>Total Quantity: <strong className="text-gray-900">{totalQuantity}</strong></span>
-              <span className="text-gray-300">|</span>
-              <span>Grand Total: <strong className="text-blue-600 font-semibold">{encodePrice(totalAmount)}</strong></span>
-            </div>
-            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+      {/* ================= MODAL: SEARCH CATALOG ================= */}
+      {isCatalogModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Search className="w-5 h-5 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-900">Search Warehouse Catalog</h3>
+              </div>
               <button
                 type="button"
-                onClick={() => navigate('/purchases')}
-                className="w-full sm:w-auto px-5 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 active:scale-[0.98] transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300"
+                onClick={() => setIsCatalogModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-md cursor-pointer"
               >
-                Cancel
+                <X className="w-5 h-5" />
               </button>
+            </div>
+
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                autoFocus
+                value={searchQuery}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  searchProducts(val);
+                }}
+                placeholder="Search by brand, model, category, product name, or product code..."
+                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+              />
+            </div>
+
+            <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg">
+              {searching ? (
+                <div className="p-8 text-center text-xs text-slate-500">Searching catalog...</div>
+              ) : searchResults.length > 0 ? (
+                searchResults.map(prod => (
+                  <div
+                    key={prod.id}
+                    onClick={() => handleSelectCatalogProduct(prod)}
+                    className="p-3 hover:bg-blue-50/70 transition-colors flex items-center justify-between cursor-pointer"
+                  >
+                    <div>
+                      <div className="text-xs font-semibold text-slate-900">{prod.name}</div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                        <span>{prod.brand} • {prod.model}</span>
+                        <span>•</span>
+                        <span className="font-mono text-blue-600">{prod.productCode}</span>
+                        <span>•</span>
+                        <span>In stock: <strong>{prod.quantity || 0}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <div className="text-xs font-mono font-bold text-slate-900">₹{prod.cost || 0}</div>
+                      <div className="text-[10px] text-slate-400">MRP: ₹{prod.mrp || 0}</div>
+                    </div>
+                  </div>
+                ))
+              ) : searchQuery.trim() ? (
+                <div className="p-8 text-center text-xs text-slate-500">No products matching "{searchQuery}"</div>
+              ) : (
+                <div className="p-8 text-center text-xs text-slate-400">Type above to search existing warehouse inventory items</div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
               <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full sm:w-auto px-6 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 active:scale-[0.98] rounded-lg shadow-sm hover:shadow transition-all disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 whitespace-nowrap"
+                type="button"
+                onClick={() => setIsCatalogModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer"
               >
-                <Save className="w-4 h-4" />
-                <span>{isSubmitting ? 'Saving...' : 'Save Purchase'}</span>
+                Close
               </button>
             </div>
           </div>
-        </form>
+        </div>
+      )}
 
-        {/* Product Search Dropdown (rendered in portal to avoid clipping) */}
-        {isDropdownOpen && dropdownPosition && createPortal(
-          <div
-            ref={dropdownRef}
-            style={{ position: 'fixed', left: dropdownPosition.left, top: dropdownPosition.top, width: dropdownPosition.width, zIndex: 9999 }}
-            className="bg-white border border-gray-200 rounded-lg shadow-lg max-h-80 overflow-y-auto"
-            role="listbox"
-            aria-label="Product search results"
-          >
-            {searching ? (
-              <div className="p-4 text-center">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="text-sm text-gray-600 mt-2">Searching...</p>
-              </div>
-            ) : searchResults.length > 0 ? (
-              <div>
-                {/* Header row */}
-                <div className="hidden sm:flex items-center px-3 py-2 text-xs text-gray-500 border-b border-gray-100">
-                  <div className="flex-1">Product</div>
-                  <div className="w-32 text-right">Code</div>
-                  <div className="w-20 text-right">Stock</div>
-                  <div className="w-28 text-right">Price</div>
-                </div>
-
-                {searchResults.map((product, idx) => (
-                  <div
-                    key={product.id}
-                    role="option"
-                    aria-selected={dropdownFocusedIndex === idx}
-                    onMouseEnter={() => setDropdownFocusedIndex(idx)}
-                    onClick={() => { selectProduct(product, selectedRowIndex ?? 0); setDropdownFocusedIndex(null); }}
-                    className={`px-3 py-2 border-b border-gray-100 cursor-pointer ${dropdownFocusedIndex === idx ? 'bg-blue-50' : 'hover:bg-blue-50'}`}
-                  >
-                    <div className="flex flex-col sm:flex-row sm:items-center w-full">
-                      <div className="flex-1 min-w-0 mb-1 sm:mb-0">
-                        <div className="text-sm text-gray-900 truncate font-medium">{product.name}</div>
-                        <div className="text-xs text-gray-500 truncate">{product.brand ? product.brand + (product.model ? ' • ' + product.model : '') : ''}</div>
-                      </div>
-
-                      {/* Desktop Columns */}
-                      <div className="hidden sm:flex items-center text-right">
-                        <div className="w-32 font-mono text-xs text-blue-600 truncate ml-4">{product.productCode}</div>
-                        <div className="w-20 text-sm text-gray-700">{product.quantity}</div>
-                        <div className="w-28 text-sm font-semibold text-gray-900">₹{product.cost}</div>
-                      </div>
-
-                      {/* Mobile Details Row */}
-                      <div className="flex sm:hidden items-center justify-between text-xs text-gray-500 mt-1 w-full border-t border-gray-100 pt-1">
-                        <span className="font-mono text-blue-600">{product.productCode}</span>
-                        <span>Qty: {product.quantity}</span>
-                        <span className="font-semibold text-gray-900">₹{product.cost}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-4 text-center text-sm text-gray-600">No products found</div>
-            )}
-          </div>,
-          document.body
-        )}
-      </div>
-
-      {/* Multi-Step Loader for Purchase Saving */}
+      {/* ================= MULTI-STEP LOADER ================= */}
       <MultiStepLoader
         loadingStates={loadingStates}
         loading={multiStepLoading}
-        duration={500}
+        duration={450}
         loop={false}
       />
     </div>
