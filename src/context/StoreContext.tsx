@@ -21,6 +21,8 @@ interface StoreContextType {
   getHubDoc: (collectionName: string, docId: string) => DocumentReference;
   /** Whether the current user is a hub-level user (owner, hq-admin, hub-admin) */
   isHubUser: boolean;
+  /** Whether the hub user is currently viewing the Central Warehouse / All Branches (currentStore === null) */
+  isViewingWarehouse: boolean;
   /** Refresh stores list */
   refreshStores: () => Promise<void>;
   /** Re-read the current store document (branch settings) */
@@ -32,8 +34,6 @@ const StoreContext = createContext<StoreContextType>({} as StoreContextType);
 export const useStore = () => {
   return useContext(StoreContext);
 };
-
-const ENV_BRANCH_ID = (import.meta.env.VITE_BRANCH_ID || import.meta.env.VITE_STORE_ID || '').trim();
 
 export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser } = useAuth();
@@ -48,7 +48,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     currentUser?.role === 'hq-admin' ||
     currentUser?.role === 'hub-admin';
 
-  const loadStores = useCallback(async (hubId?: string, preferredStoreId?: string) => {
+  const loadStores = useCallback(async (hubId?: string) => {
     try {
       const storesRef = collection(db, 'stores');
       let snapshot = hubId
@@ -59,32 +59,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         snapshot = await getDocs(storesRef);
       }
 
-      const storesList: Store[] = snapshot.docs
-        .map(docSnap => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-          shopName: docSnap.data().shopName || 'Digital Zone',
-          createdAt: docSnap.data().createdAt?.toDate() || new Date(),
-          updatedAt: docSnap.data().updatedAt?.toDate(),
-        } as Store))
-        .filter(s => s.isActive !== false || s.id === preferredStoreId);
+      const storesList: Store[] = snapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+        shopName: docSnap.data().shopName || 'Digital Zone',
+        createdAt: docSnap.data().createdAt?.toDate() || new Date(),
+        updatedAt: docSnap.data().updatedAt?.toDate(),
+      } as Store));
 
       storesList.sort((a, b) => a.name.localeCompare(b.name));
       setStores(storesList);
 
-      const targetStoreId = preferredStoreId || ENV_BRANCH_ID || currentUser?.storeId;
-      if (targetStoreId) {
-        const matched = storesList.find(s => s.id === targetStoreId);
-        if (matched) {
-          setCurrentStoreState(matched);
-          return;
-        }
-      }
-
-      if (storesList.length > 0) {
+      // In HQ, default to Central Warehouse (null) unless a specific store was selected
+      if (!currentUser?.storeId) {
         const savedStoreId = localStorage.getItem('selectedStoreId');
-        const saved = storesList.find(s => s.id === savedStoreId);
-        setCurrentStoreState(saved || storesList[0]);
+        if (!savedStoreId || savedStoreId === 'hub_warehouse') {
+          setCurrentStoreState(null);
+        } else {
+          const saved = storesList.find(s => s.id === savedStoreId);
+          setCurrentStoreState(saved || null);
+        }
       }
     } catch (error) {
       console.error('Error loading stores:', error);
@@ -99,29 +93,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       try {
-        const targetBranchId = ENV_BRANCH_ID || currentUser.storeId;
         let resolvedHubId = currentUser.hubId;
 
-        // 1. If VITE_BRANCH_ID or user storeId is present, load that branch directly
-        if (targetBranchId) {
-          const storeDoc = await getDoc(doc(db, 'stores', targetBranchId));
-          if (storeDoc.exists()) {
-            const storeData = storeDoc.data();
-            const resolvedStore: Store = {
-              id: storeDoc.id,
-              ...storeData,
-              shopName: storeData.shopName || 'Digital Zone',
-              createdAt: storeData.createdAt?.toDate() || new Date(),
-              updatedAt: storeData.updatedAt?.toDate(),
-            } as Store;
-            setCurrentStoreState(resolvedStore);
-            if (!resolvedHubId && storeData.hubId) {
-              resolvedHubId = storeData.hubId;
-            }
-          }
-        }
-
-        // 2. Load hub metadata if available
         if (resolvedHubId) {
           const hubDoc = await getDoc(doc(db, 'hubs', resolvedHubId));
           if (hubDoc.exists()) {
@@ -132,10 +105,45 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               updatedAt: hubDoc.data().updatedAt?.toDate(),
             } as Hub);
           }
+        } else {
+          // Fallback: find first hub in hubs collection or synthesize default Digital Zone HQ hub
+          const hubsSnap = await getDocs(collection(db, 'hubs'));
+          if (!hubsSnap.empty) {
+            const firstHub = hubsSnap.docs[0];
+            resolvedHubId = firstHub.id;
+            setCurrentHub({
+              id: firstHub.id,
+              ...firstHub.data(),
+              createdAt: firstHub.data().createdAt?.toDate() || new Date(),
+              updatedAt: firstHub.data().updatedAt?.toDate(),
+            } as Hub);
+          } else {
+            resolvedHubId = 'digital_zone_hq';
+            setCurrentHub({
+              id: 'digital_zone_hq',
+              name: 'Digital Zone HQ',
+              ownerName: currentUser.displayName || 'Owner',
+              isActive: true,
+              createdAt: new Date(),
+              createdBy: currentUser.uid,
+            });
+          }
         }
 
-        // 3. Load stores list for branch context / transfers
-        await loadStores(resolvedHubId, targetBranchId);
+        await loadStores(resolvedHubId);
+
+        if (currentUser.storeId) {
+          const storeDoc = await getDoc(doc(db, 'stores', currentUser.storeId));
+          if (storeDoc.exists()) {
+            setCurrentStoreState({
+              id: storeDoc.id,
+              ...storeDoc.data(),
+              shopName: storeDoc.data().shopName || 'Digital Zone',
+              createdAt: storeDoc.data().createdAt?.toDate() || new Date(),
+              updatedAt: storeDoc.data().updatedAt?.toDate(),
+            } as Store);
+          }
+        }
       } catch (error) {
         console.error('Error loading hub/store data:', error);
       } finally {
@@ -147,26 +155,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentUser, loadStores]);
 
   const setCurrentStore = useCallback((storeId: string) => {
-    // If VITE_BRANCH_ID is hard-configured for this deployment, keep the branch locked
-    if (ENV_BRANCH_ID && storeId !== ENV_BRANCH_ID) {
+    if (storeId === 'hub_warehouse' || !storeId) {
+      setCurrentStoreState(null);
+      if (isHubUser) localStorage.setItem('selectedStoreId', 'hub_warehouse');
       return;
     }
 
     const store = stores.find(s => s.id === storeId);
     if (store) {
       setCurrentStoreState(store);
-      localStorage.setItem('selectedStoreId', storeId);
+      if (isHubUser) localStorage.setItem('selectedStoreId', storeId);
     }
-  }, [stores]);
+  }, [stores, isHubUser]);
 
   const refreshStores = useCallback(async () => {
-    await loadStores(currentUser?.hubId || currentHub?.id, ENV_BRANCH_ID || currentUser?.storeId);
-  }, [currentUser?.hubId, currentUser?.storeId, currentHub?.id, loadStores]);
+    await loadStores(currentUser?.hubId || currentHub?.id);
+  }, [currentUser?.hubId, currentHub?.id, loadStores]);
 
   const refreshCurrentStore = useCallback(async () => {
-    const idToRefresh = ENV_BRANCH_ID || currentStore?.id;
-    if (!idToRefresh) return;
-    const storeDoc = await getDoc(doc(db, 'stores', idToRefresh));
+    if (!currentStore?.id) return;
+    const storeDoc = await getDoc(doc(db, 'stores', currentStore.id));
     if (storeDoc.exists()) {
       const updated = {
         id: storeDoc.id,
@@ -181,19 +189,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentStore?.id]);
 
   const getCollectionRef = useCallback((collectionName: string): CollectionReference => {
-    const activeStoreId = ENV_BRANCH_ID || currentStore?.id;
-    if (!activeStoreId || isSharedRootCollection(collectionName)) {
+    if (!currentStore?.id || isSharedRootCollection(collectionName)) {
       return collection(db, collectionName);
     }
-    return getStoreCollectionRef('', activeStoreId, collectionName);
+    return getStoreCollectionRef('', currentStore.id, collectionName);
   }, [currentStore?.id]);
 
   const getDocRef = useCallback((collectionName: string, docId: string): DocumentReference => {
-    const activeStoreId = ENV_BRANCH_ID || currentStore?.id;
-    if (!activeStoreId || isSharedRootCollection(collectionName)) {
+    if (!currentStore?.id || isSharedRootCollection(collectionName)) {
       return doc(db, collectionName, docId);
     }
-    return getStoreDocRef('', activeStoreId, collectionName, docId);
+    return getStoreDocRef('', currentStore.id, collectionName, docId);
   }, [currentStore?.id]);
 
   const getHubCollection = useCallback((collectionName: string): CollectionReference => {
@@ -210,6 +216,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return getHubDocRef(currentHub.id, collectionName, docId);
   }, [currentHub?.id]);
 
+  const isViewingWarehouse = isHubUser && !currentStore;
+
   const value: StoreContextType = {
     currentHub,
     currentStore,
@@ -221,6 +229,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     getHubCollection,
     getHubDoc,
     isHubUser,
+    isViewingWarehouse,
     refreshStores,
     refreshCurrentStore,
   };

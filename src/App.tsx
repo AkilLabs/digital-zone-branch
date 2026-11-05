@@ -27,6 +27,7 @@ import Billing from './pages/Billing';
 import QuotationManagement from './pages/QuotationManagement';
 import StockRequirement from './pages/StockRequirement';
 import StockTransfer from './pages/StockTransfer';
+import StockTransferHistory from './pages/StockTransferHistory';
 import BranchManagement from './pages/BranchManagement';
 import ServiceManagement from './pages/ServiceManagement';
 import ServiceJobEntry from './pages/ServiceJobEntry';
@@ -104,6 +105,30 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <StockTransfer />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/stock-transfer/history"
+                element={
+                  <ProtectedRoute>
+                    <StockTransferHistory />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/stock-transfer-history"
+                element={
+                  <ProtectedRoute>
+                    <StockTransferHistory />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/stock-transfers"
+                element={
+                  <ProtectedRoute>
+                    <StockTransferHistory />
                   </ProtectedRoute>
                 }
               />

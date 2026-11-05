@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
@@ -55,6 +55,7 @@ const getProductDocRefByLocation = (locationId: string, hubId: string | undefine
 };
 
 const StockTransferPage: React.FC = () => {
+  const navigate = useNavigate();
   const { currentUser } = useAuth();
   const { currentHub, stores } = useStore();
   const { invalidateProducts } = useInvalidateCache();
@@ -624,7 +625,7 @@ const StockTransferPage: React.FC = () => {
     <div className="min-h-screen bg-slate-50/60 text-slate-800">
       <Navbar />
 
-      <main className="w-full px-3 sm:px-6 lg:px-8 py-5 pb-28 sm:pb-12 max-w-7xl mx-auto">
+      <main className="w-full max-w-full px-3 sm:px-6 lg:px-8 py-5 pb-28 sm:pb-12">
         {/* Toast Alert */}
         {toast && (
           <div
@@ -677,12 +678,8 @@ const StockTransferPage: React.FC = () => {
               <span>New Transfer</span>
             </button>
             <button
-              onClick={() => setActiveTab('history')}
-              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
-                activeTab === 'history'
-                  ? 'bg-white text-blue-700 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={() => navigate('/stock-transfer/history')}
+              className="px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer text-slate-600 hover:text-blue-700 hover:bg-white"
             >
               <Clock className="w-3.5 h-3.5" />
               <span>Transfer History</span>
@@ -762,7 +759,7 @@ const StockTransferPage: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setCompletedTransfer(null);
-                    setActiveTab('history');
+                    navigate('/stock-transfer/history');
                   }}
                   className="w-full sm:w-auto px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                 >
@@ -775,7 +772,7 @@ const StockTransferPage: React.FC = () => {
             <div className="space-y-6">
               {/* Stepper Navigation Indicator */}
               <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-3 sm:p-4">
-                <div className="flex items-center justify-between max-w-3xl mx-auto">
+                <div className="flex items-center justify-between w-full px-2 sm:px-6">
                   {/* Step 1 Pill */}
                   <button
                     type="button"
@@ -1250,7 +1247,7 @@ const StockTransferPage: React.FC = () => {
 
               {/* ================= STEP 3: REVIEW & DISPATCH ================= */}
               {currentStep === 3 && (
-                <div className="space-y-6 animate-in fade-in duration-150 max-w-4xl mx-auto">
+                <div className="space-y-6 animate-in fade-in duration-150 w-full">
                   {/* Route & Metrics Summary Card */}
                   <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-5 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">

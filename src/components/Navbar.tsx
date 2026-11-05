@@ -10,23 +10,29 @@ import {
   Search,
   LayoutDashboard,
   Receipt,
+  FileText,
   Wallet,
   Users,
   Package,
   Boxes,
+  TrendingUp,
   ShoppingBag,
   PlusCircle,
   Smartphone,
   AlertTriangle,
+  Truck,
+  ArrowLeftRight,
   Sliders,
   Wrench,
   Plus,
   BarChart3,
   UserCheck,
+  UserPlus,
+  Settings,
   LogOut,
-  ArrowDownToLine,
-  ArrowLeftRight,
   Building2,
+  Warehouse,
+  History,
 } from 'lucide-react';
 
 interface MenuItem {
@@ -43,7 +49,7 @@ interface MenuSection {
 
 const Navbar: React.FC = () => {
   const { currentUser, logout } = useAuth();
-  const { currentStore } = useStore();
+  const { currentStore, stores, setCurrentStore, isViewingWarehouse } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [showSidebar, setShowSidebar] = useState(false);
@@ -57,8 +63,6 @@ const Navbar: React.FC = () => {
     },
     [currentUser]
   );
-
-  const purchaseEnabled = Boolean(currentStore?.purchaseEnabled);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -108,7 +112,11 @@ const Navbar: React.FC = () => {
   const isActiveRoute = useCallback(
     (path: string) => {
       if (path === '/dashboard') {
-        return location.pathname === '/dashboard' || location.pathname === '/';
+        return (
+          location.pathname === '/dashboard' ||
+          location.pathname === '/hub-dashboard' ||
+          location.pathname === '/'
+        );
       }
       return (
         location.pathname === path ||
@@ -118,49 +126,75 @@ const Navbar: React.FC = () => {
     [location.pathname]
   );
 
-  // Strictly Mandatory Branch Features + Optional Branch Purchase (when turned on in HQ)
+  // Clean, readable HQ menu sections matching the Branch UI look (without old /store-management or /stock-transfer tabs)
   const menuSections: MenuSection[] = useMemo(() => {
     const sections: MenuSection[] = [];
 
-    // 1. Branch Workspace (Mandatory)
-    const mainItems: MenuItem[] = [
+    // 1. Head Office & Branch Control
+    const workspaceItems: MenuItem[] = [
       ...(canAccess('/dashboard')
-        ? [{ title: 'Home', path: '/dashboard', icon: LayoutDashboard, keywords: ['home', 'dashboard'] }]
-        : []),
-      ...(canAccess('/billing')
-        ? [{ title: 'Billing', path: '/billing', icon: Receipt, keywords: ['billing', 'pos', 'sale', 'invoice'] }]
-        : []),
-      ...(canAccess('/add-expense')
-        ? [{ title: 'Add Expense', path: '/add-expense', icon: Wallet, keywords: ['expense', 'cash out'] }]
-        : []),
-      ...(canAccess('/customers')
-        ? [{ title: 'Customer', path: '/customers', icon: Users, keywords: ['customer', 'universal', 'client'] }]
-        : []),
-    ];
-    if (mainItems.length > 0) sections.push({ title: 'Branch Workspace', items: mainItems });
-
-    // 2. Inventory & Stock (Mandatory)
-    const inventoryItems: MenuItem[] = [
-      ...(canAccess('/products')
-        ? [{ title: 'Product', path: '/products', icon: Package, keywords: ['product', 'inventory', 'stock'] }]
-        : []),
-      ...(canAccess('/stock-received')
         ? [
             {
-              title: 'Stock Received (HQ)',
-              path: '/stock-received',
-              icon: ArrowDownToLine,
-              keywords: ['stock received', 'hq', 'check product', 'incoming'],
+              title: 'Home & Branch Control',
+              path: '/dashboard',
+              icon: LayoutDashboard,
+              keywords: ['home', 'dashboard', 'branch', 'create branch', 'stock transfer', 'hq'],
             },
           ]
         : []),
-      ...(canAccess('/stock-transfer')
+      ...(canAccess('/branch-management')
         ? [
             {
-              title: 'Stock Transfer',
-              path: '/stock-transfer',
-              icon: ArrowLeftRight,
-              keywords: ['stock transfer', 'triggered', 'picked', 'received', 'branch transfer'],
+              title: 'Branch Management',
+              path: '/branch-management',
+              icon: Building2,
+              keywords: ['branches', 'store management', 'owner', 'gps', 'geofence', 'branch manager'],
+            },
+          ]
+        : []),
+      ...(canAccess('/billing')
+        ? [{ title: 'Billing', path: '/billing', icon: Receipt, keywords: ['bill', 'pos', 'invoice'] }]
+        : []),
+      ...(canAccess('/quotations')
+        ? [
+            {
+              title: 'Quotations (HQ Only)',
+              path: '/quotations',
+              icon: FileText,
+              keywords: ['quotation', 'estimate', 'quote'],
+            },
+          ]
+        : []),
+      ...(canAccess('/add-expense')
+        ? [{ title: 'Add Expense', path: '/add-expense', icon: Wallet, keywords: ['expense', 'cost'] }]
+        : []),
+      ...(canAccess('/customers')
+        ? [
+            {
+              title: 'Customers (Universal)',
+              path: '/customers',
+              icon: Users,
+              keywords: ['customer', 'client', 'universal'],
+            },
+          ]
+        : []),
+    ];
+    if (workspaceItems.length > 0) {
+      sections.push({ title: 'HQ Workspace', items: workspaceItems });
+    }
+
+    // 2. Inventory, Stock Value & Purchases
+    const inventoryItems: MenuItem[] = [
+      ...(canAccess('/products')
+        ? [{ title: 'Products', path: '/products', icon: Package, keywords: ['product', 'inventory', 'stock'] }]
+        : []),
+      ...(canAccess('/stock-value')
+        ? [
+            {
+              title: 'Stock Value (Total & Branches)',
+              path: '/stock-value',
+              icon: TrendingUp,
+              keywords: ['stock value', 'valuation', 'total', 'branch stock value'],
             },
           ]
         : []),
@@ -170,7 +204,23 @@ const Navbar: React.FC = () => {
               title: 'Stock Requirement',
               path: '/stock-requirement',
               icon: Boxes,
-              keywords: ['stock requirement', 'low stock', 'order'],
+              keywords: ['low stock', 'requirement'],
+            },
+          ]
+        : []),
+      ...(canAccess('/stock-transfer')
+        ? [
+            {
+              title: 'Stock Transfer',
+              path: '/stock-transfer',
+              icon: ArrowLeftRight,
+              keywords: ['stock transfer', 'dispatch', 'branch transfer', 'inter-store'],
+            },
+            {
+              title: 'Transfer History',
+              path: '/stock-transfer/history',
+              icon: History,
+              keywords: ['transfer history', 'dispatches', 'gate pass', 'challan audit'],
             },
           ]
         : []),
@@ -180,43 +230,46 @@ const Navbar: React.FC = () => {
               title: 'Defect & Damage',
               path: '/defect-management',
               icon: AlertTriangle,
-              keywords: ['defect', 'damage', 'return', 'faulty'],
+              keywords: ['defect', 'damage', 'return'],
+            },
+          ]
+        : []),
+      ...(canAccess('/purchases')
+        ? [{ title: 'Purchases', path: '/purchases', icon: ShoppingBag, keywords: ['purchase', 'bills'] }]
+        : []),
+      ...(canAccess('/add-purchase')
+        ? [{ title: 'Add Purchase', path: '/add-purchase', icon: PlusCircle, keywords: ['add purchase'] }]
+        : []),
+      ...(canAccess('/add-purchase-imei')
+        ? [
+            {
+              title: 'Add Purchase IMEI',
+              path: '/add-purchase-imei',
+              icon: Smartphone,
+              keywords: ['imei', 'serial'],
+            },
+          ]
+        : []),
+      ...(canAccess('/suppliers')
+        ? [{ title: 'Suppliers', path: '/suppliers', icon: Truck, keywords: ['supplier', 'vendor'] }]
+        : []),
+      ...(canAccess('/master')
+        ? [
+            {
+              title: 'Master Setting',
+              path: '/master',
+              icon: Sliders,
+              keywords: ['master', 'brand', 'category'],
             },
           ]
         : []),
     ];
-    if (inventoryItems.length > 0) sections.push({ title: 'Inventory & Stock', items: inventoryItems });
-
-    // 3. Optional: Branch Purchase (Enabled only if turned ON for this branch in HQ)
-    if (purchaseEnabled) {
-      const purchaseItems: MenuItem[] = [
-        ...(canAccess('/purchases')
-          ? [{ title: 'Purchase', path: '/purchases', icon: ShoppingBag, keywords: ['purchase', 'bills'] }]
-          : []),
-        ...(canAccess('/add-purchase')
-          ? [{ title: 'Add Purchase', path: '/add-purchase', icon: PlusCircle, keywords: ['add purchase', 'stock in'] }]
-          : []),
-        ...(canAccess('/add-purchase-imei')
-          ? [
-              {
-                title: 'Add Purchase IMEI',
-                path: '/add-purchase-imei',
-                icon: Smartphone,
-                keywords: ['imei', 'phone purchase', 'serial'],
-              },
-            ]
-          : []),
-        ...(canAccess('/master')
-          ? [{ title: 'Master Setting', path: '/master', icon: Sliders, keywords: ['master', 'brand', 'category'] }]
-          : []),
-      ];
-      if (purchaseItems.length > 0) {
-        sections.push({ title: 'Branch Purchase', items: purchaseItems });
-      }
+    if (inventoryItems.length > 0) {
+      sections.push({ title: 'Inventory & Purchases', items: inventoryItems });
     }
 
-    // 4. Service, Reports & Staff (Mandatory)
-    const serviceAndReportItems: MenuItem[] = [
+    // 3. Service & Sales Reports
+    const serviceReportItems: MenuItem[] = [
       ...(canAccess('/service-management')
         ? [
             {
@@ -233,7 +286,7 @@ const Navbar: React.FC = () => {
               title: 'Service Job Sheet',
               path: '/service-management/create',
               icon: Plus,
-              keywords: ['job sheet', 'new service', 'repair entry'],
+              keywords: ['job sheet', 'new service'],
             },
           ]
         : []),
@@ -243,27 +296,47 @@ const Navbar: React.FC = () => {
               title: 'Sales Report',
               path: '/overall-sales',
               icon: BarChart3,
-              keywords: ['sales report', 'turnover', 'settlement'],
-            },
-          ]
-        : []),
-      ...(canAccess('/employee-management')
-        ? [
-            {
-              title: 'Branch Employee List',
-              path: '/employee-management',
-              icon: UserCheck,
-              keywords: ['employee', 'staff', 'branch employee list'],
+              keywords: ['sales report', 'revenue', 'turnover'],
             },
           ]
         : []),
     ];
-    if (serviceAndReportItems.length > 0) {
-      sections.push({ title: 'Service, Reports & Staff', items: serviceAndReportItems });
+    if (serviceReportItems.length > 0) {
+      sections.push({ title: 'Service & Reports', items: serviceReportItems });
+    }
+
+    // 4. Employees & Login Users (HQ Control)
+    const adminItems: MenuItem[] = [
+      ...(canAccess('/employee-management')
+        ? [
+            {
+              title: 'Employees & Branch Staff',
+              path: '/employee-management',
+              icon: UserCheck,
+              keywords: ['employee', 'create employee', 'assign branch', 'staff'],
+            },
+          ]
+        : []),
+      ...(canAccess('/add-employee')
+        ? [
+            {
+              title: 'Add Login User',
+              path: '/add-employee',
+              icon: UserPlus,
+              keywords: ['add user', 'login', 'hq-admin', 'branch admin'],
+            },
+          ]
+        : []),
+      ...(canAccess('/settings')
+        ? [{ title: 'Settings', path: '/settings', icon: Settings, keywords: ['settings', 'users'] }]
+        : []),
+    ];
+    if (adminItems.length > 0) {
+      sections.push({ title: 'Employees & Users', items: adminItems });
     }
 
     return sections;
-  }, [canAccess, purchaseEnabled]);
+  }, [canAccess]);
 
   const filteredSections = useMemo(() => {
     if (!searchQuery.trim()) return menuSections;
@@ -281,12 +354,17 @@ const Navbar: React.FC = () => {
       .filter((section) => section.items.length > 0);
   }, [menuSections, searchQuery]);
 
+  const selectedStoreValue = isViewingWarehouse
+    ? 'hub_warehouse'
+    : currentStore?.id || 'hub_warehouse';
+
   return (
     <>
+      {/* Minimal Light Header Matching Branch UI Look */}
       <header className="bg-slate-50/95 text-gray-900 border-b border-slate-200/80 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w mx-auto px-3 sm:px-4 md:px-6">
-          <div className="flex justify-between items-center py-2 sm:py-2.5">
-            <div className="flex items-center gap-1.5 sm:gap-2.5">
+          <div className="flex justify-between items-center py-2 sm:py-2.5 gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
               <button
                 onClick={() => setShowSidebar(!showSidebar)}
                 className="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 active:scale-95 cursor-pointer transition-all duration-150"
@@ -296,32 +374,61 @@ const Navbar: React.FC = () => {
                 <Menu className="w-5 h-5" />
               </button>
               <button
-                onClick={() => setShowSidebar(!showSidebar)}
+                onClick={() => handleNavigation('/dashboard')}
                 className="h-8 sm:h-9 flex items-center justify-center cursor-pointer hover:opacity-85 active:scale-95 transition-all duration-150"
-                title="Open Navigation Menu"
+                title="Go to HQ Home"
               >
                 <img src={logo} alt="Digital Zone" className="h-full w-auto max-w-[120px] object-contain" />
               </button>
-              <div>
-                <h1 className="m-0 text-sm sm:text-base md:text-xl font-bold text-gray-900 leading-tight">
-                  Digital Zone
-                </h1>
-                <p className="m-0 text-gray-500 text-[10px] sm:text-xs flex items-center gap-1">
-                  <Building2 className="w-3 h-3 text-blue-600" />
-                  {currentStore?.name || 'Branch Terminal'}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h1 className="m-0 text-sm sm:text-base md:text-xl font-bold text-gray-900 leading-tight truncate">
+                    Digital Zone
+                  </h1>
+                  <span className="px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-blue-600 text-white rounded">
+                    HQ
+                  </span>
+                </div>
+                <p className="m-0 text-gray-500 text-[10px] sm:text-xs truncate">
+                  {isViewingWarehouse
+                    ? 'Head Office & All Branches'
+                    : `Inspecting Branch: ${currentStore?.name}`}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Clean Branch Scope Selector */}
+              <div className="hidden sm:flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-2xs">
+                {isViewingWarehouse ? (
+                  <Warehouse className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                ) : (
+                  <Building2 className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                )}
+                <select
+                  aria-label="Select HQ or Branch View"
+                  value={selectedStoreValue}
+                  onChange={(e) => setCurrentStore(e.target.value)}
+                  className="text-xs font-medium text-slate-800 bg-transparent outline-none cursor-pointer max-w-[180px]"
+                >
+                  <option value="hub_warehouse">HQ Central Warehouse</option>
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      Branch: {store.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="text-right">
-                <p className="m-0 text-[10px] sm:text-xs md:text-sm font-medium text-gray-900">
+                <p className="m-0 text-[10px] sm:text-xs md:text-sm font-medium text-gray-900 truncate max-w-[120px]">
                   {currentUser?.displayName || currentUser?.email}
                 </p>
-                <span className="inline-block bg-gray-100 text-gray-700 px-1.5 sm:px-2 md:px-2.5 py-0.5 rounded-full text-[9px] sm:text-[10px] md:text-xs uppercase font-semibold tracking-wider border border-gray-200 mt-0.5">
-                  {currentUser?.role?.replace('_', ' ')}
+                <span className="inline-block bg-blue-50 text-blue-700 px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] uppercase font-semibold tracking-wider border border-blue-200 mt-0.5">
+                  {currentUser?.role}
                 </span>
               </div>
+
               <button
                 onClick={handleLogout}
                 className="px-2.5 sm:px-3 md:px-4 py-1 sm:py-1.5 md:py-2 rounded-lg font-semibold cursor-pointer transition-all duration-200 text-[10px] sm:text-xs md:text-sm bg-white text-red-500 border border-red-200 hover:bg-red-500 hover:text-white"
@@ -354,9 +461,9 @@ const Navbar: React.FC = () => {
           <div className="flex items-center gap-2 min-w-0">
             <img src={logo} alt="Logo" className="h-7 w-auto object-contain flex-shrink-0" />
             <div className="min-w-0">
-              <p className="text-xs font-bold text-slate-900 truncate">Digital Zone</p>
+              <p className="text-xs font-bold text-slate-900 truncate">Digital Zone HQ</p>
               <p className="text-[10px] text-slate-500 truncate">
-                {currentStore ? currentStore.name : 'Branch'}
+                {isViewingWarehouse ? 'Central Control' : currentStore?.name}
               </p>
             </div>
           </div>
@@ -373,6 +480,23 @@ const Navbar: React.FC = () => {
           </button>
         </div>
 
+        {/* Mobile Branch Scope Switcher inside Sidebar */}
+        <div className="px-3 pt-2.5 sm:hidden">
+          <select
+            aria-label="Select HQ or Branch View"
+            value={selectedStoreValue}
+            onChange={(e) => setCurrentStore(e.target.value)}
+            className="w-full px-2.5 py-1.5 text-xs font-medium bg-slate-50 border border-slate-200 rounded-md text-slate-800"
+          >
+            <option value="hub_warehouse">HQ Central Warehouse</option>
+            {stores.map((store) => (
+              <option key={store.id} value={store.id}>
+                Branch: {store.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="px-3 pt-2.5 pb-1 flex-shrink-0">
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -380,7 +504,7 @@ const Navbar: React.FC = () => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search branch menu..."
+              placeholder="Search HQ menu..."
               className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 hover:bg-slate-100/70 focus:bg-white text-slate-800 placeholder-slate-400 rounded-md border border-slate-100 focus:border-slate-300 focus:outline-none transition-colors"
             />
             {searchQuery && (
@@ -446,7 +570,7 @@ const Navbar: React.FC = () => {
               {currentUser?.displayName || 'User'}
             </p>
             <p className="text-[10px] text-slate-400 uppercase tracking-wide truncate">
-              {currentUser?.role?.replace('_', ' ')}
+              {currentUser?.role}
             </p>
           </div>
           <button
@@ -463,42 +587,34 @@ const Navbar: React.FC = () => {
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-50">
         <div className="flex justify-around items-center py-2">
-          {canAccess('/dashboard') && (
-            <button
-              onClick={() => handleNavigation('/dashboard')}
-              className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
-            >
-              <LayoutDashboard className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] font-medium">Home</span>
-            </button>
-          )}
-          {canAccess('/billing') && (
-            <button
-              onClick={() => handleNavigation('/billing')}
-              className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
-            >
-              <Receipt className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] font-medium">Billing</span>
-            </button>
-          )}
-          {canAccess('/stock-received') && (
-            <button
-              onClick={() => handleNavigation('/stock-received')}
-              className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
-            >
-              <ArrowDownToLine className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] font-medium">HQ Stock</span>
-            </button>
-          )}
-          {canAccess('/products') && (
-            <button
-              onClick={() => handleNavigation('/products')}
-              className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
-            >
-              <Package className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px] font-medium">Product</span>
-            </button>
-          )}
+          <button
+            onClick={() => handleNavigation('/dashboard')}
+            className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
+          >
+            <LayoutDashboard className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] font-medium">HQ Home</span>
+          </button>
+          <button
+            onClick={() => handleNavigation('/stock-value')}
+            className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
+          >
+            <TrendingUp className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] font-medium">Stock Value</span>
+          </button>
+          <button
+            onClick={() => handleNavigation('/quotations')}
+            className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
+          >
+            <FileText className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] font-medium">Quotation</span>
+          </button>
+          <button
+            onClick={() => handleNavigation('/employee-management')}
+            className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
+          >
+            <UserCheck className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] font-medium">Employees</span>
+          </button>
         </div>
       </nav>
     </>
