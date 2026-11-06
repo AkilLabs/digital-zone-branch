@@ -4,158 +4,92 @@ import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
 import { useToastContext } from '../context/ToastContext';
-import {
-  doc,
-  setDoc,
-  Timestamp
-} from 'firebase/firestore';
+import { doc, setDoc, Timestamp } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, getAuth } from 'firebase/auth';
 import { db, firebaseConfig } from '../config/firebase';
 import { initializeApp, deleteApp } from 'firebase/app';
-import { cn } from '../lib/utils';
 import type { UserRole } from '../types';
+import { ShieldCheck, Building2, UserPlus, Users, ArrowRight } from 'lucide-react';
 
-// ─── Role Definitions ────────────────────────────────────────────────────────
-interface RoleOption {
+interface LoginRoleOption {
   value: UserRole;
   label: string;
+  target: 'HQ' | 'Branch';
   description: string;
-  color: string;           // Tailwind color prefix (blue, purple, etc.)
-  icon: React.ReactNode;
-  needsStore: boolean;     // Whether a store assignment is required
-  needsDeviceBind: boolean; // Whether device-binding applies
+  needsBranch: boolean;
   scope: 'hub' | 'store';
 }
 
-const ROLE_OPTIONS: RoleOption[] = [
+const LOGIN_ROLES: LoginRoleOption[] = [
   {
-    value: 'employee',
-    label: 'Employee',
-    description: 'Daily operations — billing, services, recharge, product viewing. Requires attendance check-in.',
-    color: 'blue',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-      </svg>
-    ),
-    needsStore: true,
-    needsDeviceBind: false,
-    scope: 'store',
-  },
-  {
-    value: 'store-admin',
-    label: 'Store Admin',
-    description: 'Full store access — purchases, expenses, suppliers, reports, employee management. Device-bound.',
-    color: 'purple',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-      </svg>
-    ),
-    needsStore: true,
-    needsDeviceBind: true,
-    scope: 'store',
-  },
-  {
-    value: 'hub-admin',
-    label: 'Hub Admin',
-    description: 'Hub-level management — all stores, stock transfers, store management. Device-bound.',
-    color: 'indigo',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-      </svg>
-    ),
-    needsStore: false,
-    needsDeviceBind: true,
+    value: 'hq-admin',
+    label: 'HQ Admin',
+    target: 'HQ',
+    description:
+      'Head Office administrator login — access to HQ operations, stock value, stock transfers, and employee management.',
+    needsBranch: false,
     scope: 'hub',
+  },
+  {
+    value: 'admin',
+    label: 'Branch Admin',
+    target: 'Branch',
+    description:
+      'Branch login account — full access to the assigned branch (Billing, Products, Stock Received, Stock Transfer, Service, Reports).',
+    needsBranch: true,
+    scope: 'store',
   },
 ];
 
-// Color utility maps
-const colorMap: Record<string, { bg: string; border: string; text: string; light: string; ring: string }> = {
-  blue:   { bg: 'bg-blue-500',   border: 'border-blue-500', text: 'text-blue-600',   light: 'bg-blue-50',   ring: 'ring-blue-200' },
-  purple: { bg: 'bg-purple-500', border: 'border-purple-500', text: 'text-purple-600', light: 'bg-purple-50', ring: 'ring-purple-200' },
-  indigo: { bg: 'bg-indigo-500', border: 'border-indigo-500', text: 'text-indigo-600', light: 'bg-indigo-50', ring: 'ring-indigo-200' },
-  teal:   { bg: 'bg-teal-500',   border: 'border-teal-500', text: 'text-teal-600',   light: 'bg-teal-50',   ring: 'ring-teal-200' },
-};
-
-// ─── Form Data ────────────────────────────────────────────────────────────────
-interface UserFormData {
-  name: string;
-  email: string;
-  password: string;
-  role: UserRole;
-  storeId: string;         // Assigned store (for store-scoped roles)
-  locationCheckIn: 'required' | 'not-required';
-}
-
 const AddEmployee: React.FC = () => {
   const { currentUser } = useAuth();
-  const { stores, currentHub } = useStore();
+  const { stores } = useStore();
   const navigate = useNavigate();
   const toast = useToastContext();
 
-  const [formData, setFormData] = useState<UserFormData>({
+  const canCreateLoginUser =
+    currentUser?.role === 'owner' ||
+    currentUser?.role === 'hq-admin' ||
+    currentUser?.role === 'hub-admin';
+
+  const [formData, setFormData] = useState<{
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    storeId: string;
+  }>({
     name: '',
     email: '',
     password: '',
-    role: 'employee',
-    storeId: stores.length === 1 ? (stores[0].id || '') : '',
-    locationCheckIn: 'not-required',
+    role: 'hq-admin',
+    storeId: stores[0]?.id || '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const isOwner = currentUser?.role === 'owner';
-  const selectedRole = ROLE_OPTIONS.find(r => r.value === formData.role) || ROLE_OPTIONS[0];
-  const colors = colorMap[selectedRole.color] || colorMap.blue;
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    setError('');
-  };
-
-  const handleRoleChange = (role: UserRole) => {
-    setFormData(prev => ({
-      ...prev,
-      role,
-      locationCheckIn: role === 'employee' ? prev.locationCheckIn : 'not-required',
-      storeId: ROLE_OPTIONS.find(r => r.value === role)?.needsStore
-        ? (stores.length === 1 ? (stores[0].id || '') : prev.storeId)
-        : '',
-    }));
-    setError('');
-  };
+  const selectedRoleOption =
+    LOGIN_ROLES.find((r) => r.value === formData.role) || LOGIN_ROLES[0];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!isOwner) {
-      setError('Only owners can add users');
+    if (!canCreateLoginUser) {
+      setError('Only Owner or HQ Admin can create login users.');
       return;
     }
 
     if (!formData.name.trim() || !formData.email.trim() || !formData.password.trim()) {
-      setError('Name, email, and password are required');
+      setError('Full Name, Email, and Password are required.');
       return;
     }
 
     if (formData.password.length < 6) {
-      setError('Password must be at least 6 characters');
+      setError('Password must be at least 6 characters.');
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email)) {
-      setError('Please enter a valid email');
-      return;
-    }
-
-    // Store required for store-scoped roles
-    if (selectedRole.needsStore && !formData.storeId && stores.length > 0) {
-      setError('Please select a store for this user');
+    if (selectedRoleOption.needsBranch && !formData.storeId) {
+      setError('Please select a branch for this Branch Admin login.');
       return;
     }
 
@@ -163,115 +97,71 @@ const AddEmployee: React.FC = () => {
     setError('');
 
     try {
-      // Create user via a secondary Firebase app to avoid logging out the current admin
-      const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
+      const secondaryAppName = `SecondaryAuth_${Date.now()}`;
+      const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
       const secondaryAuth = getAuth(secondaryApp);
 
       const userCredential = await createUserWithEmailAndPassword(
         secondaryAuth,
-        formData.email,
+        formData.email.trim(),
         formData.password
       );
 
-      const newUserId = userCredential.user.uid;
+      const newUid = userCredential.user.uid;
+      const assignedStore = stores.find((s) => s.id === formData.storeId);
 
-      // Build the Firestore user document
-      const userData: Record<string, any> = {
-        name: formData.name,
-        email: formData.email,
+      const userPayload: Record<string, any> = {
+        name: formData.name.trim(),
+        email: formData.email.trim(),
         role: formData.role,
-        scope: selectedRole.scope,
+        scope: selectedRoleOption.scope,
         isActive: true,
+        hubId: currentUser?.hubId || 'digital_zone_hq',
+        storeId: selectedRoleOption.needsBranch ? formData.storeId : '',
+        storeName: selectedRoleOption.needsBranch ? assignedStore?.name || '' : 'Head Office',
         createdAt: Timestamp.now(),
-        createdBy: currentUser?.uid,
-        createdByName: currentUser?.displayName || currentUser?.email || 'Unknown',
+        createdBy: currentUser?.uid || '',
+        createdByName: currentUser?.displayName || currentUser?.email || 'HQ',
       };
 
-      // Hub assignment
-      if (currentUser?.hubId) {
-        userData.hubId = currentUser.hubId;
-      }
+      await setDoc(doc(db, 'users', newUid), userPayload);
 
-      // Store assignment (for store-scoped roles)
-      if (selectedRole.needsStore && formData.storeId) {
-        userData.storeId = formData.storeId;
-      }
-
-      // Location check-in (employee only)
-      if (formData.role === 'employee') {
-        userData.locationCheckIn = formData.locationCheckIn;
-      }
-
-      await setDoc(doc(db, 'users', newUserId), userData);
-
-      // Cleanup secondary auth
       await secondaryAuth.signOut();
       await deleteApp(secondaryApp);
 
-      toast.success(`${selectedRole.label} "${formData.name}" added successfully!`);
+      toast.success(
+        `${selectedRoleOption.label} login "${formData.name.trim()}" created successfully!`
+      );
 
-      // Reset form
       setFormData({
         name: '',
         email: '',
         password: '',
-        role: 'employee',
-        storeId: stores.length === 1 ? (stores[0].id || '') : '',
-        locationCheckIn: 'not-required',
+        role: 'hq-admin',
+        storeId: stores[0]?.id || '',
       });
-    } catch (error: any) {
-      console.error('Error adding user:', error);
-      if (error.code === 'auth/email-already-in-use') {
-        setError('This email is already registered');
-      } else if (error.code === 'auth/invalid-email') {
-        setError('Invalid email address');
-      } else if (error.code === 'auth/weak-password') {
-        setError('Password is too weak');
+    } catch (err: any) {
+      console.error('Error creating login user:', err);
+      if (err.code === 'auth/email-already-in-use') {
+        setError('This email address is already registered.');
       } else {
-        setError(`Failed to add user: ${error.message || 'Unknown error'}`);
+        setError(err.message || 'Failed to create login user.');
       }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCancel = () => {
-    setFormData({
-      name: '',
-      email: '',
-      password: '',
-      role: 'employee',
-      storeId: stores.length === 1 ? (stores[0].id || '') : '',
-      locationCheckIn: 'not-required',
-    });
-    setError('');
-    navigate('/settings?tab=users');
-  };
-
-  // Access denied for non-owners
-  if (!isOwner) {
+  if (!canCreateLoginUser) {
     return (
-      <div className="min-h-screen bg-white">
+      <div className="min-h-screen bg-slate-50">
         <Navbar />
-        <main className="max-w mx-auto px-4 md:px-6 py-4 md:py-6 pb-24 md:pb-6">
-          <div className="max-w-2xl mx-auto mt-8 md:mt-12">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 md:p-12">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <svg className="h-10 w-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-bold text-gray-900 mb-3">Access Denied</h2>
-                <p className="text-sm text-gray-600 mb-6">Only owners can add new users.</p>
-                <button
-                  onClick={() => navigate('/dashboard')}
-                  className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-8 rounded-lg transition-all"
-                >
-                  Back to Dashboard
-                </button>
-              </div>
-            </div>
+        <main className="max-w-xl mx-auto px-4 py-12 text-center">
+          <div className="bg-white rounded-xl border border-slate-200 p-8">
+            <h2 className="text-lg font-bold text-slate-900">Access Restricted</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Only Owner and HQ Admin can create login accounts.
+            </p>
           </div>
         </main>
       </div>
@@ -279,312 +169,178 @@ const AddEmployee: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-slate-50">
       <Navbar />
-      <main className="max-w mx-auto px-4 md:px-6 py-4 md:py-6 pb-24 md:pb-6">
-        {/* Header */}
-        <div className="mb-4 md:mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+
+      <main className="max-w-3xl mx-auto px-3 sm:px-4 md:px-6 py-5 pb-24 md:pb-10">
+        {/* Top Banner linking to Separate 3-Step Employee Flow */}
+        <div className="mb-5 p-4 rounded-xl bg-blue-50 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-1">Add New User</h1>
-            <p className="text-sm md:text-base text-gray-600">
-              Create a new {selectedRole.label.toLowerCase()} account
-              {currentHub ? ` for ${currentHub.name}` : ''}
+            <h2 className="text-xs sm:text-sm font-bold text-blue-900">
+              Looking to create & assign a Branch/HQ Employee (Manager, Sales Person, Technician, Cashier)?
+            </h2>
+            <p className="text-xs text-blue-700 mt-0.5">
+              Use the dedicated 3-step Employee Creation flow in Employee Management.
             </p>
           </div>
           <button
-            onClick={() => navigate('/settings?tab=users')}
-            className="flex items-center justify-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg font-medium transition-all shadow-sm text-sm"
+            onClick={() => navigate('/employee-management')}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 cursor-pointer whitespace-nowrap self-start sm:self-auto"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            View All Users
+            <Users className="w-4 h-4" />
+            Open 3-Step Employee Flow
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Form Card */}
-        <div className="max-w-3xl mx-auto">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        {/* Main Card: Add Login User (HQ Admin / Branch Admin) */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                <UserPlus className="w-5 h-5" />
+              </div>
+              <div>
+                <h1 className="text-base sm:text-lg font-bold text-slate-900">
+                  Add System Login User (HQ Only)
+                </h1>
+                <p className="text-xs text-slate-500">
+                  Create login credentials for <strong>HQ Admin</strong> or <strong>Branch Admin</strong>. (Owner login works universally on HQ & every branch.)
+                </p>
+              </div>
+            </div>
+          </div>
 
-            {/* ── Role Selector ─────────────────────────────────────── */}
-            <div className="p-4 md:p-6 border-b border-gray-100">
-              <label className="block text-sm font-semibold text-gray-700 mb-3">
-                Select Role <span className="text-red-500">*</span>
+          <form onSubmit={handleSubmit} className="p-5 space-y-5">
+            {error && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs font-medium text-red-700">
+                {error}
+              </div>
+            )}
+
+            {/* Select Login Role */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                Select Login Role *
               </label>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3">
-                {ROLE_OPTIONS.map(role => {
-                  const rc = colorMap[role.color] || colorMap.blue;
-                  const isSelected = formData.role === role.value;
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {LOGIN_ROLES.map((opt) => {
+                  const active = formData.role === opt.value;
                   return (
                     <button
-                      key={role.value}
+                      key={opt.value}
                       type="button"
-                      onClick={() => handleRoleChange(role.value)}
-                      className={cn(
-                        "relative flex flex-col items-center gap-1.5 p-3 md:p-4 rounded-xl border-2 transition-all duration-200 text-center",
-                        isSelected
-                          ? `${rc.border} ${rc.light} shadow-sm`
-                          : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                      )}
+                      onClick={() => setFormData((p) => ({ ...p, role: opt.value }))}
+                      className={`p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        active
+                          ? 'border-blue-600 bg-blue-50/40'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
                     >
-                      <div className={cn(
-                        "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
-                        isSelected ? `${rc.bg} text-white` : "bg-gray-100 text-gray-500"
-                      )}>
-                        {role.icon}
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                          {opt.target === 'HQ' ? (
+                            <ShieldCheck className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <Building2 className="w-4 h-4 text-purple-600" />
+                          )}
+                          {opt.label}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-700">
+                          {opt.target} Login
+                        </span>
                       </div>
-                      <span className={cn(
-                        "text-xs md:text-sm font-semibold",
-                        isSelected ? rc.text : "text-gray-700"
-                      )}>
-                        {role.label}
-                      </span>
-                      {isSelected && (
-                        <div className={cn("absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center", rc.bg)}>
-                          <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                        </div>
-                      )}
+                      <p className="text-xs text-slate-600 leading-relaxed">{opt.description}</p>
                     </button>
                   );
                 })}
               </div>
-              {/* Role Description */}
-              <div className={cn("mt-3 p-3 rounded-lg border", `${colors.light} border-${selectedRole.color}-100`)}>
-                <p className={cn("text-xs md:text-sm font-medium", colors.text)}>{selectedRole.description}</p>
+            </div>
+
+            {/* Branch selection when creating Branch Admin */}
+            {selectedRoleOption.needsBranch && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Assign Branch (Digital Zone Area) <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={formData.storeId}
+                  onChange={(e) => setFormData((p) => ({ ...p, storeId: e.target.value }))}
+                  required
+                  className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Select a branch...</option>
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      Digital Zone — {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Full Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Enter full name"
+                  required
+                  className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Login Email <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => setFormData((p) => ({ ...p, email: e.target.value }))}
+                  placeholder="admin@digitalzone.com"
+                  required
+                  className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                />
               </div>
             </div>
 
-            {/* ── Form Fields ──────────────────────────────────────── */}
-            <div className="p-4 md:p-6">
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border-l-4 border-red-500 rounded-lg flex items-start">
-                  <svg className="h-5 w-5 text-red-500 mr-2 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                  </svg>
-                  <p className="text-sm text-red-700 font-medium">{error}</p>
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="space-y-4 md:space-y-5">
-                {/* Name */}
-                <div>
-                  <label htmlFor="name" className="block text-sm font-semibold text-gray-700 mb-2">
-                    Full Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    id="name"
-                    name="name"
-                    value={formData.name}
-                    onChange={handleInputChange}
-                    placeholder={`Enter ${selectedRole.label.toLowerCase()} name`}
-                    className="w-full px-3 md:px-4 py-2 md:py-2.5 border-2 border-gray-200 rounded-lg text-sm md:text-base bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
-                    required
-                    disabled={loading}
-                  />
-                </div>
-
-                {/* Email */}
-                <div>
-                  <label htmlFor="email" className="block text-sm font-semibold text-gray-700 mb-2">
-                    Email Address <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    id="email"
-                    name="email"
-                    value={formData.email}
-                    onChange={handleInputChange}
-                    placeholder="user@example.com"
-                    className="w-full px-3 md:px-4 py-2 md:py-2.5 border-2 border-gray-200 rounded-lg text-sm md:text-base bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
-                    required
-                    disabled={loading}
-                  />
-                  <p className="text-xs text-gray-500 mt-1.5">This email will be used for login</p>
-                </div>
-
-                {/* Password */}
-                <div>
-                  <label htmlFor="password" className="block text-sm font-semibold text-gray-700 mb-2">
-                    Password <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    id="password"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleInputChange}
-                    placeholder="Minimum 6 characters"
-                    className="w-full px-3 md:px-4 py-2 md:py-2.5 border-2 border-gray-200 rounded-lg text-sm md:text-base bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
-                    required
-                    minLength={6}
-                    disabled={loading}
-                  />
-                </div>
-
-                {/* Store Assignment (for store-scoped roles) */}
-                {selectedRole.needsStore && stores.length > 0 && (
-                  <div>
-                    <label htmlFor="storeId" className="block text-sm font-semibold text-gray-700 mb-2">
-                      Assign to Store <span className="text-red-500">*</span>
-                    </label>
-                    {stores.length === 1 ? (
-                      <div className="w-full px-3 md:px-4 py-2 md:py-2.5 border-2 border-gray-200 rounded-lg text-sm md:text-base bg-gray-50 text-gray-700">
-                        {stores[0].name}
-                      </div>
-                    ) : (
-                      <select
-                        id="storeId"
-                        name="storeId"
-                        value={formData.storeId}
-                        onChange={handleInputChange}
-                        className="w-full px-3 md:px-4 py-2 md:py-2.5 border-2 border-gray-200 rounded-lg text-sm md:text-base bg-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all"
-                        required
-                        disabled={loading}
-                      >
-                        <option value="">Select a store...</option>
-                        {stores.map(store => (
-                          <option key={store.id} value={store.id}>{store.name}</option>
-                        ))}
-                      </select>
-                    )}
-                    <p className="text-xs text-gray-500 mt-1.5">
-                      This user will only have access to the selected store's data
-                    </p>
-                  </div>
-                )}
-
-                {/* Device Binding Warning (for admin roles) */}
-                {selectedRole.needsDeviceBind && (
-                  <div className={cn("border rounded-lg p-4", `${colors.light} border-${selectedRole.color}-200`)}>
-                    <div className="flex items-start">
-                      <svg className={cn("h-5 w-5 mt-0.5 mr-3 shrink-0", colors.text)} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                      </svg>
-                      <div>
-                        <h4 className={cn("text-sm font-semibold", `text-${selectedRole.color}-900`)}>Device Binding</h4>
-                        <p className={cn("text-sm mt-1", `text-${selectedRole.color}-700`)}>
-                          This account will be permanently bound to the first device used for login. 
-                          The user cannot log in from another device without owner intervention.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Location Check-in (Employee Only) */}
-                {formData.role === 'employee' && (
-                  <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-3">
-                      Location Check-in
-                    </label>
-                    <div className="space-y-2">
-                      <label className={cn(
-                        "flex items-start p-3 border-2 rounded-lg cursor-pointer transition-all hover:bg-gray-50",
-                        formData.locationCheckIn === 'not-required' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-                      )}>
-                        <input
-                          type="radio"
-                          name="locationCheckIn"
-                          value="not-required"
-                          checked={formData.locationCheckIn === 'not-required'}
-                          onChange={handleInputChange}
-                          className="mt-0.5 h-4 w-4 text-blue-500 cursor-pointer"
-                          disabled={loading}
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-semibold text-gray-900">No Location Restriction</span>
-                          <p className="text-xs text-gray-600 mt-0.5">Can check in/out from anywhere</p>
-                        </div>
-                      </label>
-
-                      <label className={cn(
-                        "flex items-start p-3 border-2 rounded-lg cursor-pointer transition-all hover:bg-gray-50",
-                        formData.locationCheckIn === 'required' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-                      )}>
-                        <input
-                          type="radio"
-                          name="locationCheckIn"
-                          value="required"
-                          checked={formData.locationCheckIn === 'required'}
-                          onChange={handleInputChange}
-                          className="mt-0.5 h-4 w-4 text-blue-500 cursor-pointer"
-                          disabled={loading}
-                        />
-                        <div className="ml-3">
-                          <span className="text-sm font-semibold text-gray-900">Location Required</span>
-                          <p className="text-xs text-gray-600 mt-0.5">Must be at shop location to check in/out</p>
-                        </div>
-                      </label>
-                    </div>
-                  </div>
-                )}
-
-                {/* Access Summary */}
-                <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-                  <h4 className="text-sm font-semibold text-gray-800 mb-2">Access Summary</h4>
-                  <div className="flex flex-wrap gap-1.5">
-                    {formData.role === 'employee' && (
-                      <>
-                        {['Billing', 'Products (view)', 'Services', 'Customers', 'Recharge', 'Stock Req.', 'QR Payment', 'Attendance'].map(f => (
-                          <span key={f} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">{f}</span>
-                        ))}
-                      </>
-                    )}
-                    {(formData.role === 'store-admin' || formData.role === 'admin') && (
-                      <>
-                        {['All Store Features', 'Purchases', 'Expenses', 'Suppliers', 'Reports', 'Invoices', 'Employees', 'Users', 'Defects', 'Master Settings'].map(f => (
-                          <span key={f} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">{f}</span>
-                        ))}
-                      </>
-                    )}
-                    {formData.role === 'hub-admin' && (
-                      <>
-                        {['Hub Dashboard', 'All Stores', 'Stock Transfer', 'Store Management', 'All Store Features'].map(f => (
-                          <span key={f} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-700">{f}</span>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Buttons */}
-                <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className={cn(
-                      "flex-1 text-white font-semibold py-2.5 md:py-3 px-6 rounded-lg transition-all shadow-sm hover:shadow-md text-sm md:text-base",
-                      loading ? "cursor-not-allowed opacity-70" : "",
-                      `${colors.bg} hover:opacity-90 disabled:opacity-50`
-                    )}
-                  >
-                    {loading ? (
-                      <span className="flex items-center justify-center">
-                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Adding...
-                      </span>
-                    ) : (
-                      `Add ${selectedRole.label}`
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    disabled={loading}
-                    className="flex-1 sm:flex-initial bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white font-semibold py-2.5 md:py-3 px-6 rounded-lg transition-all shadow-sm text-sm md:text-base"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Login Password <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="password"
+                value={formData.password}
+                onChange={(e) => setFormData((p) => ({ ...p, password: e.target.value }))}
+                placeholder="Minimum 6 characters"
+                minLength={6}
+                required
+                className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+              />
             </div>
-          </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2.5 rounded-lg text-xs sm:text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+              >
+                {loading ? 'Creating Login...' : `Create ${selectedRoleOption.label} Login`}
+              </button>
+            </div>
+          </form>
         </div>
       </main>
     </div>

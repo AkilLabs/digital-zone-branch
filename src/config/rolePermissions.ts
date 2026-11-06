@@ -49,9 +49,8 @@ export const ROUTE_PERMISSIONS: Record<string, UserRole[]> = {
   '/stock-transfer-history': ['owner', 'hq-admin', 'hub-admin'],
   '/stock-transfers':   ['owner', 'hq-admin', 'hub-admin'],
 
-  // ── Billing & Quotations (Quotations HQ only) ──
+  // ── Billing ──
   '/billing':           ALL_ROLES,
-  '/quotations':        ['owner', 'hq-admin', 'hub-admin'],
   '/add-entry':         ALL_ROLES,
 
   // ── Expenses ──

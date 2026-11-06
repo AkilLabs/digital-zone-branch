@@ -24,7 +24,6 @@ import AddPurchaseIMEI from './pages/AddPurchaseIMEI';
 import Suppliers from './pages/Suppliers';
 import SupplierLedger from './pages/SupplierLedger';
 import Billing from './pages/Billing';
-import QuotationManagement from './pages/QuotationManagement';
 import StockRequirement from './pages/StockRequirement';
 import StockTransfer from './pages/StockTransfer';
 import StockTransferHistory from './pages/StockTransferHistory';
@@ -279,14 +278,6 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <Billing />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/quotations"
-                element={
-                  <ProtectedRoute>
-                    <QuotationManagement />
                   </ProtectedRoute>
                 }
               />

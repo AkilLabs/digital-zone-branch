@@ -10,7 +10,6 @@ import {
   Search,
   LayoutDashboard,
   Receipt,
-  FileText,
   Wallet,
   Users,
   Package,
@@ -154,16 +153,6 @@ const Navbar: React.FC = () => {
         : []),
       ...(canAccess('/billing')
         ? [{ title: 'Billing', path: '/billing', icon: Receipt, keywords: ['bill', 'pos', 'invoice'] }]
-        : []),
-      ...(canAccess('/quotations')
-        ? [
-            {
-              title: 'Quotations (HQ Only)',
-              path: '/quotations',
-              icon: FileText,
-              keywords: ['quotation', 'estimate', 'quote'],
-            },
-          ]
         : []),
       ...(canAccess('/add-expense')
         ? [{ title: 'Add Expense', path: '/add-expense', icon: Wallet, keywords: ['expense', 'cost'] }]
@@ -602,11 +591,11 @@ const Navbar: React.FC = () => {
             <span className="text-[10px] font-medium">Stock Value</span>
           </button>
           <button
-            onClick={() => handleNavigation('/quotations')}
+            onClick={() => handleNavigation('/stock-transfer')}
             className="flex flex-col items-center justify-center flex-1 py-1.5 px-1 text-gray-600 hover:text-blue-600"
           >
-            <FileText className="w-5 h-5 mb-0.5" />
-            <span className="text-[10px] font-medium">Quotation</span>
+            <ArrowLeftRight className="w-5 h-5 mb-0.5" />
+            <span className="text-[10px] font-medium">Transfer</span>
           </button>
           <button
             onClick={() => handleNavigation('/employee-management')}

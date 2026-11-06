@@ -651,48 +651,6 @@ export interface DefectProduct {
   updatedByName?: string;
 }
 
-export interface QuotationItem {
-  id?: string;
-  productId?: string;
-  productCode?: string;
-  hsnCode?: string;
-  title: string;
-  description?: string;
-  quantity: number;
-  rate: number; // Unit price before discount
-  unit?: string; // e.g. 'Nos', 'Pcs', 'Set'
-  discount: number; // Specific item discount value
-  discountType?: 'amount' | 'percent'; // 'amount' (₹) or 'percent' (%)
-  taxPercent?: number; // GST % rate (e.g. 0, 5, 12, 18, 28)
-  gstEnabled?: boolean;
-  amount: number; // Final line amount after item discount
-}
-
-export interface Quotation {
-  id?: string;
-  quotationNumber: string; // e.g. QT-20260815-001
-  customerId?: string;
-  customerName: string;
-  customerPhone?: string;
-  customerEmail?: string;
-  customerAddress?: string;
-  customerGstNo?: string;
-  items: QuotationItem[];
-  subtotal: number; // Sum of rate * qty for all items
-  totalDiscount: number; // Sum of line-item discounts
-  taxableAmount?: number; // Total after discount before tax
-  gstRate?: number;
-  totalGstAmount?: number;
-  grandTotal: number;
-  notes?: string;
-  validUntil?: Date | string;
-  status?: 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired';
-  createdAt: Date;
-  createdBy: string;
-  createdByName?: string;
-  storeId?: string;
-}
-
 // ===== SETTLEMENT TYPES =====
 
 export interface SettlementExpected {
