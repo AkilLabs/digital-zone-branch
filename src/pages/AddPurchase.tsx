@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToast } from '../hooks/useToast';
@@ -76,8 +76,12 @@ const AddPurchase: React.FC = () => {
   const [upiAmount, setUpiAmount] = useState('');
   const [cardAmount, setCardAmount] = useState('');
 
+  const [searchParams] = useSearchParams();
+
   // GST Configuration
-  const [isGstPurchase, setIsGstPurchase] = useState<boolean>(false);
+  const [isGstPurchase, setIsGstPurchase] = useState<boolean>(() => {
+    return searchParams.get('gst') === 'true';
+  });
   const [defaultTaxPercent, setDefaultTaxPercent] = useState<number>(18);
 
   // Products Table State

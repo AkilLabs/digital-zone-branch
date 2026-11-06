@@ -12,6 +12,7 @@ import {
   X,
   Smartphone,
   Package,
+  Receipt,
   CheckCircle2,
   Clock,
   ArrowRight,
@@ -33,7 +34,7 @@ const Purchases: React.FC = () => {
   const [filteredPurchases, setFilteredPurchases] = useState<Purchase[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'paid' | 'credit'>('all');
-  const [purchaseType, setPurchaseType] = useState<'all' | 'imei' | 'other'>('all');
+  const [purchaseType, setPurchaseType] = useState<'all' | 'imei' | 'non_imei_gst' | 'non_imei'>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [legacyImeiCount, setLegacyImeiCount] = useState(0);
   const [isMigrating, setIsMigrating] = useState(false);
@@ -173,14 +174,34 @@ const Purchases: React.FC = () => {
     }
   };
 
+  const isIMEIType = (purchase: Purchase) => {
+    return (purchase as any)._collection === 'imeiPurchases' || purchase.isIMEIPurchase || Boolean(purchase.purchaseNumber?.includes('IMEI'));
+  };
+
+  const isGSTType = (purchase: Purchase) => {
+    if (isIMEIType(purchase)) return false;
+    return Boolean(
+      (purchase as any).gstEnabled === true ||
+      (purchase as any).isGstPurchase === true ||
+      ((purchase as any).totalGstAmount && Number((purchase as any).totalGstAmount) > 0) ||
+      purchase.items?.some((it: any) => it.gstEnabled === true || (Number(it.taxPercent || 0) > 0))
+    );
+  };
+
+  const isRegularNonIMEI = (purchase: Purchase) => {
+    return !isIMEIType(purchase) && !isGSTType(purchase);
+  };
+
   const filterPurchases = () => {
     let filtered = [...purchases];
 
     // Purchase Type filter
     if (purchaseType === 'imei') {
-      filtered = filtered.filter(p => (p as any)._collection === 'imeiPurchases' || p.isIMEIPurchase || p.purchaseNumber?.includes('IMEI'));
-    } else if (purchaseType === 'other') {
-      filtered = filtered.filter(p => (p as any)._collection !== 'imeiPurchases' && !p.isIMEIPurchase && !p.purchaseNumber?.includes('IMEI'));
+      filtered = filtered.filter(p => isIMEIType(p));
+    } else if (purchaseType === 'non_imei_gst') {
+      filtered = filtered.filter(p => isGSTType(p));
+    } else if (purchaseType === 'non_imei') {
+      filtered = filtered.filter(p => isRegularNonIMEI(p));
     }
 
     // Search filter
@@ -276,15 +297,12 @@ const Purchases: React.FC = () => {
     }
   };
 
-  const isIMEIType = (purchase: Purchase) => {
-    return (purchase as any)._collection === 'imeiPurchases' || purchase.isIMEIPurchase || purchase.purchaseNumber?.includes('IMEI');
-  };
-
   const { totalPurchases, totalPaid, totalPending, totalUnits } = calculateTotals();
 
   // Counts for tabs
   const imeiCount = purchases.filter(p => isIMEIType(p)).length;
-  const otherCount = purchases.length - imeiCount;
+  const nonImeiGstCount = purchases.filter(p => isGSTType(p)).length;
+  const nonImeiCount = purchases.filter(p => isRegularNonIMEI(p)).length;
 
   const hasActiveFilters = Boolean(searchTerm || selectedSupplier || startDate || endDate || filterStatus !== 'all' || purchaseType !== 'all');
 
@@ -381,15 +399,27 @@ const Purchases: React.FC = () => {
                       </div>
                     </button>
                     <button
-                      onClick={() => { navigate('/add-purchase'); setShowAddMenu(false); }}
+                      onClick={() => { navigate('/add-purchase?gst=true'); setShowAddMenu(false); }}
+                      className="w-full px-3.5 py-2.5 text-sm text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors font-medium flex items-center gap-2.5 text-left border-t border-slate-100 cursor-pointer"
+                    >
+                      <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg">
+                        <Receipt className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-semibold text-slate-900 text-xs">Non-IMEI GST Purchase</div>
+                        <div className="text-[11px] text-slate-500 font-normal">GST tax invoice with input tax credit</div>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { navigate('/add-purchase?gst=false'); setShowAddMenu(false); }}
                       className="w-full px-3.5 py-2.5 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors font-medium flex items-center gap-2.5 text-left border-t border-slate-100 cursor-pointer"
                     >
                       <div className="p-1.5 bg-slate-100 text-slate-600 rounded-lg">
                         <Package className="w-4 h-4" />
                       </div>
                       <div>
-                        <div className="font-semibold text-slate-900 text-xs">Standard / Other</div>
-                        <div className="text-[11px] text-slate-500 font-normal">Accessories & general goods</div>
+                        <div className="font-semibold text-slate-900 text-xs">Non-IMEI Regular Purchase</div>
+                        <div className="text-[11px] text-slate-500 font-normal">General items without GST</div>
                       </div>
                     </button>
                   </div>
@@ -529,17 +559,32 @@ const Purchases: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setPurchaseType('other')}
+                onClick={() => setPurchaseType('non_imei_gst')}
                 className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
-                  purchaseType === 'other'
-                    ? 'bg-white text-blue-700 shadow-2xs'
+                  purchaseType === 'non_imei_gst'
+                    ? 'bg-white text-emerald-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Non-IMEI GST</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-100 text-emerald-700 font-bold">
+                  {nonImeiGstCount}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setPurchaseType('non_imei')}
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                  purchaseType === 'non_imei'
+                    ? 'bg-white text-slate-900 shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Package className="w-3.5 h-3.5 text-slate-600" />
-                <span>Standard Items</span>
+                <span>Non-IMEI Regular</span>
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-200/70 text-slate-700 font-bold">
-                  {otherCount}
+                  {nonImeiCount}
                 </span>
               </button>
             </div>
@@ -655,6 +700,14 @@ const Purchases: React.FC = () => {
                   </button>
                 </span>
               )}
+              {purchaseType !== 'all' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 text-xs rounded-lg font-medium">
+                  Type: {purchaseType === 'imei' ? 'IMEI Devices' : purchaseType === 'non_imei_gst' ? 'Non-IMEI GST' : 'Non-IMEI Regular'}
+                  <button onClick={() => setPurchaseType('all')} className="hover:text-rose-600 cursor-pointer">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
               {filterStatus !== 'all' && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 text-xs rounded-lg font-medium">
                   Status: {filterStatus.toUpperCase()}
@@ -697,11 +750,18 @@ const Purchases: React.FC = () => {
                   Create IMEI Purchase
                 </button>
                 <button
-                  onClick={() => navigate('/add-purchase')}
+                  onClick={() => navigate('/add-purchase?gst=true')}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Receipt className="w-4 h-4" />
+                  Create Non-IMEI GST
+                </button>
+                <button
+                  onClick={() => navigate('/add-purchase?gst=false')}
                   className="w-full sm:w-auto px-5 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-bold rounded-xl shadow-2xs transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Package className="w-4 h-4" />
-                  Create Standard Purchase
+                  Create Non-IMEI Regular
                 </button>
               </div>
             )}
@@ -747,10 +807,15 @@ const Purchases: React.FC = () => {
                                   <Smartphone className="w-2.5 h-2.5" />
                                   IMEI Manifest
                                 </span>
+                              ) : isGSTType(purchase) ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <Receipt className="w-2.5 h-2.5" />
+                                  Non-IMEI GST
+                                </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
                                   <Package className="w-2.5 h-2.5" />
-                                  General
+                                  Non-IMEI Regular
                                 </span>
                               )}
                             </div>
@@ -874,9 +939,14 @@ const Purchases: React.FC = () => {
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
                               IMEI
                             </span>
+                          ) : isGSTType(purchase) ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <Receipt className="w-2.5 h-2.5" />
+                              GST
+                            </span>
                           ) : (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                              General
+                              Regular
                             </span>
                           )}
                         </div>
@@ -1061,10 +1131,17 @@ const Purchases: React.FC = () => {
                   <Smartphone className="w-4 h-4 text-blue-600" />
                 </button>
                 <button
-                  onClick={() => { navigate('/add-purchase'); setShowAddMenu(false); }}
+                  onClick={() => { navigate('/add-purchase?gst=true'); setShowAddMenu(false); }}
+                  className="px-4 py-2.5 rounded-full bg-white shadow-xl text-xs font-bold text-emerald-800 flex items-center justify-end gap-2 border border-emerald-200 active:scale-95 cursor-pointer"
+                >
+                  <span>Non-IMEI GST Purchase</span>
+                  <Receipt className="w-4 h-4 text-emerald-600" />
+                </button>
+                <button
+                  onClick={() => { navigate('/add-purchase?gst=false'); setShowAddMenu(false); }}
                   className="px-4 py-2.5 rounded-full bg-white shadow-xl text-xs font-bold text-slate-800 flex items-center justify-end gap-2 border border-slate-200 active:scale-95 cursor-pointer"
                 >
-                  <span>Standard Purchase</span>
+                  <span>Non-IMEI Regular</span>
                   <Package className="w-4 h-4 text-slate-600" />
                 </button>
               </div>
