@@ -85,7 +85,7 @@ const AddPurchase: React.FC = () => {
   const [defaultTaxPercent, setDefaultTaxPercent] = useState<number>(18);
 
   // Products Table State
-  const [items, setItems] = useState<PurchaseItem[]>([getInitialItem(0)]);
+  const [items, setItems] = useState<PurchaseItem[]>([getInitialItem(18)]);
   const [itemIsExistingProduct, setItemIsExistingProduct] = useState<boolean[]>([false]);
   const [itemProductCodes, setItemProductCodes] = useState<string[]>(['']);
   const [itemExistingStock, setItemExistingStock] = useState<number[]>([0]);
@@ -283,7 +283,7 @@ const AddPurchase: React.FC = () => {
     setCardAmount('');
     setIsGstPurchase(false);
     setDefaultTaxPercent(18);
-    setItems([getInitialItem(0)]);
+    setItems([getInitialItem(18)]);
     setItemIsExistingProduct([false]);
     setItemExistingStock([0]);
     initializeProductCode(true, 1);
@@ -427,14 +427,15 @@ const AddPurchase: React.FC = () => {
     setItems(prevItems => prevItems.map(item => {
       const cost = Number(item.costPerUnit) || 0;
       const qty = Number(item.quantity) || 0;
-      const tax = enable ? (Number(item.taxPercent) || defaultTaxPercent) : 0;
+      const tax = enable ? (Number(item.taxPercent) > 0 ? Number(item.taxPercent) : (defaultTaxPercent || 18)) : 0;
       const costWithGst = cost + (cost * tax / 100);
       return {
         ...item,
-        taxPercent: tax,
+        taxPercent: enable ? tax : (Number(item.taxPercent) || (defaultTaxPercent || 18)),
         totalCost: enable ? (qty * costWithGst) : (qty * cost)
       };
     }));
+    showToast(enable ? 'GST enabled (18% default applied)' : 'GST disabled for this purchase', 'info');
   };
 
   const handleItemChange = (index: number, field: keyof PurchaseItem, value: any) => {
@@ -472,13 +473,14 @@ const AddPurchase: React.FC = () => {
   const addItem = (duplicatePrevious = false) => {
     const newIndex = items.length;
     const newCode = getNextProductCodeForItem(newIndex);
-    const tax = isGstPurchase ? defaultTaxPercent : 0;
+    const tax = isGstPurchase ? (defaultTaxPercent || 18) : 18;
     const lastItem = items[items.length - 1];
 
     if (duplicatePrevious && lastItem) {
       setItems([...items, {
         ...lastItem,
         quantity: 1,
+        taxPercent: Number(lastItem.taxPercent) || 18,
         totalCost: isGstPurchase
           ? (Number(lastItem.costPerUnit) * (1 + (Number(lastItem.taxPercent || tax) / 100)))
           : Number(lastItem.costPerUnit)
@@ -494,8 +496,8 @@ const AddPurchase: React.FC = () => {
         totalCost: 0,
         mrp: 0,
         mop: 0,
-        taxPercent: tax,
-        hcsCode: isGstPurchase ? (lastItem?.hcsCode || '') : ''
+        taxPercent: 18,
+        hcsCode: lastItem?.hcsCode || ''
       }]);
     }
 
@@ -642,9 +644,9 @@ const AddPurchase: React.FC = () => {
     const pBaseCost = (product.baseCost !== undefined && product.baseCost > 0)
       ? Number(product.baseCost)
       : (product.cost ? Number(product.cost) : 0);
-    const itemTax = isGstPurchase
-      ? (product.taxPercent !== undefined ? Number(product.taxPercent) : defaultTaxPercent)
-      : 0;
+    const itemTax = product.taxPercent !== undefined && Number(product.taxPercent) > 0
+      ? Number(product.taxPercent)
+      : (defaultTaxPercent || 18);
     const itemCostWithGst = pBaseCost + (pBaseCost * itemTax / 100);
 
     const newItem: PurchaseItem = {
@@ -890,11 +892,6 @@ const AddPurchase: React.FC = () => {
       if (Number(item.costPerUnit) <= 0) {
         showToast(`Line #${i + 1} (${item.brand} ${item.model}): Cost per unit must be greater than 0`, 'error');
         setTimeout(() => document.getElementById(`cell-${i}-5`)?.focus(), 70);
-        return false;
-      }
-      if (isGstPurchase && !item.hcsCode?.trim()) {
-        showToast(`Line #${i + 1} (${item.brand} ${item.model}): HSN Code is required for GST purchases`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-6`)?.focus(), 70);
         return false;
       }
       if (!item.mop || Number(item.mop) <= 0) {
@@ -1741,6 +1738,53 @@ const AddPurchase: React.FC = () => {
                           {showProductName ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           <span>Product Name</span>
                         </button>
+
+                        {/* Common GST Toggle Button near Product Name */}
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleGstPurchase(!isGstPurchase)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer shadow-2xs ${isGstPurchase
+                              ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                              }`}
+                            title="Toggle GST mode for all items (18% default)"
+                          >
+                            <Receipt className={`w-3.5 h-3.5 ${isGstPurchase ? 'text-white' : 'text-emerald-600'}`} />
+                            <span>{isGstPurchase ? 'GST Active (18%)' : 'Enable GST (18%)'}</span>
+                          </button>
+
+                          {isGstPurchase && (
+                            <div className="inline-flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 text-xs">
+                              <span className="text-emerald-800 font-semibold text-[11px]">Tax:</span>
+                              <select
+                                value={defaultTaxPercent}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setDefaultTaxPercent(val);
+                                  setItems(prev => prev.map(it => {
+                                    const cost = Number(it.costPerUnit) || 0;
+                                    const qty = Number(it.quantity) || 0;
+                                    const tax = val;
+                                    const costWithGst = cost + (cost * tax / 100);
+                                    return {
+                                      ...it,
+                                      taxPercent: tax,
+                                      totalCost: qty * costWithGst
+                                    };
+                                  }));
+                                }}
+                                className="bg-white border border-emerald-300 text-emerald-900 rounded font-bold px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                              >
+                                <option value={0}>0%</option>
+                                <option value={5}>5%</option>
+                                <option value={12}>12%</option>
+                                <option value={18}>18%</option>
+                                <option value={28}>28%</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -1896,12 +1940,12 @@ const AddPurchase: React.FC = () => {
                               {isGstPurchase && (
                                 <div className="grid grid-cols-2 gap-2 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100">
                                   <div>
-                                    <label className="text-[11px] font-semibold text-emerald-800 block mb-1">HSN Code *</label>
+                                    <label className="text-[11px] font-semibold text-emerald-800 block mb-1">HSN Code (Optional)</label>
                                     <input
                                       type="text"
                                       value={item.hcsCode || ''}
                                       onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
-                                      placeholder="HSN"
+                                      placeholder="HSN (Optional)"
                                       className="w-full px-2 py-1 text-xs border border-emerald-200 rounded bg-white font-mono uppercase"
                                     />
                                   </div>
@@ -1985,7 +2029,7 @@ const AddPurchase: React.FC = () => {
                                 <>
                                   <th className="px-2 py-2.5 min-w-[110px] bg-emerald-50/40 text-emerald-900">
                                     <div className="flex items-center justify-between gap-1">
-                                      <span>HSN *</span>
+                                      <span>HSN (Optional)</span>
                                       {items.length > 1 && (
                                         <button
                                           type="button"
@@ -2146,7 +2190,7 @@ const AddPurchase: React.FC = () => {
                                           onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
                                           onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 6)}
                                           className="w-full px-2 py-1 text-xs border border-emerald-200 rounded uppercase font-mono bg-white focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none"
-                                          placeholder="HSN *"
+                                          placeholder="HSN (Optional)"
                                         />
                                       </td>
 
