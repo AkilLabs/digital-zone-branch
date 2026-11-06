@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Calendar, User, Phone, Mail, CreditCard, Layers, Package, Tag } from 'lucide-react';
+import { X, Calendar, User, Phone, Mail, CreditCard, Layers, Package, Tag, Hourglass } from 'lucide-react';
 import type { BillingItem } from '../types';
 
 interface TransactionDetailsModalProps {
@@ -184,7 +184,18 @@ const TransactionDetailsModal: React.FC<TransactionDetailsModalProps> = ({ isOpe
                                         return (
                                             <tr key={idx} className="hover:bg-gray-50 transition-colors">
                                                 <td className="px-2 md:px-4 py-2 md:py-3">
-                                                    <div className="text-gray-900 font-medium">{item.title || item.name}</div>
+                                                    <div className="text-gray-900 font-medium flex items-center gap-1.5 flex-wrap">
+                                                        <span>{item.title || item.name}</span>
+                                                        {item.isAgingStock && (
+                                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded border border-amber-300">
+                                                                <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                                                Aging ({item.agingDays}d)
+                                                                {item.agingIncentiveAmount > 0 && (
+                                                                    <span className="text-emerald-700 ml-0.5">+₹{Math.round(item.agingIncentiveAmount)} Bonus</span>
+                                                                )}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                     
                                                     {/* Additional Product Details */}
                                                     <div className="text-[10px] md:text-xs text-gray-500 mt-1 space-y-0.5">
@@ -240,6 +251,17 @@ const TransactionDetailsModal: React.FC<TransactionDetailsModalProps> = ({ isOpe
                                     <span>Round Off</span>
                                     <span className={roundOff < 0 ? 'text-red-500 font-medium' : 'text-emerald-600 font-medium'}>
                                         {roundOff > 0 ? `+${formatCurrency(roundOff)}` : `-${formatCurrency(Math.abs(roundOff))}`}
+                                    </span>
+                                </div>
+                            )}
+
+                            {items.some((i: any) => i.isAgingStock) && (
+                                <div className="flex justify-between text-xs md:text-sm text-amber-900 bg-amber-50 px-2 py-1.5 rounded-lg border border-amber-200">
+                                    <span className="flex items-center gap-1 font-semibold">
+                                        <Hourglass className="w-3.5 h-3.5 text-amber-600" /> Aging Clearance Bonus:
+                                    </span>
+                                    <span className="font-bold text-emerald-700">
+                                        {formatCurrency(items.reduce((sum: number, it: any) => sum + (it.agingIncentiveAmount || 0), 0))}
                                     </span>
                                 </div>
                             )}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Navbar from '../components/Navbar';
+import LocationSwitcher from '../components/LocationSwitcher';
 import CustomModal from '../components/CustomModal';
 import ShareModal from '../components/ShareModal';
 import TransactionDetailsModal from '../components/TransactionDetailsModal';
@@ -104,7 +105,14 @@ import {
   Gift,
   Lock,
   Unlock,
+  Hourglass,
+  Target,
 } from 'lucide-react';
+import {
+  getCachedStockAgingSettings,
+  type StockAgingSettings,
+  type EmployeeTarget
+} from '../utils/stockAging';
 
 // Declare Android interface for TypeScript
 declare global {
@@ -419,12 +427,45 @@ const OverallSales: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, getDocRef, currentStore, stores, setCurrentStore, isViewingWarehouse } = useStore();
   const { error: showError, success: showSuccess } = useToastContext();
   const { invalidateExpenses, invalidateBillingItems } = useInvalidateCache();
 
   const currentUserDisplayName =
     currentUser?.displayName || currentUser?.name || currentUser?.email || 'Staff';
+
+  // Head Office Branch Filter ('all' = All Branches via overallSales summary, or specific store.id)
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>(() =>
+    isViewingWarehouse || !currentStore?.id ? 'all' : currentStore.id
+  );
+  const [branchDailySummaries, setBranchDailySummaries] = useState<Array<{
+    id: string;
+    storeId: string;
+    storeName?: string;
+    date: string;
+    totalRevenue: number;
+    totalBills: number;
+    totalItemsSold: number;
+  }>>([]);
+  const [loadingBranchSummaries, setLoadingBranchSummaries] = useState(false);
+
+  // Sync selectedBranchFilter if user switches branch in Navbar
+  useEffect(() => {
+    if (isViewingWarehouse) {
+      setSelectedBranchFilter('all');
+    } else if (currentStore?.id) {
+      setSelectedBranchFilter(currentStore.id);
+    }
+  }, [currentStore?.id, isViewingWarehouse]);
+
+  const handleBranchFilterChange = (val: string) => {
+    setSelectedBranchFilter(val);
+    if (val === 'all') {
+      setCurrentStore('hub_warehouse');
+    } else {
+      setCurrentStore(val);
+    }
+  };
 
   // Default tab: if user navigated via /settlement, open settlement tab first; otherwise sales
   const [activeTab, setActiveTab] = useState<UnifiedTab>(() =>
@@ -451,6 +492,9 @@ const OverallSales: React.FC = () => {
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [showCostCode, setShowCostCode] = useState<boolean>(true);
+  const [showAgingOnly, setShowAgingOnly] = useState<boolean>(false);
+  const [employeeTargets, setEmployeeTargets] = useState<EmployeeTarget[]>([]);
+  const [stockAgingSettings, setStockAgingSettings] = useState<StockAgingSettings>(getCachedStockAgingSettings());
 
   // Pagination & Sorting
   const [currentPage, setCurrentPage] = useState(1);
@@ -592,6 +636,97 @@ const OverallSales: React.FC = () => {
     setCurrentPage(1);
   }, [dateRangeType, selectedDayDate, selectedMonthDate, customStartDate, customEndDate]);
 
+  // Fetch root `overallSales` (1 doc per branch per day) when "All Branches" is selected
+  useEffect(() => {
+    if (selectedBranchFilter !== 'all') return;
+    let cancelled = false;
+    const loadAllBranchesSummary = async () => {
+      setLoadingBranchSummaries(true);
+      try {
+        const startStr = dateRangeType === 'all' ? '2000-01-01' : toYYYYMMDD(dateRange.start);
+        const endStr = toYYYYMMDD(dateRange.end);
+        const q = query(
+          collection(db, 'overallSales'),
+          where('date', '>=', startStr),
+          where('date', '<=', endStr),
+          orderBy('date', 'desc')
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const rows = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            storeId: String(data.storeId || d.id.split('_')[0] || ''),
+            storeName: data.storeName ? String(data.storeName) : undefined,
+            date: String(data.date || ''),
+            totalRevenue: Number(data.totalRevenue || 0),
+            totalBills: Number(data.totalBills || 0),
+            totalItemsSold: Number(data.totalItemsSold || 0),
+          };
+        });
+        setBranchDailySummaries(rows);
+      } catch (err) {
+        console.warn('Error fetching overallSales summaries:', err);
+      } finally {
+        if (!cancelled) setLoadingBranchSummaries(false);
+      }
+    };
+    loadAllBranchesSummary();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBranchFilter, dateRange.start, dateRange.end, dateRangeType]);
+
+  const aggregatedByBranch = useMemo(() => {
+    const map = new Map<string, {
+      storeId: string;
+      storeName: string;
+      periodRevenue: number;
+      periodBills: number;
+      periodItemsSold: number;
+      lifetimeRevenue: number;
+      lifetimeBills: number;
+      totalStockUnits: number;
+    }>();
+
+    stores.forEach((st) => {
+      if (!st.id) return;
+      map.set(st.id, {
+        storeId: st.id,
+        storeName: st.name,
+        periodRevenue: 0,
+        periodBills: 0,
+        periodItemsSold: 0,
+        lifetimeRevenue: st.lifetimeRevenue || 0,
+        lifetimeBills: st.lifetimeBills || 0,
+        totalStockUnits: st.totalStockUnits || 0,
+      });
+    });
+
+    branchDailySummaries.forEach((row) => {
+      const existing = map.get(row.storeId);
+      if (existing) {
+        existing.periodRevenue += row.totalRevenue;
+        existing.periodBills += row.totalBills;
+        existing.periodItemsSold += row.totalItemsSold;
+      } else if (row.storeId) {
+        map.set(row.storeId, {
+          storeId: row.storeId,
+          storeName: row.storeName || row.storeId,
+          periodRevenue: row.totalRevenue,
+          periodBills: row.totalBills,
+          periodItemsSold: row.totalItemsSold,
+          lifetimeRevenue: 0,
+          lifetimeBills: 0,
+          totalStockUnits: 0,
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [stores, branchDailySummaries]);
+
   // Close export dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -660,8 +795,7 @@ const OverallSales: React.FC = () => {
         const users: AppUser[] = [];
         usersSnap.forEach((d) => {
           const uData = { uid: d.id, ...d.data() } as AppUser;
-          // Only show employees of this current branch (exclude HQ roles and other branches)
-          if (isEmployeeOfBranch(uData, currentStore)) {
+          if (!currentStore || isEmployeeOfBranch(uData, currentStore)) {
             users.push(uData);
           }
         });
@@ -675,14 +809,29 @@ const OverallSales: React.FC = () => {
         const storeShopSnap = await getDoc(getDocRef('settings', 'shopDetails'));
         if (storeShopSnap.exists()) {
           setShopDetails(storeShopSnap.data() as ShopDetails);
-          return;
-        }
-        const rootShopSnap = await getDoc(doc(db, 'settings', 'shopDetails'));
-        if (rootShopSnap.exists()) {
-          setShopDetails(rootShopSnap.data() as ShopDetails);
+        } else {
+          const rootShopSnap = await getDoc(doc(db, 'settings', 'shopDetails'));
+          if (rootShopSnap.exists()) {
+            setShopDetails(rootShopSnap.data() as ShopDetails);
+          }
         }
       } catch (err) {
         console.warn('Error loading shopDetails:', err);
+      }
+
+      try {
+        const targetsSnap = await getDocs(collection(db, 'employeeTargets'));
+        const targets = targetsSnap.docs.map(d => ({ id: d.id, ...d.data() } as EmployeeTarget));
+        setEmployeeTargets(targets);
+
+        const sSnap = await getDoc(doc(db, 'projectSettings', 'default'));
+        if (sSnap.exists() && sSnap.data()?.stockAgingSettings) {
+          const s = sSnap.data().stockAgingSettings;
+          setStockAgingSettings(s);
+          localStorage.setItem('dz_stock_aging_settings', JSON.stringify(s));
+        }
+      } catch (err) {
+        console.warn('Error loading targets or aging settings:', err);
       }
     };
 
@@ -971,7 +1120,15 @@ const OverallSales: React.FC = () => {
       }
     }
 
-    return [...grouped].sort((a, b) => {
+    const finalGrouped = showAgingOnly
+      ? grouped.filter(
+          (item) =>
+            Boolean(item.isAgingStock) ||
+            Boolean(item.items && item.items.some((sub) => Boolean(sub.isAgingStock)))
+        )
+      : grouped;
+
+    return [...finalGrouped].sort((a, b) => {
       let cmp = 0;
       if (sortBy === 'date') {
         cmp = (a.createdAt ? new Date(a.createdAt).getTime() : 0) - (b.createdAt ? new Date(b.createdAt).getTime() : 0);
@@ -984,7 +1141,24 @@ const OverallSales: React.FC = () => {
       }
       return sortOrder === 'asc' ? cmp : -cmp;
     });
-  }, [filteredRawSalesItems, resolveItemBrandAndCategory, sortBy, sortOrder]);
+  }, [filteredRawSalesItems, resolveItemBrandAndCategory, sortBy, sortOrder, showAgingOnly]);
+
+  // ── Aging Sales Stats (across all current sales) ─────────────────────────
+  const agingSalesStats = useMemo(() => {
+    let count = 0;
+    let revenue = 0;
+    let incentive = 0;
+
+    for (const raw of filteredRawSalesItems) {
+      if (raw.isAgingStock) {
+        count += Number(raw.quantity || 1);
+        revenue += (Number(raw.sellingPrice) || 0) * Number(raw.quantity || 1);
+        incentive += Number(raw.agingIncentiveAmount || 0);
+      }
+    }
+
+    return { count, revenue, incentive };
+  }, [filteredRawSalesItems]);
 
   // ── Filter Expense Items ─────────────────────────────────────────────────
   const filteredExpenses = useMemo(() => {
@@ -1148,6 +1322,9 @@ const OverallSales: React.FC = () => {
         financeCollected: number;
         creditIssued: number;
         creditPending: number;
+        agingItemsSold: number;
+        agingRevenue: number;
+        agingIncentiveEarned: number;
         lastSaleAt: Date | null;
         transactions: BillingItem[];
         topItems: Map<string, { qty: number; rev: number }>;
@@ -1176,6 +1353,9 @@ const OverallSales: React.FC = () => {
             financeCollected: 0,
             creditIssued: 0,
             creditPending: 0,
+            agingItemsSold: 0,
+            agingRevenue: 0,
+            agingIncentiveEarned: 0,
             lastSaleAt: null,
             transactions: [],
             topItems: new Map(),
@@ -1200,6 +1380,9 @@ const OverallSales: React.FC = () => {
           financeCollected: 0,
           creditIssued: 0,
           creditPending: 0,
+          agingItemsSold: 0,
+          agingRevenue: 0,
+          agingIncentiveEarned: 0,
           lastSaleAt: null,
           transactions: [],
           topItems: new Map(),
@@ -1245,6 +1428,13 @@ const OverallSales: React.FC = () => {
 
       const subList = tx.items && tx.items.length > 0 ? tx.items : [tx];
       for (const sub of subList) {
+        if (sub.isAgingStock) {
+          const subQty = Number(sub.quantity || 1);
+          const subFin = getItemFinancials(sub);
+          entry.agingItemsSold = (entry.agingItemsSold || 0) + subQty;
+          entry.agingRevenue = (entry.agingRevenue || 0) + subFin.netTotal;
+          entry.agingIncentiveEarned = (entry.agingIncentiveEarned || 0) + Number(sub.agingIncentiveAmount || 0);
+        }
         const t = sub.title || 'Item';
         const subFin = getItemFinancials(sub);
         const cur = entry.topItems.get(t) || { qty: 0, rev: 0 };
@@ -2403,6 +2593,7 @@ const OverallSales: React.FC = () => {
     setSelectedBrand('');
     setSelectedCategory('');
     setExpenseCategoryFilter('all');
+    setShowAgingOnly(false);
     setCurrentPage(1);
   };
 
@@ -2414,7 +2605,8 @@ const OverallSales: React.FC = () => {
       salesGstFilter !== 'all' ||
       selectedBrand ||
       selectedCategory ||
-      expenseCategoryFilter !== 'all'
+      expenseCategoryFilter !== 'all' ||
+      showAgingOnly
   );
 
   const totalSalesPages = Math.max(1, Math.ceil(groupedSalesTransactions.length / itemsPerPage));
@@ -2452,6 +2644,22 @@ const OverallSales: React.FC = () => {
 
           {/* Action Toolbar matching Products.tsx */}
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            {/* Unified Location Switcher */}
+            <LocationSwitcher
+              includeAllLocations
+              allLocationsLabel="All Branches (HO Summary)"
+              allLocationsSubtitle="Chain-wide sales across all branches"
+              hubLabel="Hub (Direct Head Office)"
+              hubSubtitle="Sales processed directly at Head Office"
+              onChange={(val) => {
+                if (val === 'all_locations') {
+                  setSelectedBranchFilter('all');
+                } else {
+                  setSelectedBranchFilter(val);
+                }
+              }}
+            />
+
             {/* Secret / Cost Toggle */}
             <button
               type="button"
@@ -2569,6 +2777,94 @@ const OverallSales: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* ═══ HEAD OFFICE MULTI-BRANCH SUMMARY (1 read/branch/day via overallSales) ═══ */}
+        {selectedBranchFilter === 'all' && (
+          <div className="bg-white rounded-xl border border-indigo-100 shadow-sm mb-4 overflow-hidden print:hidden">
+            <div className="px-4 py-3 bg-gradient-to-r from-indigo-50/80 to-blue-50/80 border-b border-indigo-100 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-indigo-600" />
+                <h2 className="text-sm font-bold text-gray-900">
+                  All Branches Sales Summary ({aggregatedByBranch.length} Branches)
+                </h2>
+              </div>
+              <div className="text-xs text-gray-600 font-medium">
+                Period Total:{' '}
+                <strong className="text-indigo-700">
+                  {fmtRs(aggregatedByBranch.reduce((s, b) => s + b.periodRevenue, 0))}
+                </strong>{' '}
+                •{' '}
+                <strong>
+                  {aggregatedByBranch.reduce((s, b) => s + b.periodBills, 0)} bills
+                </strong>{' '}
+                •{' '}
+                <strong>
+                  {aggregatedByBranch.reduce((s, b) => s + b.periodItemsSold, 0)} items
+                </strong>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50/60 text-gray-500 uppercase text-[10px] font-semibold">
+                    <th className="py-2.5 px-4">Branch</th>
+                    <th className="py-2.5 px-4 text-right">Period Revenue</th>
+                    <th className="py-2.5 px-4 text-right">Period Bills</th>
+                    <th className="py-2.5 px-4 text-right">Items Sold</th>
+                    <th className="py-2.5 px-4 text-right">Lifetime Revenue</th>
+                    <th className="py-2.5 px-4 text-right">Stock Units</th>
+                    <th className="py-2.5 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {loadingBranchSummaries ? (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center text-gray-400">
+                        Loading branch summaries...
+                      </td>
+                    </tr>
+                  ) : aggregatedByBranch.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center text-gray-400">
+                        No branches or sales summaries found for selected period.
+                      </td>
+                    </tr>
+                  ) : (
+                    aggregatedByBranch.map((b) => (
+                      <tr key={b.storeId} className="hover:bg-indigo-50/30 transition-colors">
+                        <td className="py-2.5 px-4 font-semibold text-gray-900">{b.storeName}</td>
+                        <td className="py-2.5 px-4 text-right font-mono font-bold text-blue-700">
+                          {fmtRs(b.periodRevenue)}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-mono text-gray-700">
+                          {b.periodBills}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-mono text-gray-700">
+                          {b.periodItemsSold}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-mono text-emerald-700 font-semibold">
+                          {fmtRs(b.lifetimeRevenue)}
+                        </td>
+                        <td className="py-2.5 px-4 text-right font-mono text-purple-700">
+                          {b.totalStockUnits.toLocaleString('en-IN')}
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleBranchFilterChange(b.storeId)}
+                            className="px-2.5 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-semibold text-[11px] transition-colors cursor-pointer"
+                          >
+                            Inspect Bills →
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* ═══ COMPACT STATS (Matching Products.tsx) ═══ */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4 print:hidden">
@@ -2996,6 +3292,30 @@ const OverallSales: React.FC = () => {
               )}
             </button>
 
+            {/* Aging Stock Sales Toggle */}
+            {stockAgingSettings.enabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAgingOnly(!showAgingOnly);
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 sm:py-2 border rounded-lg text-xs sm:text-sm font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  showAgingOnly
+                    ? 'bg-amber-500 text-white border-amber-600 shadow-sm font-bold'
+                    : 'bg-white border-gray-300 text-amber-700 hover:bg-amber-50'
+                }`}
+              >
+                <Hourglass className={`w-3.5 h-3.5 ${showAgingOnly ? 'text-white' : 'text-amber-500'}`} />
+                <span>⚡ Aging Sales</span>
+                {agingSalesStats.count > 0 && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${showAgingOnly ? 'bg-white text-amber-700' : 'bg-amber-100 text-amber-800'}`}>
+                    {agingSalesStats.count}
+                  </span>
+                )}
+              </button>
+            )}
+
             {/* Reset Filters */}
             {hasActiveFilters && (
               <button
@@ -3053,6 +3373,30 @@ const OverallSales: React.FC = () => {
                   </button>
                 </span>
               )}
+              {showAgingOnly && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 font-bold border border-amber-300">
+                  <Hourglass className="w-3 h-3 text-amber-600" />
+                  Aging Stock Sales Only
+                  <button onClick={() => setShowAgingOnly(false)} className="hover:text-amber-950 cursor-pointer">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
+          {showAgingOnly && (
+            <div className="mt-2.5 p-3 bg-amber-50 border border-amber-300 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <Hourglass className="w-4 h-4 text-amber-600 animate-pulse" />
+                <span className="font-bold text-amber-900">
+                  Aging Clearance Sales Filter Active ({agingSalesStats.count} Units Sold)
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-amber-900 font-semibold flex-wrap">
+                <span>Revenue Cleared: <strong className="text-blue-700 font-mono">{fmtRs(agingSalesStats.revenue)}</strong></span>
+                <span>Incentives Earned: <strong className="text-emerald-700 font-mono">{fmtRs(agingSalesStats.incentive)}</strong></span>
+              </div>
             </div>
           )}
         </div>
@@ -3271,6 +3615,12 @@ const OverallSales: React.FC = () => {
                                               [{sub.imei}]
                                             </span>
                                           )}
+                                          {sub.isAgingStock && (
+                                            <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 px-1 rounded ml-1 font-bold inline-flex items-center gap-0.5">
+                                              <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                              Aging ({sub.agingDays}d)
+                                            </span>
+                                          )}
                                         </li>
                                       ))}
                                     </ul>
@@ -3279,6 +3629,12 @@ const OverallSales: React.FC = () => {
                                   <div>
                                     <div className="font-semibold text-gray-900 flex items-center gap-1.5 flex-wrap">
                                       <span>{item.title || 'N/A'}</span>
+                                      {item.isAgingStock && (
+                                        <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-0.5">
+                                          <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                          Aging Stock ({item.agingDays}d)
+                                        </span>
+                                      )}
                                       {item.gstEnabled && (
                                         <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
                                           GST {item.gstRate ? `${item.gstRate}%` : ''}
@@ -3461,6 +3817,12 @@ const OverallSales: React.FC = () => {
                                 <span className="text-[11px] text-gray-400">
                                   • {dObj ? dObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : ''}
                                 </span>
+                                {(item.isAgingStock || item.items?.some((sub) => sub.isAgingStock)) && (
+                                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-0.5">
+                                    <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                    Aging Stock
+                                  </span>
+                                )}
                                 <span
                                   className={`px-2 py-0.2 rounded-full text-[10px] font-bold border uppercase ${getPaymentBadge(
                                     item.paymentMode
@@ -3605,9 +3967,17 @@ const OverallSales: React.FC = () => {
                     ? (sp.revenue / financialStats.totalRevenue) * 100
                     : 0;
                 const avgBill = sp.billsCount > 0 ? sp.revenue / sp.billsCount : 0;
-                const targetAmt = salesPersonTargets[sp.name.toLowerCase()] || 0;
-                const targetPct =
-                  targetAmt > 0 ? Math.min(100, (sp.revenue / targetAmt) * 100) : 0;
+                const hqTarget = employeeTargets.find(
+                  (t) =>
+                    t.employeeName.toLowerCase().trim() === sp.name.toLowerCase().trim() ||
+                    (sp.email && t.employeeId?.toLowerCase() === sp.email.toLowerCase())
+                );
+                const isHqTarget = Boolean(hqTarget);
+                const targetMetric = hqTarget?.metric || 'sales_amount';
+                const targetPeriod = hqTarget?.period || 'monthly';
+                const targetAmt = hqTarget ? hqTarget.targetAmount : (salesPersonTargets[sp.name.toLowerCase()] || 0);
+                const currentVal = targetMetric === 'profit_amount' ? sp.profit : sp.revenue;
+                const targetPct = targetAmt > 0 ? (currentVal / targetAmt) * 100 : 0;
                 const isFocused =
                   focusedSalesPerson?.toLowerCase() === sp.name.toLowerCase();
 
@@ -3746,16 +4116,57 @@ const OverallSales: React.FC = () => {
 
                       {/* Target Progress Bar if target is set */}
                       {targetAmt > 0 && (
-                        <div className="mb-3">
-                          <div className="flex justify-between text-[11px] font-semibold mb-1">
-                            <span className="text-gray-600">Target: {fmtRs(targetAmt)}</span>
-                            <span className="text-blue-700">{targetPct.toFixed(0)}% Achieved</span>
+                        <div className="mb-3 p-2 bg-slate-50 rounded-lg border border-slate-200">
+                          <div className="flex justify-between items-center text-[11px] font-semibold mb-1">
+                            <span className="text-gray-700 flex items-center gap-1.5 flex-wrap">
+                              <Target className="w-3.5 h-3.5 text-blue-600" />
+                              {isHqTarget ? (
+                                <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase">
+                                  HQ {targetPeriod} {targetMetric === 'profit_amount' ? 'Profit' : 'Sales'}
+                                </span>
+                              ) : (
+                                <span>Target</span>
+                              )}
+                              <span>: {fmtRs(targetAmt)}</span>
+                            </span>
+                            <span className={targetPct >= 100 ? 'text-emerald-700 font-extrabold' : 'text-blue-700 font-bold'}>
+                              {targetPct.toFixed(0)}% {targetPct >= 100 ? '✓ Reached' : ''}
+                            </span>
                           </div>
-                          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-blue-600 rounded-full transition-all"
-                              style={{ width: `${targetPct}%` }}
+                              className={`h-full rounded-full transition-all ${
+                                targetPct >= 100 ? 'bg-emerald-600' : 'bg-blue-600'
+                              }`}
+                              style={{ width: `${Math.min(100, targetPct)}%` }}
                             />
+                          </div>
+                          <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+                            <span>Achieved: {targetMetric === 'profit_amount' ? fmtSecretOrCurrency(currentVal) : fmtRs(currentVal)}</span>
+                            <span>Remaining: {fmtRs(Math.max(0, targetAmt - currentVal))}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Aging Clearance Incentive Card */}
+                      {sp.agingItemsSold > 0 && (
+                        <div className="mb-3 p-2 bg-amber-50 rounded-lg border border-amber-200 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
+                              <Hourglass className="w-3.5 h-3.5 text-amber-600" />
+                              Aging Stock Cleared
+                            </span>
+                            <span className="text-[10px] bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-extrabold">
+                              {sp.agingItemsSold} {sp.agingItemsSold === 1 ? 'item' : 'items'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between mt-1 text-[11px]">
+                            <span className="text-gray-600">Sales: {fmtRs(sp.agingRevenue)}</span>
+                            {sp.agingIncentiveEarned > 0 && (
+                              <span className="font-bold text-emerald-700">
+                                Bonus: {fmtRs(sp.agingIncentiveEarned)}
+                              </span>
+                            )}
                           </div>
                         </div>
                       )}

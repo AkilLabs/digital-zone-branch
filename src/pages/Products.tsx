@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
+import LocationSwitcher from '../components/LocationSwitcher';
 import ProductLabel from '../components/ProductLabel';
 import SuitableModelsModal from '../components/SuitableModelsModal';
 import {
@@ -24,7 +25,10 @@ import {
   Check,
   Lock,
   Unlock,
-  DollarSign
+  DollarSign,
+  Warehouse,
+  Building2,
+  Hourglass
 } from 'lucide-react';
 import type { Product, ShopDetails } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -36,6 +40,8 @@ import {
   removeLocalProducts,
 } from '../utils/productSyncCache';
 import {
+  doc,
+  getDoc,
   deleteDoc,
   updateDoc,
   writeBatch,
@@ -46,17 +52,24 @@ import { db } from '../config/firebase';
 import { generateProductCode, generateIMEIProductCode } from '../utils/productCode';
 import { resolveShopDetails } from '../utils/shopDetails';
 import { encodePrice } from '../utils/secretCode';
+import {
+  getCachedStockAgingSettings,
+  isProductAging,
+  getProductAgeInDays,
+  calculateAgingIncentive,
+  type StockAgingSettings
+} from '../utils/stockAging';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 type ProductTab = 'all' | 'non_imei' | 'non_imei_gst' | 'imei';
-type StockStatusFilter = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
+type StockStatusFilter = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock' | 'aging_stock';
 
 const Products: React.FC = () => {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, getDocRef, currentStore, selectedLocation, stores } = useStore();
   const { invalidateProducts } = useInvalidateCache();
 
   const isOwnerOrAdmin = currentUser?.role === 'owner' || currentUser?.role === 'admin';
@@ -78,6 +91,7 @@ const Products: React.FC = () => {
   const [filterBrand, setFilterBrand] = useState('');
   const [filterCategories, setFilterCategories] = useState<string[]>([]);
   const [stockStatusFilter, setStockStatusFilter] = useState<StockStatusFilter>('all');
+  const [stockAgingSettings, setStockAgingSettings] = useState<StockAgingSettings>(getCachedStockAgingSettings());
   const [sortBy, setSortBy] = useState<'date' | 'name' | 'price' | 'cost' | 'quantity'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
@@ -130,11 +144,25 @@ const Products: React.FC = () => {
   const exportDropdownRef = useRef<HTMLDivElement>(null);
   const addDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Fetch products and shop details
+  // Fetch products and shop details whenever location scope or stores list changes
   useEffect(() => {
     fetchProducts();
     fetchShopDetails();
-  }, [currentStore?.id]);
+
+    const loadAgingSettings = async () => {
+      try {
+        const settingsDoc = await getDoc(doc(db, 'projectSettings', 'default'));
+        if (settingsDoc.exists() && settingsDoc.data()?.stockAgingSettings) {
+          const s = settingsDoc.data().stockAgingSettings;
+          setStockAgingSettings(s);
+          localStorage.setItem('dz_stock_aging_settings', JSON.stringify(s));
+        }
+      } catch (err) {
+        console.warn('Could not load aging settings in Products:', err);
+      }
+    };
+    loadAgingSettings();
+  }, [currentStore?.id, selectedLocation, stores.length]);
 
   // Click outside handlers for dropdowns
   useEffect(() => {
@@ -215,26 +243,86 @@ const Products: React.FC = () => {
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const syncedProducts = await syncStoreProducts(currentStore?.id);
 
-      const productsData: Product[] = [...syncedProducts].sort(
+      // 1. Specific Retail Branch View
+      if (currentStore?.id && selectedLocation !== 'all_locations' && selectedLocation !== 'hub_warehouse') {
+        const syncedProducts = await syncStoreProducts(currentStore.id);
+        const productsData: Product[] = [...syncedProducts]
+          .map((p) => ({
+            ...p,
+            _storeId: currentStore.id,
+            _locationLabel: currentStore.name,
+          } as any))
+          .sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0));
+
+        setProducts(productsData);
+        return;
+      }
+
+      // 2. Hub Warehouse ('hub_warehouse') OR Complete Stock ('all_locations')
+      // Collect active branch products & quantities by productCode
+      const branchQtyMap = new Map<string, number>();
+      const branchBreakdownMap = new Map<string, Array<{ id: string; name: string; qty: number }>>();
+      const branchProductsByStore: Array<{ storeId: string; storeName: string; products: Product[] }> = [];
+
+      await Promise.all(
+        stores.map(async (st) => {
+          if (!st.id) return;
+          try {
+            const bProds = await syncStoreProducts(st.id);
+            branchProductsByStore.push({ storeId: st.id, storeName: st.name, products: bProds });
+            bProds.forEach((bp) => {
+              const code = (bp.productCode || bp.id || '').trim();
+              const qty = Number(bp.quantity) || 0;
+              if (code && qty > 0) {
+                branchQtyMap.set(code, (branchQtyMap.get(code) || 0) + qty);
+                const list = branchBreakdownMap.get(code) || [];
+                const existingIdx = list.findIndex((item) => item.id === st.id);
+                if (existingIdx >= 0) {
+                  list[existingIdx].qty += qty;
+                } else {
+                  list.push({ id: st.id || '', name: st.name, qty });
+                }
+                branchBreakdownMap.set(code, list);
+              }
+            });
+          } catch {
+            // ignore branch sync errors
+          }
+        })
+      );
+
+      // Load root Hub Warehouse products
+      const syncedRootProducts = await syncStoreProducts(null);
+      const rawHubProducts = syncedRootProducts.filter((p) => {
+        if (
+          p.storeId &&
+          p.storeId !== 'hub_warehouse' &&
+          p.storeId !== 'digital_zone_hq' &&
+          stores.some((s) => s.id === p.storeId)
+        ) {
+          return false;
+        }
+        return true;
+      });
+
+      const productsData: Product[] = [...rawHubProducts].sort(
         (a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0)
       );
-      const productsWithoutCodes: { product: Product; index: number; isIMEI: boolean }[] = [];
 
+      // Auto-generate missing product codes on root catalog if any
+      const productsWithoutCodes: { product: Product; index: number; isIMEI: boolean }[] = [];
       productsData.forEach((product, index) => {
         const isIMEI = Boolean(
           (product.imei && product.imei.trim()) ||
           (product.productCode && parseInt(product.productCode) >= 10000001) ||
           (product as any).isIMEIPurchase === true
         );
-
         if (!product.productCode && product.id) {
           productsWithoutCodes.push({ product, index, isIMEI });
         }
       });
 
-      // Auto-generate missing product codes if any
       if (productsWithoutCodes.length > 0) {
         const BATCH_SIZE = 400;
         let batch = writeBatch(db);
@@ -271,11 +359,88 @@ const Products: React.FC = () => {
         if (batchCounter > 0) {
           await batch.commit();
         }
-        await upsertLocalProducts(currentStore?.id, updatedForLocalCache);
+        await upsertLocalProducts(null, updatedForLocalCache);
         invalidateProducts();
       }
 
-      setProducts(productsData);
+      if (selectedLocation === 'all_locations') {
+        // COMPLETE STOCK (Hub Warehouse + All Branches Combined)
+        const seenCodes = new Set<string>();
+        const combinedList: Product[] = productsData.map((p) => {
+          const code = (p.productCode || p.id || '').trim();
+          if (code) seenCodes.add(code);
+          const inBranchQty = branchQtyMap.get(code) || 0;
+          const hubNetQty = Math.max(0, (Number(p.quantity) || 0) - inBranchQty);
+          const totalChainQty = hubNetQty + inBranchQty;
+          const branchItems = branchBreakdownMap.get(code) || [];
+
+          const breakdown = [
+            { id: 'hub_warehouse', name: 'Hub Warehouse', qty: hubNetQty, isHub: true },
+            ...branchItems,
+          ];
+
+          return {
+            ...p,
+            quantity: totalChainQty,
+            _hubQty: hubNetQty,
+            _inBranchQty: inBranchQty,
+            _rawDocQuantity: Number(p.quantity) || 0,
+            _locationLabel: 'Complete Stock',
+            _locationBreakdown: breakdown,
+          } as any;
+        });
+
+        // Include any branch-only products not present in the root Hub catalog
+        branchProductsByStore.forEach(({ storeId, storeName, products: bProds }) => {
+          bProds.forEach((bp) => {
+            const code = (bp.productCode || bp.id || '').trim();
+            if (code && !seenCodes.has(code)) {
+              seenCodes.add(code);
+              const inBranchQty = branchQtyMap.get(code) || Number(bp.quantity) || 0;
+              const branchItems = branchBreakdownMap.get(code) || [
+                { id: storeId, name: storeName, qty: Number(bp.quantity) || 0 },
+              ];
+              combinedList.push({
+                ...bp,
+                quantity: inBranchQty,
+                _storeId: storeId,
+                _hubQty: 0,
+                _inBranchQty: inBranchQty,
+                _locationLabel: storeName,
+                _locationBreakdown: [
+                  { id: 'hub_warehouse', name: 'Hub Warehouse', qty: 0, isHub: true },
+                  ...branchItems,
+                ],
+              } as any);
+            }
+          });
+        });
+
+        setProducts(combinedList);
+      } else {
+        // HUB WAREHOUSE (Main Office Storage — strictly net of branch quantities)
+        const hubWarehouseList: Product[] = productsData.map((p) => {
+          const code = (p.productCode || p.id || '').trim();
+          const inBranchQty = branchQtyMap.get(code) || 0;
+          const hubNetQty = Math.max(0, (Number(p.quantity) || 0) - inBranchQty);
+          const branchItems = branchBreakdownMap.get(code) || [];
+
+          return {
+            ...p,
+            quantity: hubNetQty,
+            _hubQty: hubNetQty,
+            _inBranchQty: inBranchQty,
+            _rawDocQuantity: Number(p.quantity) || 0,
+            _locationLabel: 'Hub Warehouse',
+            _locationBreakdown: [
+              { id: 'hub_warehouse', name: 'Hub Warehouse', qty: hubNetQty, isHub: true },
+              ...branchItems,
+            ],
+          } as any;
+        });
+
+        setProducts(hubWarehouseList);
+      }
     } catch (error) {
       console.error('Error fetching products:', error);
     } finally {
@@ -307,6 +472,7 @@ const Products: React.FC = () => {
     let imei = 0;
     let nonImeiGst = 0;
     let nonImeiRegular = 0;
+    let aging = 0;
 
     products.forEach((p) => {
       if (isIMEIProduct(p)) {
@@ -316,15 +482,19 @@ const Products: React.FC = () => {
       } else {
         nonImeiRegular++;
       }
+      if (stockAgingSettings.enabled && (p.quantity || 0) > 0 && isProductAging(p, stockAgingSettings)) {
+        aging++;
+      }
     });
 
     return {
       all: products.length,
       imei,
       non_imei_gst: nonImeiGst,
-      non_imei: nonImeiRegular
+      non_imei: nonImeiRegular,
+      aging
     };
-  }, [products]);
+  }, [products, stockAgingSettings]);
 
   // Unique brands & categories
   const uniqueBrands = useMemo(() => {
@@ -359,6 +529,7 @@ const Products: React.FC = () => {
         if (stockStatusFilter === 'in_stock' && product.quantity <= 0) return false;
         if (stockStatusFilter === 'low_stock' && (product.quantity <= 0 || product.quantity > 5)) return false;
         if (stockStatusFilter === 'out_of_stock' && product.quantity > 0) return false;
+        if (stockStatusFilter === 'aging_stock' && (product.quantity <= 0 || !isProductAging(product, stockAgingSettings))) return false;
 
         // Search filter
         if (searchTerm.trim() !== '') {
@@ -409,7 +580,7 @@ const Products: React.FC = () => {
         }
         return sortOrder === 'asc' ? comparison : -comparison;
       });
-  }, [products, activeTab, stockStatusFilter, searchTerm, filterBrand, filterCategories, sortBy, sortOrder]);
+  }, [products, activeTab, stockStatusFilter, searchTerm, filterBrand, filterCategories, sortBy, sortOrder, stockAgingSettings]);
 
   // Metrics for active tab
   const tabMetrics = useMemo(() => {
@@ -418,6 +589,7 @@ const Products: React.FC = () => {
     let totalCostValue = 0;
     let lowStockCount = 0;
     let outOfStockCount = 0;
+    let agingStockCount = 0;
 
     filteredProducts.forEach((p) => {
       const q = Math.max(0, p.quantity || 0);
@@ -429,6 +601,9 @@ const Products: React.FC = () => {
       } else if (q <= 5) {
         lowStockCount++;
       }
+      if (stockAgingSettings.enabled && q > 0 && isProductAging(p, stockAgingSettings)) {
+        agingStockCount++;
+      }
     });
 
     return {
@@ -437,9 +612,10 @@ const Products: React.FC = () => {
       totalMrpValue,
       totalCostValue,
       lowStockCount,
-      outOfStockCount
+      outOfStockCount,
+      agingStockCount
     };
-  }, [filteredProducts]);
+  }, [filteredProducts, stockAgingSettings]);
 
   // Pagination logic
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage));
@@ -472,10 +648,14 @@ const Products: React.FC = () => {
     if (deleteConfirmationInput.trim() !== productToDelete.name) return;
 
     const deletedId = productToDelete.id!;
+    const targetStoreId = (productToDelete as any)._storeId || currentStore?.id || null;
     try {
       setDeleteLoading(deletedId);
-      await deleteDoc(getDocRef('products', deletedId));
-      await removeLocalProducts(currentStore?.id, [deletedId]);
+      const targetRef = targetStoreId
+        ? doc(db, 'stores', targetStoreId, 'products', deletedId)
+        : getDocRef('products', deletedId);
+      await deleteDoc(targetRef);
+      await removeLocalProducts(targetStoreId, [deletedId]);
       setProducts(prev => prev.filter(p => p.id !== deletedId));
       invalidateProducts();
       setShowDeleteModal(false);
@@ -525,6 +705,14 @@ const Products: React.FC = () => {
 
     try {
       setEditLoading(true);
+      const targetStoreId = (productToEdit as any)._storeId || currentStore?.id || null;
+      const inBranchQty = Number((productToEdit as any)._inBranchQty || 0);
+      // When editing Hub Warehouse net stock, preserve the branch-allocated portion in root catalog
+      const firestoreQuantity =
+        !targetStoreId && selectedLocation === 'hub_warehouse'
+          ? quantity + inBranchQty
+          : quantity;
+
       const updatedProduct: any = {
         name: editFormData.name.trim(),
         model: editFormData.model.trim() || null,
@@ -532,7 +720,7 @@ const Products: React.FC = () => {
         category: editFormData.category.trim(),
         cost,
         mrp,
-        quantity,
+        quantity: firestoreQuantity,
         supplier: editFormData.supplier.trim() || null,
         gstEnabled: editFormData.gstEnabled,
         taxPercent,
@@ -541,14 +729,17 @@ const Products: React.FC = () => {
         updatedAt: serverTimestamp()
       };
 
-      if (updatedProduct.quantity !== productToEdit.quantity) {
-        updatedProduct.isAvailable = quantity > 0;
+      if (firestoreQuantity !== (productToEdit as any)._rawDocQuantity) {
+        updatedProduct.isAvailable = firestoreQuantity > 0;
       }
 
       const editId = productToEdit.id!;
-      await updateDoc(getDocRef('products', editId), updatedProduct);
+      const targetRef = targetStoreId
+        ? doc(db, 'stores', targetStoreId, 'products', editId)
+        : getDocRef('products', editId);
+      await updateDoc(targetRef, updatedProduct);
 
-      const localUpdated: Product = {
+      const localCacheCopy: Product = {
         ...productToEdit,
         name: editFormData.name.trim(),
         model: editFormData.model.trim() || '',
@@ -556,18 +747,22 @@ const Products: React.FC = () => {
         category: editFormData.category.trim(),
         cost,
         mrp,
-        quantity,
+        quantity: firestoreQuantity,
         supplier: editFormData.supplier.trim() || '',
         gstEnabled: editFormData.gstEnabled,
         taxPercent,
         hcsCode: editFormData.hcsCode.trim() || '',
         mop: mop || 0,
-        isAvailable: quantity > 0,
+        isAvailable: firestoreQuantity > 0,
         updatedAt: new Date(),
       };
 
-      await upsertLocalProducts(currentStore?.id, [{ ...localUpdated, id: editId }]);
-      setProducts(prev => prev.map(p => (p.id === editId ? localUpdated : p)));
+      await upsertLocalProducts(targetStoreId, [{ ...localCacheCopy, id: editId }]);
+      const localDisplayUpdated: Product = {
+        ...localCacheCopy,
+        quantity,
+      };
+      setProducts(prev => prev.map(p => (p.id === editId ? localDisplayUpdated : p)));
       invalidateProducts();
       setShowEditModal(false);
       setProductToEdit(null);
@@ -732,16 +927,34 @@ const Products: React.FC = () => {
               <Package className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
               Products
             </h1>
-            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-              {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} listed
-              {currentStore?.name && (
-                <span className="text-gray-400 hidden md:inline"> • Location: <strong className="text-gray-700 font-medium">{currentStore.name}</strong></span>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span>
+                {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} listed
+              </span>
+              <span className="text-gray-300">•</span>
+              {selectedLocation === 'all_locations' ? (
+                <span className="inline-flex items-center gap-1 text-indigo-700 font-medium">
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Complete Stock (Hub Warehouse + All Branches)</span>
+                </span>
+              ) : selectedLocation === 'hub_warehouse' || !currentStore?.id ? (
+                <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
+                  <Warehouse className="w-3.5 h-3.5" />
+                  <span>Hub Warehouse (Main Office Storage)</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>Branch: {currentStore.name}</span>
+                </span>
               )}
             </p>
           </div>
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            {/* Location / Branch Switcher */}
+            <LocationSwitcher includeAllLocations />
 
             {/* Secret / Cost Toggle (Owner/Admin) */}
             {isOwnerOrAdmin && (
@@ -872,7 +1085,7 @@ const Products: React.FC = () => {
         </div>
 
         {/* COMPACT STATS - Hide on mobile (Matching Purchases.tsx) */}
-        <div className="hidden sm:grid grid-cols-4 gap-3 mb-4">
+        <div className={`hidden sm:grid ${stockAgingSettings.enabled ? 'grid-cols-5' : 'grid-cols-4'} gap-3 mb-4`}>
           <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
             <p className="text-xs text-gray-500">Total Products</p>
             <p className="text-lg font-bold text-gray-900">{tabCounts.all}</p>
@@ -896,6 +1109,29 @@ const Products: React.FC = () => {
             </div>
             <p className="text-lg font-bold text-orange-600">{tabMetrics.lowStockCount}</p>
           </div>
+          {stockAgingSettings.enabled && (
+            <div
+              onClick={() => setStockStatusFilter(stockStatusFilter === 'aging_stock' ? 'all' : 'aging_stock')}
+              className={`bg-white rounded-lg border p-3 shadow-sm cursor-pointer transition-colors ${stockStatusFilter === 'aging_stock' ? 'border-amber-500 bg-amber-50/70 ring-1 ring-amber-400' : 'border-gray-200 hover:border-amber-300'
+                }`}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-amber-700 font-semibold flex items-center gap-1">
+                  <Hourglass className="w-3.5 h-3.5 text-amber-600" />
+                  Aging Stock ({stockAgingSettings.agingDays}d+)
+                </p>
+                {stockStatusFilter === 'aging_stock' && <span className="text-[10px] text-amber-800 font-bold uppercase bg-amber-200 px-1 rounded">Filtered</span>}
+              </div>
+              <div className="flex items-baseline justify-between mt-0.5">
+                <p className="text-lg font-bold text-amber-700">{tabCounts.aging}</p>
+                {stockAgingSettings.enableIncentive && stockAgingSettings.incentivePercent > 0 && (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                    +{stockAgingSettings.incentivePercent}% Bonus
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* DESKTOP-LIKE PRODUCT TYPE TABS (Matching Purchases.tsx tab styling) */}
@@ -938,6 +1174,7 @@ const Products: React.FC = () => {
               { key: 'in_stock', label: 'In Stock' },
               { key: 'low_stock', label: 'Low Stock' },
               { key: 'out_of_stock', label: 'Out of Stock' },
+              ...(stockAgingSettings.enabled ? [{ key: 'aging_stock', label: `⚡ Aging Stock (${tabCounts.aging})` }] : []),
             ].map(s => (
               <button
                 key={s.key}
@@ -1172,14 +1409,21 @@ const Products: React.FC = () => {
                               {product.brand} {product.model ? `• ${product.model}` : ''}
                             </p>
                           </div>
-                          <span className={`shrink-0 px-2 py-0.5 text-xs font-bold rounded-full ${product.quantity <= 0
-                              ? 'bg-red-100 text-red-700'
-                              : product.quantity <= 5
-                                ? 'bg-orange-100 text-orange-700'
-                                : 'bg-blue-100 text-blue-700'
-                            }`}>
-                            {product.quantity <= 0 ? 'Out of stock' : `${product.quantity} units`}
-                          </span>
+                          <div className="text-right shrink-0">
+                            <span className={`inline-block px-2 py-0.5 text-xs font-bold rounded-full ${product.quantity <= 0
+                                ? 'bg-red-100 text-red-700'
+                                : product.quantity <= 5
+                                  ? 'bg-orange-100 text-orange-700'
+                                  : 'bg-blue-100 text-blue-700'
+                              }`}>
+                              {product.quantity <= 0 ? 'Out of stock' : `${product.quantity} units`}
+                            </span>
+                            {selectedLocation === 'all_locations' && ((product as any)._inBranchQty > 0 || (product as any)._hubQty > 0) && (
+                              <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                                Hub: {(product as any)._hubQty ?? 0} • Branch: {(product as any)._inBranchQty ?? 0}
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Codes & Badges */}
@@ -1207,6 +1451,18 @@ const Products: React.FC = () => {
                           ) : (
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-gray-100 text-gray-700 rounded text-[11px] font-medium border border-gray-200">
                               Non-IMEI
+                            </span>
+                          )}
+
+                          {stockAgingSettings.enabled && (product.quantity || 0) > 0 && isProductAging(product, stockAgingSettings) && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 rounded text-[11px] font-bold border border-amber-300">
+                              <Hourglass className="w-3 h-3 text-amber-600" />
+                              Aging ({getProductAgeInDays(product)}d)
+                              {stockAgingSettings.enableIncentive && stockAgingSettings.incentivePercent > 0 && (
+                                <span className="ml-0.5 bg-amber-500 text-white text-[9px] px-1 rounded font-extrabold">
+                                  +{stockAgingSettings.incentivePercent}%
+                                </span>
+                              )}
                             </span>
                           )}
                         </div>
@@ -1423,14 +1679,37 @@ const Products: React.FC = () => {
 
                           {/* Stock */}
                           <td className="px-4 py-3.5 whitespace-nowrap">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${product.quantity <= 0
-                                ? 'bg-red-100 text-red-700 border border-red-300'
-                                : product.quantity <= 5
-                                  ? 'bg-orange-100 text-orange-700 border border-orange-300'
-                                  : 'bg-blue-100 text-blue-700 border border-blue-300'
-                              }`}>
-                              {product.quantity <= 0 ? 'Out of stock' : `${product.quantity} units`}
-                            </span>
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${product.quantity <= 0
+                                    ? 'bg-red-100 text-red-700 border border-red-300'
+                                    : product.quantity <= 5
+                                      ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                                      : 'bg-blue-100 text-blue-700 border border-blue-300'
+                                  }`}>
+                                  {product.quantity <= 0 ? 'Out of stock' : `${product.quantity} units`}
+                                </span>
+                                {stockAgingSettings.enabled && (product.quantity || 0) > 0 && isProductAging(product, stockAgingSettings) && (
+                                  <span
+                                    title={`In stock for ${getProductAgeInDays(product)} days (Aging threshold: ${stockAgingSettings.agingDays} days)`}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[11px] font-bold border border-amber-300"
+                                  >
+                                    <Hourglass className="w-3 h-3 text-amber-600" />
+                                    {getProductAgeInDays(product)}d
+                                    {stockAgingSettings.enableIncentive && stockAgingSettings.incentivePercent > 0 && (
+                                      <span className="bg-amber-600 text-white text-[9px] px-1 rounded font-extrabold">
+                                        +{stockAgingSettings.incentivePercent}%
+                                      </span>
+                                    )}
+                                  </span>
+                                )}
+                              </div>
+                              {selectedLocation === 'all_locations' && ((product as any)._inBranchQty > 0 || (product as any)._hubQty > 0) && (
+                                <div className="text-[10px] text-slate-500 font-medium mt-1">
+                                  Hub: <strong className="text-slate-700">{(product as any)._hubQty ?? 0}</strong> • Branches: <strong className="text-slate-700">{(product as any)._inBranchQty ?? 0}</strong>
+                                </div>
+                              )}
+                            </div>
                           </td>
 
                           {/* Cost */}
@@ -1624,6 +1903,69 @@ const Products: React.FC = () => {
                   ₹{Math.round(selectedProductForDetails.mrp - selectedProductForDetails.cost)}
                 </span>
               </div>
+
+              {/* Aging Stock Notice */}
+              {stockAgingSettings.enabled && (selectedProductForDetails.quantity || 0) > 0 && isProductAging(selectedProductForDetails, stockAgingSettings) && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Hourglass className="h-4 w-4 text-amber-600 animate-pulse" />
+                      <span className="text-xs font-bold text-amber-900 uppercase tracking-wide">Slow-Moving / Aging Stock</span>
+                    </div>
+                    <span className="px-2 py-0.5 bg-amber-200 text-amber-900 font-bold text-xs rounded-full">
+                      {getProductAgeInDays(selectedProductForDetails)} Days in Stock
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    This product has been in inventory for {getProductAgeInDays(selectedProductForDetails)} days (aging policy: {stockAgingSettings.agingDays}+ days).
+                  </p>
+                  {stockAgingSettings.enableIncentive && stockAgingSettings.incentivePercent > 0 && (
+                    <div className="pt-2 border-t border-amber-200 flex items-center justify-between">
+                      <span className="text-xs font-medium text-amber-900">Clearance Incentive:</span>
+                      <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300">
+                        +{stockAgingSettings.incentivePercent}% ({stockAgingSettings.incentiveBasis === 'profit' ? 'Profit' : 'MRP'}) = ₹
+                        {calculateAgingIncentive(
+                          selectedProductForDetails.mrp,
+                          selectedProductForDetails.mrp - selectedProductForDetails.cost,
+                          stockAgingSettings
+                        )} / unit
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Location Stock Breakdown (when viewing Hub or Complete Stock) */}
+              {Array.isArray((selectedProductForDetails as any)._locationBreakdown) &&
+                (selectedProductForDetails as any)._locationBreakdown.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                    <div className="text-xs font-bold text-slate-800 uppercase tracking-wide">
+                      Stock by Location
+                    </div>
+                    <div className="space-y-1.5">
+                      {(selectedProductForDetails as any)._locationBreakdown.map(
+                        (loc: { id: string; name: string; qty: number; isHub?: boolean }) => (
+                          <div
+                            key={loc.id}
+                            className="flex items-center justify-between text-xs bg-white px-2.5 py-1.5 rounded border border-slate-200/80"
+                          >
+                            <span className="font-medium text-slate-700 flex items-center gap-1.5">
+                              {loc.isHub ? (
+                                <Warehouse className="w-3.5 h-3.5 text-amber-600" />
+                              ) : (
+                                <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                              )}
+                              <span>{loc.isHub ? 'Hub Warehouse (Main Office)' : loc.name}</span>
+                            </span>
+                            <span className="font-bold text-slate-900 tabular-nums">
+                              {loc.qty} {loc.qty === 1 ? 'unit' : 'units'}
+                            </span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
 
               {/* Specs */}
               <div>

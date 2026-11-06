@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
+import LocationSwitcher from '../components/LocationSwitcher';
 import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import shopLogo from '../assets/logo.png';
@@ -25,7 +26,14 @@ import {
   AlertCircle,
   KeyRound,
   RotateCcw,
-  CheckCircle2
+  CheckCircle2,
+  Clock,
+  Hourglass,
+  Target,
+  TrendingUp,
+  Percent,
+  Edit2,
+  X
 } from 'lucide-react';
 import {
   DEFAULT_SECRET_CODE_MAP,
@@ -33,6 +41,12 @@ import {
   setCachedSecretCodeSettings,
   validateSecretCodeMapping
 } from '../utils/secretCode';
+import {
+  getCachedStockAgingSettings,
+  setCachedStockAgingSettings,
+  type StockAgingSettings,
+  type EmployeeTarget
+} from '../utils/stockAging';
 
 interface ShopDetails {
   shopName: string;
@@ -112,6 +126,33 @@ const Settings: React.FC = () => {
   const [savingSecretMapping, setSavingSecretMapping] = useState(false);
   const [testCostInput, setTestCostInput] = useState<string>('1499');
 
+  // Stock Aging & Incentive States
+  const [stockAgingSettings, setStockAgingSettings] = useState<StockAgingSettings>(() => getCachedStockAgingSettings());
+  const [savingAgingToggle, setSavingAgingToggle] = useState(false);
+  const [savingAgingSettings, setSavingAgingSettings] = useState(false);
+  const [agingDaysInput, setAgingDaysInput] = useState<number>(() => getCachedStockAgingSettings().agingDays);
+  const [agingIncentivePercentInput, setAgingIncentivePercentInput] = useState<number>(() => getCachedStockAgingSettings().incentivePercent);
+  const [agingIncentiveBasisInput, setAgingIncentiveBasisInput] = useState<'sales_amount' | 'profit'>(() => getCachedStockAgingSettings().incentiveBasis);
+
+  // HQ Employee Targets States
+  const [employeeTargets, setEmployeeTargets] = useState<EmployeeTarget[]>([]);
+  const [loadingTargets, setLoadingTargets] = useState(false);
+  const [savingTarget, setSavingTarget] = useState(false);
+  const [showTargetModal, setShowTargetModal] = useState(false);
+  const [targetForm, setTargetForm] = useState<{
+    employeeId: string;
+    employeeName: string;
+    period: 'daily' | 'monthly';
+    metric: 'sales_amount' | 'profit_amount';
+    targetAmount: string;
+  }>({
+    employeeId: '',
+    employeeName: '',
+    period: 'monthly',
+    metric: 'sales_amount',
+    targetAmount: '100000',
+  });
+
   const validation = useMemo(() => {
     return validateSecretCodeMapping(secretMapping);
   }, [secretMapping]);
@@ -146,12 +187,28 @@ const Settings: React.FC = () => {
               keyword: sc.keyword || ''
             });
           }
+          if (data.stockAgingSettings) {
+            const sa = data.stockAgingSettings;
+            const updated: StockAgingSettings = {
+              enabled: typeof sa.enabled === 'boolean' ? sa.enabled : true,
+              agingDays: Number(sa.agingDays) > 0 ? Number(sa.agingDays) : 60,
+              enableIncentive: typeof sa.enableIncentive === 'boolean' ? sa.enableIncentive : true,
+              incentivePercent: Number(sa.incentivePercent) >= 0 ? Number(sa.incentivePercent) : 5,
+              incentiveBasis: sa.incentiveBasis === 'profit' ? 'profit' : 'sales_amount',
+            };
+            setStockAgingSettings(updated);
+            setAgingDaysInput(updated.agingDays);
+            setAgingIncentivePercentInput(updated.incentivePercent);
+            setAgingIncentiveBasisInput(updated.incentiveBasis);
+            setCachedStockAgingSettings(updated);
+          }
         }
       } catch (err) {
         console.warn('Could not fetch projectSettings:', err);
       }
     };
     fetchProjectSettings();
+    fetchEmployeeTargets();
   }, [currentStore?.id, currentStore?.rechargeEnabled]);
 
   const handleDigitChange = (digit: string, val: string) => {
@@ -241,6 +298,156 @@ const Settings: React.FC = () => {
       error('Failed to save secret code. Please try again.');
     } finally {
       setSavingSecretMapping(false);
+    }
+  };
+
+  // Stock Aging & Incentive Actions
+  const handleToggleStockAging = async () => {
+    const nextVal = !stockAgingSettings.enabled;
+    setSavingAgingToggle(true);
+    const updated: StockAgingSettings = {
+      ...stockAgingSettings,
+      enabled: nextVal,
+    };
+    try {
+      setStockAgingSettings(updated);
+      setCachedStockAgingSettings(updated);
+      const docRef = doc(db, 'settings', 'projectSettings');
+      await setDoc(docRef, { stockAgingSettings: updated }, { merge: true });
+      success(nextVal ? 'Stock aging tracking enabled' : 'Stock aging tracking disabled');
+    } catch (err) {
+      console.error('Failed to toggle stock aging:', err);
+      setStockAgingSettings(stockAgingSettings);
+      error('Failed to update stock aging toggle');
+    } finally {
+      setSavingAgingToggle(false);
+    }
+  };
+
+  const handleToggleAgingIncentive = async () => {
+    const nextVal = !stockAgingSettings.enableIncentive;
+    const updated: StockAgingSettings = {
+      ...stockAgingSettings,
+      enableIncentive: nextVal,
+    };
+    setStockAgingSettings(updated);
+    setCachedStockAgingSettings(updated);
+    try {
+      const docRef = doc(db, 'settings', 'projectSettings');
+      await setDoc(docRef, { stockAgingSettings: updated }, { merge: true });
+      success(nextVal ? 'Aging sales incentive enabled' : 'Aging sales incentive disabled');
+    } catch (err) {
+      console.error('Failed to toggle incentive:', err);
+      setStockAgingSettings(stockAgingSettings);
+      error('Failed to update incentive toggle');
+    }
+  };
+
+  const handleSaveStockAgingSettings = async () => {
+    setSavingAgingSettings(true);
+    const updated: StockAgingSettings = {
+      enabled: stockAgingSettings.enabled,
+      agingDays: Math.max(1, Number(agingDaysInput) || 60),
+      enableIncentive: stockAgingSettings.enableIncentive,
+      incentivePercent: Math.max(0, Number(agingIncentivePercentInput) || 0),
+      incentiveBasis: agingIncentiveBasisInput,
+    };
+    try {
+      const docRef = doc(db, 'settings', 'projectSettings');
+      await setDoc(docRef, { stockAgingSettings: updated }, { merge: true });
+      setStockAgingSettings(updated);
+      setCachedStockAgingSettings(updated);
+      success('Stock aging & sales incentive settings saved successfully!');
+    } catch (err) {
+      console.error('Failed to save stock aging settings:', err);
+      error('Failed to save stock aging settings.');
+    } finally {
+      setSavingAgingSettings(false);
+    }
+  };
+
+  // HQ Employee Targets Handlers
+  const fetchEmployeeTargets = async () => {
+    setLoadingTargets(true);
+    try {
+      const snap = await getDocs(collection(db, 'employeeTargets'));
+      const list: EmployeeTarget[] = snap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      } as EmployeeTarget));
+      setEmployeeTargets(list);
+    } catch (err) {
+      console.warn('Could not fetch employee targets:', err);
+    } finally {
+      setLoadingTargets(false);
+    }
+  };
+
+  const handleOpenTargetModal = (emp?: { id: string; name?: string; displayName?: string }) => {
+    if (emp) {
+      const existing = employeeTargets.find(t => t.employeeId === emp.id);
+      setTargetForm({
+        employeeId: emp.id,
+        employeeName: emp.name || emp.displayName || 'Staff',
+        period: existing?.period || 'monthly',
+        metric: existing?.metric || 'sales_amount',
+        targetAmount: existing ? String(existing.targetAmount) : '100000',
+      });
+    } else {
+      const firstUser = users.find(u => u.role === 'sales_person' || u.role === 'employee' || u.role === 'cashier') || users[0];
+      setTargetForm({
+        employeeId: firstUser ? (firstUser.uid || (firstUser as any).id || '') : '',
+        employeeName: firstUser ? (firstUser.displayName || firstUser.name || 'Staff') : '',
+        period: 'monthly',
+        metric: 'sales_amount',
+        targetAmount: '100000',
+      });
+    }
+    setShowTargetModal(true);
+  };
+
+  const handleSaveEmployeeTarget = async () => {
+    if (!targetForm.employeeId) {
+      error('Please select an employee');
+      return;
+    }
+    const amt = parseFloat(targetForm.targetAmount);
+    if (isNaN(amt) || amt < 0) {
+      error('Please enter a valid target amount (greater than or equal to 0)');
+      return;
+    }
+    setSavingTarget(true);
+    try {
+      const targetDocRef = doc(db, 'employeeTargets', targetForm.employeeId);
+      const payload: Omit<EmployeeTarget, 'id'> = {
+        employeeId: targetForm.employeeId,
+        employeeName: targetForm.employeeName,
+        period: targetForm.period,
+        metric: targetForm.metric,
+        targetAmount: amt,
+        updatedAt: serverTimestamp(),
+      };
+      await setDoc(targetDocRef, payload, { merge: true });
+      success(`Target updated successfully for ${targetForm.employeeName}!`);
+      setShowTargetModal(false);
+      fetchEmployeeTargets();
+    } catch (err) {
+      console.error('Failed to save employee target:', err);
+      error('Failed to save target. Please try again.');
+    } finally {
+      setSavingTarget(false);
+    }
+  };
+
+  const handleDeleteEmployeeTarget = async (employeeId: string, employeeName: string) => {
+    if (!window.confirm(`Remove performance target for ${employeeName}?`)) return;
+    try {
+      await deleteDoc(doc(db, 'employeeTargets', employeeId));
+      success(`Target removed for ${employeeName}`);
+      setEmployeeTargets(prev => prev.filter(t => t.employeeId !== employeeId));
+    } catch (err) {
+      console.error('Failed to delete target:', err);
+      error('Failed to remove target.');
     }
   };
 
@@ -481,11 +688,14 @@ const Settings: React.FC = () => {
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-32 md:pb-24">
         {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Settings</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Manage project preferences, business profile, and user access in one place.
-          </p>
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Settings</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              Manage project preferences, business profile, and user access in one place.
+            </p>
+          </div>
+          <LocationSwitcher />
         </div>
 
         {/* Tab Navigation */}
@@ -780,6 +990,286 @@ const Settings: React.FC = () => {
                     {savingSecretMapping ? 'Saving...' : 'Save Secret Code'}
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Stock Aging & Sales Incentive Configuration Card */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="p-2.5 bg-amber-50 rounded-xl text-amber-600 border border-amber-200/60 shrink-0">
+                    <Hourglass className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                        Stock Aging & Clearance Incentive
+                      </h2>
+                      <span className={cn(
+                        "px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide uppercase",
+                        stockAgingSettings.enabled ? "bg-amber-100 text-amber-900 border border-amber-200" : "bg-slate-100 text-slate-600"
+                      )}>
+                        {stockAgingSettings.enabled ? 'Active' : 'Disabled'}
+                      </span>
+                    </div>
+                    <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                      Highlight slow-moving inventory across Product Catalog, Billing, and Overall Sales pages. Optionally reward sales staff with a percentage commission to accelerate clearing aged items.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Master Toggle */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={stockAgingSettings.enabled}
+                  onClick={handleToggleStockAging}
+                  disabled={savingAgingToggle}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2",
+                    stockAgingSettings.enabled ? "bg-amber-600" : "bg-slate-200",
+                    savingAgingToggle && "opacity-60 cursor-not-allowed"
+                  )}
+                  title={stockAgingSettings.enabled ? "Disable stock aging" : "Enable stock aging"}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
+                      stockAgingSettings.enabled ? "translate-x-5" : "translate-x-0"
+                    )}
+                  />
+                </button>
+              </div>
+
+              {/* Detailed Configuration Body */}
+              {stockAgingSettings.enabled && (
+                <div className="p-5 sm:p-6 bg-slate-50/50 space-y-5 border-t border-slate-100">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {/* Aging Days Threshold */}
+                    <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Aging Threshold (Days)</span>
+                        </label>
+                        <span className="font-mono text-xs font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                          {agingDaysInput} Days
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Products in warehouse inventory older than this threshold will be flagged as Aging Stock.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          max={365}
+                          value={agingDaysInput}
+                          onChange={(e) => setAgingDaysInput(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-24 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 bg-slate-50 focus:bg-white focus:border-amber-500 outline-none"
+                        />
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {[30, 45, 60, 90, 120].map(days => (
+                            <button
+                              key={days}
+                              type="button"
+                              onClick={() => setAgingDaysInput(days)}
+                              className={cn(
+                                "px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer",
+                                agingDaysInput === days
+                                  ? "bg-amber-100 text-amber-900 border-amber-300 shadow-2xs"
+                                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                              )}
+                            >
+                              {days}d
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sales Incentive Settings */}
+                    <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <Percent className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Clearance Sales Incentive (%)</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleToggleAgingIncentive}
+                          className={cn(
+                            "px-2 py-0.5 rounded text-[11px] font-bold border transition cursor-pointer",
+                            stockAgingSettings.enableIncentive
+                              ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                              : "bg-slate-100 text-slate-500 border-slate-200"
+                          )}
+                        >
+                          {stockAgingSettings.enableIncentive ? 'Incentive Enabled' : 'Incentive Disabled'}
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Commission percentage granted to the salesperson whenever an aged stock item is billed.
+                      </p>
+
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Percentage (%)</label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={0.5}
+                              disabled={!stockAgingSettings.enableIncentive}
+                              value={agingIncentivePercentInput}
+                              onChange={(e) => setAgingIncentivePercentInput(Math.max(0, parseFloat(e.target.value) || 0))}
+                              className="w-full pl-3 pr-7 py-1.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 bg-slate-50 focus:bg-white focus:border-amber-500 outline-none disabled:opacity-50"
+                            />
+                            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">%</span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 mb-1">Calculated On</label>
+                          <select
+                            disabled={!stockAgingSettings.enableIncentive}
+                            value={agingIncentiveBasisInput}
+                            onChange={(e) => setAgingIncentiveBasisInput(e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:border-amber-500 outline-none disabled:opacity-50 cursor-pointer"
+                          >
+                            <option value="sales_amount">Selling Price (Revenue)</option>
+                            <option value="profit">Gross Profit</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Simulator & Action */}
+                  <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2.5 text-amber-900">
+                      <TrendingUp className="w-4 h-4 text-amber-700 shrink-0" />
+                      <div>
+                        <strong className="font-bold">Live Incentive Example:</strong> A ₹1,000 product with ₹300 profit will award{' '}
+                        <strong className="font-bold underline text-emerald-800">
+                          ₹{agingIncentiveBasisInput === 'profit'
+                            ? ((300 * agingIncentivePercentInput) / 100).toFixed(2)
+                            : ((1000 * agingIncentivePercentInput) / 100).toFixed(2)}
+                        </strong>{' '}
+                        incentive to the employee when billed.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveStockAgingSettings}
+                      disabled={savingAgingSettings}
+                      className="px-5 py-2 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      {savingAgingSettings ? 'Saving...' : 'Save Aging Settings'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* HQ Employee Performance Targets Card */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="p-5 sm:p-6 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className="p-2.5 bg-indigo-50 rounded-xl text-indigo-600 border border-indigo-200/60 shrink-0">
+                    <Target className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                      HQ Employee Performance Targets
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                      Set daily or monthly revenue and gross profit targets for branch sales staff. Targets sync to Overall Sales and individual employee performance dashboards.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenTargetModal()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Assign Employee Target</span>
+                </button>
+              </div>
+
+              {/* Targets List Table */}
+              <div className="p-5 sm:p-6">
+                {loadingTargets ? (
+                  <div className="py-8 text-center text-xs text-slate-400">Loading targets...</div>
+                ) : employeeTargets.length === 0 ? (
+                  <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-xs text-slate-500">
+                    <Target className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="font-semibold text-slate-700">No Employee Targets Configured Yet</p>
+                    <p className="text-slate-400 mt-0.5">Click "Assign Employee Target" above to define daily or monthly sales and profit goals.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
+                          <th className="pb-2">Employee</th>
+                          <th className="pb-2">Period / Phase</th>
+                          <th className="pb-2">Target Metric</th>
+                          <th className="pb-2 text-right">Target Amount</th>
+                          <th className="pb-2 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {employeeTargets.map(t => (
+                          <tr key={t.employeeId} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3 font-semibold text-slate-900">
+                              {t.employeeName}
+                            </td>
+                            <td className="py-3">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+                                t.period === 'monthly' ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              )}>
+                                {t.period}
+                              </span>
+                            </td>
+                            <td className="py-3">
+                              <span className="font-medium text-slate-700">
+                                {t.metric === 'profit_amount' ? 'Gross Profit (₹)' : 'Sales Revenue (₹)'}
+                              </span>
+                            </td>
+                            <td className="py-3 text-right font-mono font-bold text-slate-900 text-sm">
+                              ₹{Number(t.targetAmount || 0).toLocaleString('en-IN')}
+                            </td>
+                            <td className="py-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenTargetModal({ id: t.employeeId, name: t.employeeName })}
+                                  className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Edit Target"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteEmployeeTarget(t.employeeId, t.employeeName)}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Delete Target"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1293,6 +1783,168 @@ const Settings: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Assign / Edit Employee Target Modal */}
+        {showTargetModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between p-5 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <Target className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-base">Set Employee Performance Target</h3>
+                    <p className="text-xs text-slate-500">Configure target metrics and goals for tracking.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTargetModal(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 text-xs">
+                {/* Employee Selector */}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Select Employee *</label>
+                  <select
+                    value={targetForm.employeeId}
+                    onChange={(e) => {
+                      const emp = users.find(u => (u.uid || (u as any).id) === e.target.value);
+                      setTargetForm(prev => ({
+                        ...prev,
+                        employeeId: e.target.value,
+                        employeeName: emp ? (emp.displayName || emp.name || 'Staff') : 'Staff',
+                      }));
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 font-medium focus:border-indigo-600 outline-none cursor-pointer"
+                  >
+                    <option value="">-- Choose Employee --</option>
+                    {users.map(u => (
+                      <option key={u.uid || (u as any).id} value={u.uid || (u as any).id}>
+                        {u.displayName || u.name || u.email} ({u.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Period / Phase Selector */}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Target Period / Phase *</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTargetForm(prev => ({ ...prev, period: 'monthly' }))}
+                      className={cn(
+                        "p-2.5 rounded-xl border text-center font-bold text-xs transition cursor-pointer",
+                        targetForm.period === 'monthly'
+                          ? "bg-indigo-50 border-indigo-300 text-indigo-700 shadow-2xs"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      )}
+                    >
+                      Monthly Target
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTargetForm(prev => ({ ...prev, period: 'daily' }))}
+                      className={cn(
+                        "p-2.5 rounded-xl border text-center font-bold text-xs transition cursor-pointer",
+                        targetForm.period === 'daily'
+                          ? "bg-indigo-50 border-indigo-300 text-indigo-700 shadow-2xs"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      )}
+                    >
+                      Daily Target
+                    </button>
+                  </div>
+                </div>
+
+                {/* Metric Selector */}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Target Metric *</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTargetForm(prev => ({ ...prev, metric: 'sales_amount' }))}
+                      className={cn(
+                        "p-2.5 rounded-xl border text-center font-bold text-xs transition cursor-pointer",
+                        targetForm.metric === 'sales_amount'
+                          ? "bg-indigo-50 border-indigo-300 text-indigo-700 shadow-2xs"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      )}
+                    >
+                      Sales Revenue (₹)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTargetForm(prev => ({ ...prev, metric: 'profit_amount' }))}
+                      className={cn(
+                        "p-2.5 rounded-xl border text-center font-bold text-xs transition cursor-pointer",
+                        targetForm.metric === 'profit_amount'
+                          ? "bg-indigo-50 border-indigo-300 text-indigo-700 shadow-2xs"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      )}
+                    >
+                      Gross Profit (₹)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Target Amount Input */}
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Target Amount (₹) *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">₹</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={targetForm.targetAmount}
+                      onChange={(e) => setTargetForm(prev => ({ ...prev, targetAmount: e.target.value }))}
+                      placeholder="e.g. 100000"
+                      className="w-full pl-8 pr-3 py-2 border border-slate-300 rounded-lg text-sm font-mono font-bold text-slate-900 focus:border-indigo-600 outline-none"
+                    />
+                  </div>
+                  <div className="flex gap-1.5 mt-2 flex-wrap">
+                    {(targetForm.period === 'monthly' ? [50000, 100000, 150000, 250000, 500000] : [2000, 5000, 10000, 15000, 25000]).map(val => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setTargetForm(prev => ({ ...prev, targetAmount: String(val) }))}
+                        className="px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-[10px] font-mono font-semibold text-slate-700 transition cursor-pointer"
+                      >
+                        ₹{val.toLocaleString('en-IN')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTargetModal(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEmployeeTarget}
+                  disabled={savingTarget || !targetForm.employeeId}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  {savingTarget ? 'Saving...' : 'Save Target'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>

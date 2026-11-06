@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Search, Trash2, Plus, Minus, ExternalLink, UserPlus, ShoppingCart, Wrench, CreditCard, QrCode, X, Printer, Share2, Download, RefreshCw, Calendar, Receipt, Check } from 'lucide-react';
+import { Search, Trash2, Plus, Minus, ExternalLink, UserPlus, ShoppingCart, Wrench, CreditCard, QrCode, X, Printer, Share2, Download, RefreshCw, Calendar, Receipt, Check, Hourglass } from 'lucide-react';
 import Navbar from '../components/Navbar';
+import LocationSwitcher from '../components/LocationSwitcher';
 import ShareModal from '../components/ShareModal';
 import QRScannerModal from '../components/QRScannerModal';
 import whatsappIcon from '../assets/whatsapp.png';
@@ -20,6 +21,13 @@ import { generateUPIQRCode } from '../utils/qrcode';
 import { openRazorpayCheckout } from '../utils/razorpay';
 import { resolveShopDetails } from '../utils/shopDetails';
 import { encodePrice } from '../utils/secretCode';
+import {
+  getCachedStockAgingSettings,
+  isProductAging,
+  getProductAgeInDays,
+  calculateAgingIncentive,
+  type StockAgingSettings
+} from '../utils/stockAging';
 import type { BillingItem, ShopDetails } from '../types';
 import Lottie from 'lottie-react';
 import OrderProcessingAnim from '../assets/Orderprocessing.json';
@@ -87,6 +95,12 @@ interface Product {
   gstEnabled?: boolean; // Whether GST is enabled for this product
   brand?: string;
   category?: string;
+  createdAt?: any;
+  purchaseDate?: any;
+  dateAdded?: any;
+  isAgingStock?: boolean;
+  agingDays?: number;
+  agingIncentiveAmount?: number;
 }
 
 type PaymentMode = 'cash' | 'upi' | 'card' | 'split' | 'finance';
@@ -109,8 +123,7 @@ function Billing() {
     currentUser?.role === 'owner' ||
     currentUser?.role === 'hub-admin' ||
     currentUser?.role === 'store-admin' ||
-    currentUser?.role === 'admin' ||
-    currentUser?.role === 'manager';
+    currentUser?.role === 'admin';
   const fallbackSalesPersonName = currentUser?.displayName || currentUser?.name || currentUser?.email || 'Unknown User';
   // Billing date state – defaults to today (YYYY-MM-DD)
   const todayISO = useMemo(() => {
@@ -150,7 +163,8 @@ function Billing() {
   const [searchText, setSearchText] = useState('');
   const { data: products = [], isLoading: loadingProducts } = useAvailableProducts();
   const { invalidateProducts, invalidateBillingItems, invalidateCreditSales } = useInvalidateCache();
-  const [selectedProductInfo, setSelectedProductInfo] = useState<{ id: string; name: string; productCode?: string; brand?: string; category?: string; mrp?: number; cost?: number; baseCost?: number; price: number; quantity: number; imei?: string; hcsCode?: string; hsnCode?: string; mop?: number; taxPercent?: number; highestDiscountLimit?: number; gstEnabled?: boolean } | null>(null);
+  const [stockAgingSettings, setStockAgingSettings] = useState<StockAgingSettings>(getCachedStockAgingSettings());
+  const [selectedProductInfo, setSelectedProductInfo] = useState<{ id: string; name: string; productCode?: string; brand?: string; category?: string; mrp?: number; cost?: number; baseCost?: number; price: number; quantity: number; imei?: string; hcsCode?: string; hsnCode?: string; mop?: number; taxPercent?: number; highestDiscountLimit?: number; gstEnabled?: boolean; createdAt?: any; purchaseDate?: any; dateAdded?: any } | null>(null);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [showProductSearchModal, setShowProductSearchModal] = useState(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -161,6 +175,23 @@ function Billing() {
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const [selectedGstEnabled, setSelectedGstEnabled] = useState<boolean>(false);
   const [selectedTaxRate, setSelectedTaxRate] = useState<number>(18);
+
+  // Load stock aging settings from Firestore
+  useEffect(() => {
+    const loadAgingSettings = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'projectSettings', 'default'));
+        if (snap.exists() && snap.data()?.stockAgingSettings) {
+          const s = snap.data().stockAgingSettings;
+          setStockAgingSettings(s);
+          localStorage.setItem('dz_stock_aging_settings', JSON.stringify(s));
+        }
+      } catch (err) {
+        console.warn('Could not load aging settings in Billing:', err);
+      }
+    };
+    loadAgingSettings();
+  }, []);
 
   // Reset selection when search text changes
   useEffect(() => {
@@ -657,6 +688,11 @@ function Billing() {
   const roundOffAmount = roundOffEnabled
     ? (isAutoRoundOff ? autoRoundOffAmount : (parseFloat(manualRoundOff) || 0))
     : 0;
+
+  // Total Aging Stock Clearance Incentive in the cart
+  const totalAgingIncentive = useMemo(() => {
+    return orderItems.reduce((acc, item) => acc + (item.agingIncentiveAmount || 0), 0);
+  }, [orderItems]);
   const grandTotal = Math.max(0, Number((totalAfterDiscount + roundOffAmount).toFixed(2)));
 
   // GST calculation: if enabled, calculate proportional GST per item for mixed-tax support
@@ -793,7 +829,7 @@ function Billing() {
 
 
 
-  const selectProductForDetails = (p: { id: string; name: string; productCode?: string; brand?: string; category?: string; mrp?: number; cost?: number; baseCost?: number; price: number; quantity: number; imei?: string; hcsCode?: string; hsnCode?: string; mop?: number; taxPercent?: number; highestDiscountLimit?: number; gstEnabled?: boolean }) => {
+  const selectProductForDetails = (p: { id: string; name: string; productCode?: string; brand?: string; category?: string; mrp?: number; cost?: number; baseCost?: number; price: number; quantity: number; imei?: string; hcsCode?: string; hsnCode?: string; mop?: number; taxPercent?: number; highestDiscountLimit?: number; gstEnabled?: boolean; createdAt?: any; purchaseDate?: any; dateAdded?: any }) => {
     const productIsGst = isGstProduct(p);
     if (entryType === 'product') {
       if (!gstEnabled && productIsGst) {
@@ -806,7 +842,27 @@ function Billing() {
       }
     }
 
-    setSelectedProductInfo({ id: p.id, name: p.name, productCode: p.productCode, brand: p.brand, category: p.category, mrp: p.mrp, cost: p.cost, baseCost: p.baseCost, price: p.price, quantity: p.quantity, imei: p.imei, hsnCode: p.hcsCode || p.hsnCode, mop: p.mop, taxPercent: p.taxPercent, highestDiscountLimit: p.highestDiscountLimit, gstEnabled: p.gstEnabled });
+    setSelectedProductInfo({
+      id: p.id,
+      name: p.name,
+      productCode: p.productCode,
+      brand: p.brand,
+      category: p.category,
+      mrp: p.mrp,
+      cost: p.cost,
+      baseCost: p.baseCost,
+      price: p.price,
+      quantity: p.quantity,
+      imei: p.imei,
+      hsnCode: p.hcsCode || p.hsnCode,
+      mop: p.mop,
+      taxPercent: p.taxPercent,
+      highestDiscountLimit: p.highestDiscountLimit,
+      gstEnabled: p.gstEnabled,
+      createdAt: p.createdAt,
+      purchaseDate: p.purchaseDate,
+      dateAdded: p.dateAdded
+    });
 
     const effectiveRate = (p.taxPercent && p.taxPercent > 0) ? p.taxPercent : (gstRate || 18);
     setSelectedTaxRate(effectiveRate);
@@ -953,8 +1009,7 @@ function Billing() {
               storeName: data.storeName || '',
             };
           })
-          // Only show employees assigned strictly to the current branch
-          .filter(emp => isEmployeeOfBranch(emp, currentStore))
+          .filter(emp => (currentStore ? isEmployeeOfBranch(emp, currentStore) : emp.isActive !== false))
           .map(({ id, name, email }) => ({ id, name, email }))
           .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1013,7 +1068,7 @@ function Billing() {
     fetchCreditCustomers();
     fetchSalesEmployees();
     fetchFinanceProviders();
-  }, [currentStore?.id, assignedStoreId, canSelectSalesPerson, currentUser?.uid, fallbackSalesPersonName, getCollectionRef, getDocRef]);
+  }, [assignedStoreId, canSelectSalesPerson, currentUser?.uid, fallbackSalesPersonName, getCollectionRef, getDocRef]);
 
   // Generate QR code when UPI payment is selected
   useEffect(() => {
@@ -1653,6 +1708,12 @@ function Billing() {
           }
           : undefined;
 
+        const isItemAging = Boolean(item.isAgingStock);
+        const itemAgingDays = item.agingDays || 0;
+        const itemAgingIncentive = isItemAging
+          ? calculateAgingIncentive(itemTotalAfterDiscount, itemProfit, stockAgingSettings)
+          : 0;
+
         const billingItemData: Omit<BillingItemWithTransaction, 'id'> = {
           title: item.name,
           cost: productCost,
@@ -1660,6 +1721,9 @@ function Billing() {
           profit: itemProfit / item.quantity,
           quantity: item.quantity,
           totalProfit: itemProfit,
+          isAgingStock: isItemAging,
+          agingDays: itemAgingDays,
+          agingIncentiveAmount: itemAgingIncentive,
           ...(item.imei ? { imei: item.imei } : {}),
           ...(item.hsnCode ? { hsnCode: item.hsnCode } : {}),
           paymentMode: selectedPayment as any,
@@ -2295,6 +2359,7 @@ function Billing() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <LocationSwitcher className="hidden sm:inline-block" />
                     {entryType !== 'service' && (
                       <div className="relative">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 md:w-5 md:h-5 text-gray-400 pointer-events-none" />
@@ -2370,13 +2435,22 @@ function Billing() {
                               <tr
                                 key={p.id}
                                 className={`cursor-pointer transition-colors ${index === selectedIndex ? 'bg-blue-100' : 'hover:bg-gray-50'}`}
-                                onClick={() => selectProductForDetails({ id: p.id, name: p.name, productCode: p.productCode, brand: p.brand, category: p.category, mrp: Number(p.mrp ?? 0), cost: Number(p.cost ?? 0), baseCost: Number(p.baseCost ?? p.cost ?? 0), price: Number(p.sellingPrice ?? p.mrp ?? p.price ?? 0), quantity: Number(p.quantity ?? 0), imei: p.imei || undefined, hsnCode: p.hsnCode || p.hcsCode || undefined, mop: p.mop, taxPercent: p.taxPercent, gstEnabled: p.gstEnabled, highestDiscountLimit: p.highestDiscountLimit })}
+                                onClick={() => selectProductForDetails({ id: p.id, name: p.name, productCode: p.productCode, brand: p.brand, category: p.category, mrp: Number(p.mrp ?? 0), cost: Number(p.cost ?? 0), baseCost: Number(p.baseCost ?? p.cost ?? 0), price: Number(p.sellingPrice ?? p.mrp ?? p.price ?? 0), quantity: Number(p.quantity ?? 0), imei: p.imei || undefined, hsnCode: p.hsnCode || p.hcsCode || undefined, mop: p.mop, taxPercent: p.taxPercent, gstEnabled: p.gstEnabled, highestDiscountLimit: p.highestDiscountLimit, createdAt: p.createdAt, purchaseDate: p.purchaseDate, dateAdded: p.dateAdded })}
                               >
                                 <td className="px-2 md:px-4 py-1.5 md:py-2 font-medium text-gray-900 whitespace-nowrap">
                                   {p.name}
                                   {(p.gstEnabled || (p.taxPercent && p.taxPercent > 0)) && (
                                     <span className="ml-1.5 text-[9px] px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded font-semibold inline-block">
                                       GST {p.taxPercent || 18}%
+                                    </span>
+                                  )}
+                                  {stockAgingSettings.enabled && (p.quantity || 0) > 0 && isProductAging(p, stockAgingSettings) && (
+                                    <span className="ml-1.5 text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded font-bold inline-flex items-center gap-0.5">
+                                      <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                      Aging {getProductAgeInDays(p)}d
+                                      {stockAgingSettings.enableIncentive && stockAgingSettings.incentivePercent > 0 && (
+                                        <span className="text-emerald-700 ml-0.5 font-extrabold">+{stockAgingSettings.incentivePercent}%</span>
+                                      )}
                                     </span>
                                   )}
                                 </td>
@@ -2472,6 +2546,21 @@ function Billing() {
                             </div>
                           )}
                         </div>
+
+                        {/* Aging Stock Clearance Banner */}
+                        {stockAgingSettings.enabled && (selectedProductInfo.quantity || 0) > 0 && isProductAging(selectedProductInfo, stockAgingSettings) && (
+                          <div className="mb-2.5 p-2 bg-amber-100/90 border border-amber-300 rounded-lg flex items-center justify-between text-xs text-amber-900 shadow-2xs">
+                            <div className="flex items-center gap-1.5 font-bold">
+                              <Hourglass className="w-4 h-4 text-amber-600 animate-pulse" />
+                              <span>Aging Stock ({getProductAgeInDays(selectedProductInfo)} days)</span>
+                            </div>
+                            {stockAgingSettings.enableIncentive && stockAgingSettings.incentivePercent > 0 && (
+                              <span className="font-extrabold text-emerald-800 bg-white px-2 py-0.5 rounded border border-emerald-300">
+                                +{stockAgingSettings.incentivePercent}% Incentive for salesperson
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {/* Input Fields - 4 fields: Cost, Unit Disc, Selling Price, Quantity */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 md:gap-3 mb-2 md:mb-3">
@@ -2656,13 +2745,24 @@ function Billing() {
                             }
 
                             const qty = typeof selectedQty === 'number' && selectedQty > 0 ? selectedQty : 1;
+                            const isAging = stockAgingSettings.enabled && isProductAging(selectedProductInfo, stockAgingSettings);
+                            const agingDays = isAging ? getProductAgeInDays(selectedProductInfo) : 0;
+                            const unitProfit = price - (Number(selectedProductInfo.cost) || 0);
+                            const unitIncentive = isAging
+                              ? calculateAgingIncentive(price, unitProfit, stockAgingSettings)
+                              : 0;
 
                             // Add product to order with the specified quantity
                             setOrderItems(items => {
                               const idx = items.findIndex(i => i.id === selectedProductInfo.id);
                               if (idx >= 0) {
                                 const updated = [...items];
-                                updated[idx] = { ...updated[idx], quantity: updated[idx].quantity + qty };
+                                const newQty = updated[idx].quantity + qty;
+                                updated[idx] = {
+                                  ...updated[idx],
+                                  quantity: newQty,
+                                  agingIncentiveAmount: (updated[idx].agingIncentiveAmount || 0) + (unitIncentive * qty)
+                                };
                                 return updated;
                               }
                               return [
@@ -2674,8 +2774,15 @@ function Billing() {
                                   price: price,
                                   quantity: qty,
                                   stock: selectedProductInfo.quantity || 0,
+                                  cost: typeof selectedProductInfo.cost === 'number' ? selectedProductInfo.cost : 0,
                                   brand: selectedProductInfo.brand || '',
                                   category: selectedProductInfo.category || '',
+                                  createdAt: selectedProductInfo.createdAt,
+                                  purchaseDate: selectedProductInfo.purchaseDate,
+                                  dateAdded: selectedProductInfo.dateAdded,
+                                  isAgingStock: isAging,
+                                  agingDays: agingDays,
+                                  agingIncentiveAmount: unitIncentive * qty,
                                   ...(selectedProductInfo.imei ? { imei: selectedProductInfo.imei } : {}),
                                   ...(selectedProductInfo.hsnCode ? { hsnCode: selectedProductInfo.hsnCode } : {}),
                                   mop: selectedProductInfo.mop,
@@ -3767,6 +3874,15 @@ function Billing() {
                                 <div className="w-full">
                                   <p className="font-medium text-gray-900 truncate" title={item.name}>{item.name}</p>
                                   {item.imei && <p className="text-[10px] text-blue-600 font-mono">IMEI: {item.imei}</p>}
+                                  {item.isAgingStock && (
+                                    <span className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.2 bg-amber-100 text-amber-800 text-[10px] font-bold rounded border border-amber-300">
+                                      <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                      Aging {item.agingDays}d
+                                      {item.agingIncentiveAmount && item.agingIncentiveAmount > 0 ? (
+                                        <span className="text-emerald-700 ml-0.5 font-extrabold">+₹{Math.round(item.agingIncentiveAmount)}</span>
+                                      ) : null}
+                                    </span>
+                                  )}
                                   <p className="text-[10px] text-gray-500">In Stock: {item.stock}</p>
                                 </div>
                               </td>
@@ -3837,6 +3953,15 @@ function Billing() {
                                       IMEI: {item.imei}
                                     </span>
                                   )}
+                                  {item.isAgingStock && (
+                                    <span className="px-1.5 py-0.5 bg-amber-100 border border-amber-300 text-[10px] rounded text-amber-800 font-bold inline-flex items-center gap-0.5">
+                                      <Hourglass className="w-2.5 h-2.5 text-amber-600" />
+                                      Aging {item.agingDays}d
+                                      {item.agingIncentiveAmount && item.agingIncentiveAmount > 0 ? (
+                                        <span className="text-emerald-700 ml-0.5 font-extrabold">+₹{Math.round(item.agingIncentiveAmount)}</span>
+                                      ) : null}
+                                    </span>
+                                  )}
                                   <span className="text-xs text-gray-500">Stock: {item.stock}</span>
                                   {hasGstActive && (
                                     <span className="text-xs text-emerald-600 font-medium px-1.5 py-0.5 bg-emerald-50 rounded border border-emerald-100">
@@ -3896,6 +4021,15 @@ function Billing() {
                     </span>
                     <span className="font-medium text-red-500">-₹{discount}</span>
                   </div>
+                  {totalAgingIncentive > 0 && (
+                    <div className="flex justify-between items-center py-1.5 px-2.5 bg-amber-50 rounded-lg border border-amber-200 text-amber-900 text-xs">
+                      <span className="flex items-center gap-1.5 font-semibold">
+                        <Hourglass className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                        Aging Clearance Bonus:
+                      </span>
+                      <span className="font-bold text-emerald-700">₹{totalAgingIncentive.toFixed(2)}</span>
+                    </div>
+                  )}
                   {(hasGstActive || gstAmount > 0) && (
                     <>
                       <div className="flex justify-between items-center">

@@ -43,6 +43,9 @@ export interface BillingItem {
   employeeName?: string; // Name of linked employee
   salesPersonId?: string; // Salesperson ID who sold this item
   salesPersonName?: string; // Salesperson name who sold this item
+  isAgingStock?: boolean; // Whether item was sold from aged inventory
+  agingDays?: number; // Days in stock when sold
+  agingIncentiveAmount?: number; // Incentive amount earned by salesperson for clearing aging stock
   creditCustomerName?: string; // Customer name for credit sales
   isPaid?: boolean; // Payment status for credit sales
   paidAmount?: number; // Amount paid for credit sales
@@ -717,3 +720,6 @@ export interface Settlement {
   createdAt: Date;
   updatedAt?: Date;
 }
+
+export type { StockAgingSettings, EmployeeTarget } from '../utils/stockAging';
+
