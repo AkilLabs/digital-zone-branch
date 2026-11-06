@@ -54,6 +54,7 @@ const AddPurchase: React.FC = () => {
   const [showClearModal, setShowClearModal] = useState(false);
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [showProductName, setShowProductName] = useState(false);
+  const [showHsnCode, setShowHsnCode] = useState(false);
 
   // Supplier state
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -147,6 +148,11 @@ const AddPurchase: React.FC = () => {
           if (draft.isGstPurchase !== undefined) setIsGstPurchase(Boolean(draft.isGstPurchase));
           if (draft.defaultTaxPercent !== undefined) setDefaultTaxPercent(Number(draft.defaultTaxPercent) || 18);
           if (draft.showProductName !== undefined) setShowProductName(Boolean(draft.showProductName));
+          if (draft.showHsnCode !== undefined) {
+            setShowHsnCode(Boolean(draft.showHsnCode));
+          } else if (draft.items?.some((it: any) => it.hcsCode)) {
+            setShowHsnCode(true);
+          }
 
           if (draft.items && draft.items.length > 0) {
             setItems(draft.items);
@@ -212,6 +218,9 @@ const AddPurchase: React.FC = () => {
           setItemProductCodes(data.items.map((i: any) => i.productCode || ''));
           setItemIsExistingProduct(data.items.map(() => true));
           setItemExistingStock(data.items.map(() => 0));
+          if (data.items.some((i: any) => i.hcsCode)) {
+            setShowHsnCode(true);
+          }
         }
       }
     } catch (error) {
@@ -237,6 +246,7 @@ const AddPurchase: React.FC = () => {
       isGstPurchase,
       defaultTaxPercent,
       showProductName,
+      showHsnCode,
       items,
       itemProductCodes,
       itemIsExistingProduct,
@@ -262,6 +272,7 @@ const AddPurchase: React.FC = () => {
     isGstPurchase,
     defaultTaxPercent,
     showProductName,
+    showHsnCode,
     items,
     itemProductCodes,
     itemIsExistingProduct,
@@ -283,6 +294,8 @@ const AddPurchase: React.FC = () => {
     setCardAmount('');
     setIsGstPurchase(false);
     setDefaultTaxPercent(18);
+    setShowProductName(false);
+    setShowHsnCode(false);
     setItems([getInitialItem(18)]);
     setItemIsExistingProduct([false]);
     setItemExistingStock([0]);
@@ -517,34 +530,35 @@ const AddPurchase: React.FC = () => {
     }
   };
 
+  // Dynamic Editable Table Columns for keyboard navigation
+  const getEditableColumnFields = () => {
+    const cols = ['brand', 'model', 'category', 'quantity', 'costPerUnit'];
+    if (showHsnCode) {
+      cols.push('hcsCode');
+    }
+    cols.push('mop', 'mrp');
+    return cols;
+  };
+
   // Keyboard Navigation across Table
-  // Col mapping:
-  // 0: Brand
-  // 1: Model
-  // 2: Category
-  // 3: ProductName (skipped if hidden)
-  // 4: Qty
-  // 5: Cost
-  // 6: HSN Code (only when isGstPurchase)
-  // 7: MOP
-  // 8: MRP
   const handleCellKeyDown = (
     e: React.KeyboardEvent<HTMLElement>,
     rowIndex: number,
-    colIndex: number
+    field: string
   ) => {
-    const totalEditableCols = isGstPurchase ? 9 : 8;
+    const cols = getEditableColumnFields();
+    const colIndex = cols.indexOf(field);
 
     if (e.key === 'ArrowUp') {
       if (rowIndex > 0) {
         e.preventDefault();
-        const target = document.getElementById(`cell-${rowIndex - 1}-${colIndex}`);
+        const target = document.getElementById(`cell-${rowIndex - 1}-${field}`);
         target?.focus();
       }
     } else if (e.key === 'ArrowDown') {
       if (rowIndex < items.length - 1) {
         e.preventDefault();
-        const target = document.getElementById(`cell-${rowIndex + 1}-${colIndex}`);
+        const target = document.getElementById(`cell-${rowIndex + 1}-${field}`);
         target?.focus();
       }
     } else if (e.key === 'ArrowLeft') {
@@ -552,18 +566,18 @@ const AddPurchase: React.FC = () => {
       if (!input || (input.selectionStart === 0 && input.selectionEnd === 0)) {
         if (colIndex > 0) {
           e.preventDefault();
-          const prevCol = (colIndex === 4 && !showProductName) ? 2 : colIndex - 1;
-          const target = document.getElementById(`cell-${rowIndex}-${prevCol}`);
+          const prevField = cols[colIndex - 1];
+          const target = document.getElementById(`cell-${rowIndex}-${prevField}`);
           target?.focus();
         }
       }
     } else if (e.key === 'ArrowRight') {
       const input = e.target as HTMLInputElement;
       if (!input || (input.selectionStart === input.value?.length)) {
-        if (colIndex < totalEditableCols - 1) {
+        if (colIndex < cols.length - 1) {
           e.preventDefault();
-          const nextCol = (colIndex === 2 && !showProductName) ? 4 : colIndex + 1;
-          const target = document.getElementById(`cell-${rowIndex}-${nextCol}`);
+          const nextField = cols[colIndex + 1];
+          const target = document.getElementById(`cell-${rowIndex}-${nextField}`);
           target?.focus();
         }
       }
@@ -575,28 +589,27 @@ const AddPurchase: React.FC = () => {
       if (isShiftEnter) {
         addItem(true);
         setTimeout(() => {
-          const nextTarget = document.getElementById(`cell-${items.length}-0`);
+          const nextTarget = document.getElementById(`cell-${items.length}-brand`);
           nextTarget?.focus();
         }, 70);
         return;
       }
 
       // If at last col:
-      const lastCol = isGstPurchase ? 8 : 7;
-      if (colIndex >= lastCol) {
+      if (colIndex >= cols.length - 1) {
         if (rowIndex === items.length - 1) {
           addItem(false);
           setTimeout(() => {
-            const nextTarget = document.getElementById(`cell-${rowIndex + 1}-0`);
+            const nextTarget = document.getElementById(`cell-${rowIndex + 1}-brand`);
             nextTarget?.focus();
           }, 70);
         } else {
-          const nextTarget = document.getElementById(`cell-${rowIndex + 1}-0`);
+          const nextTarget = document.getElementById(`cell-${rowIndex + 1}-brand`);
           nextTarget?.focus();
         }
       } else {
-        const nextCol = (colIndex === 2 && !showProductName) ? 4 : colIndex + 1;
-        const target = document.getElementById(`cell-${rowIndex}-${nextCol}`);
+        const nextField = cols[colIndex + 1];
+        const target = document.getElementById(`cell-${rowIndex}-${nextField}`);
         target?.focus();
       }
     }
@@ -871,39 +884,37 @@ const AddPurchase: React.FC = () => {
       const item = items[i];
       if (!item.brand?.trim()) {
         showToast(`Line #${i + 1}: Brand is required`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-0`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-brand`)?.focus(), 70);
         return false;
       }
       if (!item.model?.trim()) {
         showToast(`Line #${i + 1} (${item.brand}): Model is required`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-1`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-model`)?.focus(), 70);
         return false;
       }
       if (!item.category?.trim()) {
         showToast(`Line #${i + 1} (${item.brand} ${item.model}): Category is required`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-2`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-category`)?.focus(), 70);
         return false;
       }
       if (!item.quantity || Number(item.quantity) < 1) {
         showToast(`Line #${i + 1} (${item.brand} ${item.model}): Quantity must be at least 1 unit`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-4`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-quantity`)?.focus(), 70);
         return false;
       }
       if (Number(item.costPerUnit) <= 0) {
         showToast(`Line #${i + 1} (${item.brand} ${item.model}): Cost per unit must be greater than 0`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-5`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-costPerUnit`)?.focus(), 70);
         return false;
       }
       if (!item.mop || Number(item.mop) <= 0) {
-        const mopCol = isGstPurchase ? 7 : 6;
         showToast(`Line #${i + 1} (${item.brand} ${item.model}): MOP is required and must be greater than 0`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-${mopCol}`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-mop`)?.focus(), 70);
         return false;
       }
       if (!item.mrp || Number(item.mrp) <= 0) {
-        const mrpCol = isGstPurchase ? 8 : 7;
         showToast(`Line #${i + 1} (${item.brand} ${item.model}): MRP is required and must be greater than 0`, 'error');
-        setTimeout(() => document.getElementById(`cell-${i}-${mrpCol}`)?.focus(), 70);
+        setTimeout(() => document.getElementById(`cell-${i}-mrp`)?.focus(), 70);
         return false;
       }
     }
@@ -1739,7 +1750,20 @@ const AddPurchase: React.FC = () => {
                           <span>Product Name</span>
                         </button>
 
-                        {/* Common GST Toggle Button near Product Name */}
+                        <button
+                          type="button"
+                          onClick={() => setShowHsnCode(!showHsnCode)}
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${showHsnCode
+                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                            }`}
+                          title="Toggle HSN Code column visibility"
+                        >
+                          {showHsnCode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          <span>HSN Code</span>
+                        </button>
+
+                        {/* Common GST Toggle Button near Product Name & HSN */}
                         <div className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
@@ -1751,7 +1775,7 @@ const AddPurchase: React.FC = () => {
                             title="Toggle GST mode for all items (18% default)"
                           >
                             <Receipt className={`w-3.5 h-3.5 ${isGstPurchase ? 'text-white' : 'text-emerald-600'}`} />
-                            <span>{isGstPurchase ? 'GST Active (18%)' : 'Enable GST (18%)'}</span>
+                            <span>{isGstPurchase ? `GST Active (${defaultTaxPercent}%)` : `Enable GST (${defaultTaxPercent}%)`}</span>
                           </button>
 
                           {isGstPurchase && (
@@ -1937,32 +1961,16 @@ const AddPurchase: React.FC = () => {
                                 </div>
                               </div>
 
-                              {isGstPurchase && (
-                                <div className="grid grid-cols-2 gap-2 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100">
-                                  <div>
-                                    <label className="text-[11px] font-semibold text-emerald-800 block mb-1">HSN Code (Optional)</label>
-                                    <input
-                                      type="text"
-                                      value={item.hcsCode || ''}
-                                      onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
-                                      placeholder="HSN (Optional)"
-                                      className="w-full px-2 py-1 text-xs border border-emerald-200 rounded bg-white font-mono uppercase"
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-[11px] text-emerald-800 block mb-1">Tax %</label>
-                                    <select
-                                      value={item.taxPercent ?? defaultTaxPercent}
-                                      onChange={(e) => handleItemChange(rowIndex, 'taxPercent', Number(e.target.value))}
-                                      className="w-full px-2 py-1 text-xs border border-emerald-200 rounded bg-white text-emerald-900 font-semibold"
-                                    >
-                                      <option value={0}>0%</option>
-                                      <option value={5}>5%</option>
-                                      <option value={12}>12%</option>
-                                      <option value={18}>18%</option>
-                                      <option value={28}>28%</option>
-                                    </select>
-                                  </div>
+                              {showHsnCode && (
+                                <div>
+                                  <label className="text-[11px] font-semibold text-slate-700 block mb-1">HSN Code (Optional)</label>
+                                  <input
+                                    type="text"
+                                    value={item.hcsCode || ''}
+                                    onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
+                                    placeholder="HSN (Optional)"
+                                    className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-md bg-white font-mono uppercase"
+                                  />
                                 </div>
                               )}
 
@@ -2025,26 +2033,25 @@ const AddPurchase: React.FC = () => {
                               <th className="px-2 py-2.5 w-16 text-center text-slate-400">Stock</th>
                               <th className="px-3 py-2.5 w-20 text-center font-semibold text-slate-900 bg-slate-100/70">Qty *</th>
                               <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">Cost *</th>
+                              {showHsnCode && (
+                                <th className="px-2 py-2.5 min-w-[110px] bg-slate-50/90 text-slate-700">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span>HSN (Optional)</span>
+                                    {items.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => applyHcsCodeToAllRows(0)}
+                                        className="text-[10px] text-blue-600 hover:text-blue-800 underline font-normal normal-case cursor-pointer"
+                                        title="Copy line 1 HSN to all rows"
+                                      >
+                                        All
+                                      </button>
+                                    )}
+                                  </div>
+                                </th>
+                              )}
                               {isGstPurchase && (
-                                <>
-                                  <th className="px-2 py-2.5 min-w-[110px] bg-emerald-50/40 text-emerald-900">
-                                    <div className="flex items-center justify-between gap-1">
-                                      <span>HSN (Optional)</span>
-                                      {items.length > 1 && (
-                                        <button
-                                          type="button"
-                                          onClick={() => applyHcsCodeToAllRows(0)}
-                                          className="text-[10px] text-emerald-700 hover:text-emerald-900 underline font-normal normal-case cursor-pointer"
-                                          title="Copy line 1 HSN to all rows"
-                                        >
-                                          All
-                                        </button>
-                                      )}
-                                    </div>
-                                  </th>
-                                  <th className="px-2 py-2.5 w-20 text-center bg-emerald-50/40 text-emerald-900">Tax %</th>
-                                  <th className="px-2 py-2.5 w-24 text-right text-slate-600 font-medium bg-slate-100/40">Cost+GST</th>
-                                </>
+                                <th className="px-2 py-2.5 w-24 text-right text-slate-600 font-medium bg-slate-100/40">Cost+GST</th>
                               )}
                               <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MOP (₹) *</th>
                               <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">MRP (₹) *</th>
@@ -2079,11 +2086,11 @@ const AddPurchase: React.FC = () => {
                                   {/* Brand (Col 0) */}
                                   <td className="px-2 py-1.5">
                                     <SearchableSelect
-                                      id={`cell-${rowIndex}-0`}
+                                      id={`cell-${rowIndex}-brand`}
                                       options={brands.map(b => ({ id: b.id || '', name: b.name }))}
                                       value={item.brand}
                                       onChange={(value) => handleItemChange(rowIndex, 'brand', value)}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 0)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'brand')}
                                       placeholder="Select Brand"
                                       className="border-0! bg-transparent! py-1! text-xs!"
                                     />
@@ -2092,11 +2099,11 @@ const AddPurchase: React.FC = () => {
                                   {/* Model (Col 1) */}
                                   <td className="px-2 py-1.5">
                                     <input
-                                      id={`cell-${rowIndex}-1`}
+                                      id={`cell-${rowIndex}-model`}
                                       type="text"
                                       value={item.model}
                                       onChange={(e) => handleItemChange(rowIndex, 'model', e.target.value)}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 1)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'model')}
                                       className="w-full px-2 py-1 text-xs border border-slate-200 rounded uppercase bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
                                       placeholder="Model *"
                                     />
@@ -2105,11 +2112,11 @@ const AddPurchase: React.FC = () => {
                                   {/* Category (Col 2) */}
                                   <td className="px-2 py-1.5">
                                     <SearchableSelect
-                                      id={`cell-${rowIndex}-2`}
+                                      id={`cell-${rowIndex}-category`}
                                       options={categories.map(c => ({ id: c.id || '', name: c.name }))}
                                       value={item.category}
                                       onChange={(value) => handleItemChange(rowIndex, 'category', value)}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 2)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'category')}
                                       placeholder="Select Category"
                                       className="border-0! bg-transparent! py-1! text-xs!"
                                     />
@@ -2119,7 +2126,7 @@ const AddPurchase: React.FC = () => {
                                   {showProductName && (
                                     <td className="px-2 py-1.5">
                                       <input
-                                        id={`cell-${rowIndex}-3`}
+                                        id={`cell-${rowIndex}-productName`}
                                         type="text"
                                         readOnly
                                         tabIndex={-1}
@@ -2139,7 +2146,7 @@ const AddPurchase: React.FC = () => {
                                   {/* Qty (Col 4) */}
                                   <td className="px-2 py-1.5 bg-slate-50/60">
                                     <input
-                                      id={`cell-${rowIndex}-4`}
+                                      id={`cell-${rowIndex}-quantity`}
                                       type="number"
                                       min="1"
                                       value={item.quantity || ''}
@@ -2147,7 +2154,7 @@ const AddPurchase: React.FC = () => {
                                         const val = e.target.value;
                                         handleItemChange(rowIndex, 'quantity', val === '' ? '' : parseInt(val, 10) || 1);
                                       }}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 4)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'quantity')}
                                       onBlur={() => {
                                         if (!item.quantity || Number(item.quantity) < 1) {
                                           handleItemChange(rowIndex, 'quantity', 1);
@@ -2160,7 +2167,7 @@ const AddPurchase: React.FC = () => {
                                   {/* Cost (Col 5) */}
                                   <td className="px-2 py-1.5 min-w-[130px]">
                                     <input
-                                      id={`cell-${rowIndex}-5`}
+                                      id={`cell-${rowIndex}-costPerUnit`}
                                       type="text"
                                       value={activeCell?.rowIndex === rowIndex && activeCell?.field === 'costPerUnit'
                                         ? activeCell.value
@@ -2171,7 +2178,7 @@ const AddPurchase: React.FC = () => {
                                         const val = decodePrice(rawValue);
                                         handleItemChange(rowIndex, 'costPerUnit', isNaN(val) ? 0 : val);
                                       }}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 5)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'costPerUnit')}
                                       onFocus={() => setActiveCell({ rowIndex, field: 'costPerUnit', value: item.costPerUnit === 0 ? '' : encodePrice(item.costPerUnit) })}
                                       onBlur={() => setActiveCell(null)}
                                       className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded text-right font-mono font-medium bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
@@ -2179,62 +2186,49 @@ const AddPurchase: React.FC = () => {
                                     />
                                   </td>
 
-                                  {/* HSN & Tax % (When GST is enabled) */}
-                                  {isGstPurchase && (
-                                    <>
-                                      <td className="px-2 py-1.5 min-w-[110px] bg-emerald-50/20">
-                                        <input
-                                          id={`cell-${rowIndex}-6`}
-                                          type="text"
-                                          value={item.hcsCode || ''}
-                                          onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
-                                          onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 6)}
-                                          className="w-full px-2 py-1 text-xs border border-emerald-200 rounded uppercase font-mono bg-white focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none"
-                                          placeholder="HSN (Optional)"
-                                        />
-                                      </td>
-
-                                      <td className="px-2 py-1.5 bg-emerald-50/20">
-                                        <select
-                                          value={item.taxPercent ?? defaultTaxPercent}
-                                          onChange={(e) => handleItemChange(rowIndex, 'taxPercent', Number(e.target.value))}
-                                          className="w-full px-1.5 py-1 text-xs border border-emerald-200 rounded bg-white text-emerald-900 font-semibold focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 outline-none"
-                                        >
-                                          <option value={0}>0%</option>
-                                          <option value={5}>5%</option>
-                                          <option value={12}>12%</option>
-                                          <option value={18}>18%</option>
-                                          <option value={28}>28%</option>
-                                        </select>
-                                      </td>
-
-                                      <td className="px-2 py-2 text-xs text-right text-slate-700 font-mono font-medium bg-slate-50/60 w-24">
-                                        {cost > 0 ? `₹${costWithGstPerUnit.toFixed(2)}` : '—'}
-                                      </td>
-                                    </>
+                                  {/* HSN (When showHsnCode is enabled) */}
+                                  {showHsnCode && (
+                                    <td className="px-2 py-1.5 min-w-[110px]">
+                                      <input
+                                        id={`cell-${rowIndex}-hcsCode`}
+                                        type="text"
+                                        value={item.hcsCode || ''}
+                                        onChange={(e) => handleItemChange(rowIndex, 'hcsCode', e.target.value)}
+                                        onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'hcsCode')}
+                                        className="w-full px-2 py-1 text-xs border border-slate-200 rounded uppercase font-mono bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
+                                        placeholder="HSN (Optional)"
+                                      />
+                                    </td>
                                   )}
 
-                                  {/* MOP (Col 6 or 7) */}
+                                  {/* Cost+GST (When GST is enabled) */}
+                                  {isGstPurchase && (
+                                    <td className="px-2 py-2 text-xs text-right text-slate-700 font-mono font-medium bg-slate-50/60 w-24">
+                                      {cost > 0 ? `₹${costWithGstPerUnit.toFixed(2)}` : '—'}
+                                    </td>
+                                  )}
+
+                                  {/* MOP */}
                                   <td className="px-2 py-1.5 min-w-[130px]">
                                     <input
-                                      id={`cell-${rowIndex}-${isGstPurchase ? 7 : 6}`}
+                                      id={`cell-${rowIndex}-mop`}
                                       type="number"
                                       value={item.mop || ''}
                                       onChange={(e) => handleItemChange(rowIndex, 'mop', parseFloat(e.target.value) || 0)}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, isGstPurchase ? 7 : 6)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'mop')}
                                       className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded text-right font-mono font-medium bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
                                       placeholder="0.00"
                                     />
                                   </td>
 
-                                  {/* MRP (Col 7 or 8) */}
+                                  {/* MRP */}
                                   <td className="px-2 py-1.5 min-w-[130px]">
                                     <input
-                                      id={`cell-${rowIndex}-${isGstPurchase ? 8 : 7}`}
+                                      id={`cell-${rowIndex}-mrp`}
                                       type="number"
                                       value={item.mrp || ''}
                                       onChange={(e) => handleItemChange(rowIndex, 'mrp', parseFloat(e.target.value) || 0)}
-                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, isGstPurchase ? 8 : 7)}
+                                      onKeyDown={(e) => handleCellKeyDown(e, rowIndex, 'mrp')}
                                       className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded text-right font-mono font-medium bg-white focus:border-blue-600 focus:ring-1 focus:ring-blue-600 outline-none"
                                       placeholder="0.00"
                                     />
