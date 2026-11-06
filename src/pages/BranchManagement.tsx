@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
-import { collection, addDoc, updateDoc, doc, Timestamp, setDoc } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { Store } from '../types';
 import {
@@ -19,6 +19,9 @@ import {
   ArrowLeftRight,
   RefreshCw,
   CheckCircle2,
+  ArrowRight,
+  KeyRound,
+  AlertCircle,
 } from 'lucide-react';
 
 const BranchManagement: React.FC = () => {
@@ -28,7 +31,28 @@ const BranchManagement: React.FC = () => {
 
   const isOwner = currentUser?.role === 'owner';
 
-  const [showAddModal, setShowAddModal] = useState(false);
+  // ── Toast Notification ──
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  // ── Exact 2-Step Branch Creation Modal from HQ Dashboard (Strictly Owner Only) ──
+  const [showCreateBranchModal, setShowCreateBranchModal] = useState(false);
+  const [createBranchStep, setCreateBranchStep] = useState<1 | 2 | 3>(1);
+  const [branchForm, setBranchForm] = useState({
+    name: '',
+    address: '',
+    phone: '',
+    email: '',
+    managerName: '',
+    managerId: '',
+    purchaseEnabled: true,
+  });
+  const [createdBranchId, setCreatedBranchId] = useState<string>('');
+  const [creatingBranch, setCreatingBranch] = useState(false);
+
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [loading, setLoading] = useState(false);
@@ -128,55 +152,83 @@ const BranchManagement: React.FC = () => {
     };
   };
 
-  const handleAddStore = async () => {
-    if (!formData.name.trim() || !currentUser?.uid) return;
+  const openCreateBranchModal = () => {
+    setBranchForm({
+      name: '',
+      address: '',
+      phone: '',
+      email: '',
+      managerName: '',
+      managerId: '',
+      purchaseEnabled: true,
+    });
+    setCreateBranchStep(1);
+    setCreatedBranchId('');
+    setShowCreateBranchModal(true);
+  };
 
-    setLoading(true);
+  const handleCopyBranchId = (branchId: string, asEnvVar = false) => {
+    const textToCopy = asEnvVar ? `VITE_BRANCH_ID=${branchId}` : branchId;
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedId(branchId);
+    showToast(asEnvVar ? 'Copied VITE_BRANCH_ID code to clipboard!' : 'Copied Branch ID!', 'success');
+    setTimeout(() => setCopiedId(null), 2500);
+  };
+
+  const handleCreateBranch = async () => {
+    if (!isOwner) {
+      showToast('Only the Owner can create a new branch.', 'error');
+      return;
+    }
+    if (!branchForm.name.trim() || !branchForm.address.trim()) {
+      showToast('Branch Name (Area) and Address are mandatory.', 'error');
+      return;
+    }
+
     try {
-      const payload = buildStorePayload();
-      if (!currentHub?.id) {
-        // First-time setup: create hub metadata doc
-        const hubRef = doc(collection(db, 'hubs'));
-        await setDoc(hubRef, {
-          name: 'Central Hub',
-          ownerName: currentUser.displayName || currentUser.email || 'Owner',
-          isActive: true,
-          createdAt: Timestamp.now(),
-          createdBy: currentUser.uid,
+      setCreatingBranch(true);
+      const hubId = currentHub?.id || 'digital_zone_hq';
+      const now = Timestamp.now();
+
+      const newBranchPayload = {
+        hubId,
+        shopName: 'Digital Zone',
+        name: branchForm.name.trim(),
+        address: branchForm.address.trim(),
+        phone: branchForm.phone.trim(),
+        email: branchForm.email.trim(),
+        managerName: branchForm.managerName.trim(),
+        managerId: branchForm.managerId || '',
+        purchaseEnabled: Boolean(branchForm.purchaseEnabled),
+        isActive: true,
+        totalStockUnits: 0,
+        lifetimeRevenue: 0,
+        lifetimeBills: 0,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: currentUser?.uid || '',
+      };
+
+      const docRef = await addDoc(collection(db, 'stores'), newBranchPayload);
+
+      // If an existing employee was selected as Branch Manager, assign them to this branch
+      if (branchForm.managerId) {
+        await updateDoc(doc(db, 'users', branchForm.managerId), {
+          storeId: docRef.id,
+          storeName: branchForm.name.trim(),
+          role: 'manager',
         });
-
-        const storeRef = doc(collection(db, 'stores'));
-        await setDoc(storeRef, {
-          hubId: hubRef.id,
-          ...payload,
-          createdAt: Timestamp.now(),
-          createdBy: currentUser.uid,
-          updatedAt: Timestamp.now(),
-        });
-
-        const userRef = doc(db, 'users', currentUser.uid);
-        await setDoc(userRef, { hubId: hubRef.id, storeId: storeRef.id, role: 'owner', scope: 'hub' }, { merge: true });
-
-        window.location.reload();
-        return;
       }
 
-      await addDoc(collection(db, 'stores'), {
-        hubId: currentHub.id,
-        ...payload,
-        createdAt: Timestamp.now(),
-        createdBy: currentUser.uid,
-        updatedAt: Timestamp.now(),
-      });
-
+      setCreatedBranchId(docRef.id);
+      setCreateBranchStep(3);
       await refreshStores();
-      setShowAddModal(false);
-      resetForm();
+      showToast(`Branch "Digital Zone - ${branchForm.name.trim()}" created!`, 'success');
     } catch (error) {
-      console.error('Error adding store:', error);
-      alert('Failed to add branch. Please check console for details.');
+      console.error('Error creating branch:', error);
+      showToast('Failed to create branch. Please try again.', 'error');
     } finally {
-      setLoading(false);
+      setCreatingBranch(false);
     }
   };
 
@@ -271,6 +323,24 @@ const BranchManagement: React.FC = () => {
       <Navbar />
 
       <main className="w-full max-w-full px-3 sm:px-6 lg:px-8 py-5 pb-28 sm:pb-12">
+        {/* Toast Alert */}
+        {toast && (
+          <div
+            className={`fixed top-4 right-4 z-[90] px-4 py-3 rounded-xl shadow-lg border text-sm font-semibold flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-150 ${
+              toast.type === 'error'
+                ? 'bg-rose-50 text-rose-800 border-rose-200'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+            }`}
+          >
+            {toast.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 text-rose-600" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            )}
+            <span>{toast.message}</span>
+          </div>
+        )}
+
         {/* Top Header */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -303,10 +373,7 @@ const BranchManagement: React.FC = () => {
 
             {isOwner && (
               <button
-                onClick={() => {
-                  resetForm();
-                  setShowAddModal(true);
-                }}
+                onClick={openCreateBranchModal}
                 className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-medium text-xs sm:text-sm rounded-xl transition-all shadow-xs cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
@@ -439,10 +506,7 @@ const BranchManagement: React.FC = () => {
             </p>
             {isOwner && !searchQuery && (
               <button
-                onClick={() => {
-                  resetForm();
-                  setShowAddModal(true);
-                }}
+                onClick={openCreateBranchModal}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-2"
               >
                 <Plus className="w-4 h-4" />
@@ -592,12 +656,250 @@ const BranchManagement: React.FC = () => {
           </div>
         )}
 
-        {/* ================= ADD / EDIT BRANCH MODAL ================= */}
-        {(showAddModal || showEditModal) && (
+        {/* ================= EXACT 2-STEP BRANCH CREATION MODAL FROM HQ DASHBOARD (OWNER ONLY) ================= */}
+        {showCreateBranchModal && isOwner && (
+          <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-150">
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600">
+                    Owner Only • Shop Name: Digital Zone
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {createBranchStep === 1 && 'Step 1 of 2 — Branch Basic Information'}
+                    {createBranchStep === 2 && 'Step 2 of 2 — Branch Purchase Configuration'}
+                    {createBranchStep === 3 && 'Branch Created — Host Environment Code'}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowCreateBranchModal(false)}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {createBranchStep === 1 && (
+                <div className="p-5 space-y-4">
+                  <div className="p-3 rounded-lg bg-blue-50/70 border border-blue-100 text-xs text-blue-800">
+                    <strong>Shop Name:</strong> Digital Zone (kept identical across all branches).
+                    Enter the <strong>Branch Area</strong> below as the Branch Name.
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Branch Name (Area of the Branch) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={branchForm.name}
+                      onChange={(e) => setBranchForm((p) => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g., Anna Nagar, T. Nagar, Velachery"
+                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Branch Address <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={branchForm.address}
+                      onChange={(e) => setBranchForm((p) => ({ ...p, address: e.target.value }))}
+                      placeholder="Full street address and landmark"
+                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Branch Phone
+                      </label>
+                      <input
+                        type="tel"
+                        value={branchForm.phone}
+                        onChange={(e) => setBranchForm((p) => ({ ...p, phone: e.target.value }))}
+                        placeholder="Phone number"
+                        className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Branch Email
+                      </label>
+                      <input
+                        type="email"
+                        value={branchForm.email}
+                        onChange={(e) => setBranchForm((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="branch@digitalzone.com"
+                        className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Branch Manager
+                    </label>
+                    <input
+                      type="text"
+                      value={branchForm.managerName}
+                      onChange={(e) =>
+                        setBranchForm((p) => ({ ...p, managerName: e.target.value }))
+                      }
+                      placeholder="Manager name (optional)"
+                      className="w-full px-3.5 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => setShowCreateBranchModal(false)}
+                      className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!branchForm.name.trim() || !branchForm.address.trim()) {
+                          showToast('Branch Name (Area) and Address are mandatory.', 'error');
+                          return;
+                        }
+                        setCreateBranchStep(2);
+                      }}
+                      className="px-5 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      Next: Branch Purchase
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {createBranchStep === 2 && (
+                <div className="p-5 space-y-4">
+                  <p className="text-sm text-slate-700">
+                    Should <strong>Digital Zone — {branchForm.name}</strong> have{' '}
+                    <strong>Branch Purchase</strong> enabled?
+                  </p>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setBranchForm((p) => ({ ...p, purchaseEnabled: true }))}
+                      className={`p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        branchForm.purchaseEnabled
+                          ? 'border-blue-600 bg-blue-50/50'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-900">
+                          Yes — Turn ON Branch Purchase
+                        </span>
+                        <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-blue-100 text-blue-700">
+                          Enabled
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">
+                        This branch will have access to Purchase, Add Purchase, Add Purchase IMEI, and Master Setting.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBranchForm((p) => ({ ...p, purchaseEnabled: false }))}
+                      className={`p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                        !branchForm.purchaseEnabled
+                          ? 'border-blue-600 bg-blue-50/50'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-900">
+                          No — Mandatory Features Only (HQ Stock Only)
+                        </span>
+                        <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-slate-100 text-slate-700">
+                          Disabled
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">
+                        Branch receives stock from HQ and does not record direct supplier purchases.
+                      </p>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                    <button
+                      onClick={() => setCreateBranchStep(1)}
+                      className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={handleCreateBranch}
+                      disabled={creatingBranch}
+                      className="px-5 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 cursor-pointer disabled:opacity-50"
+                    >
+                      {creatingBranch ? 'Creating Branch...' : 'Create Branch'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {createBranchStep === 3 && (
+                <div className="p-5 space-y-4">
+                  <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900">
+                    <div className="flex items-center gap-2 font-bold text-sm mb-1">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      Digital Zone — {branchForm.name} Created!
+                    </div>
+                    <p className="text-xs text-emerald-700">
+                      Copy the Branch ID below and place it in the branch deployment&apos;s{' '}
+                      <code>.env</code> file to host this branch separately.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] uppercase tracking-wider text-slate-600 font-semibold flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-blue-600" />
+                        Branch ID (Owner Only)
+                      </span>
+                      <button
+                        onClick={() => handleCopyBranchId(createdBranchId, true)}
+                        className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white text-xs font-semibold flex items-center gap-1 cursor-pointer shadow-2xs transition-all"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy .env Code</span>
+                      </button>
+                    </div>
+                    <code className="block text-xs font-mono font-semibold text-blue-700 bg-white p-2.5 rounded-lg border border-slate-200/90 select-all">
+                      VITE_BRANCH_ID={createdBranchId}
+                    </code>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={() => setShowCreateBranchModal(false)}
+                      className="px-5 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ================= EDIT BRANCH CONFIGURATION MODAL ================= */}
+        {showEditModal && (
           <div
             className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150"
             onClick={() => {
-              setShowAddModal(false);
               setShowEditModal(false);
               resetForm();
             }}
@@ -614,16 +916,15 @@ const BranchManagement: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-slate-900">
-                      {showEditModal ? `Configure: ${editingStore?.name}` : 'Setup New Retail Branch'}
+                      Configure: {editingStore?.name}
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Enter retail branch metadata, manager details, and GPS coordinates
+                      Update retail branch metadata, manager details, and GPS coordinates
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => {
-                    setShowAddModal(false);
                     setShowEditModal(false);
                     resetForm();
                   }}
@@ -795,7 +1096,6 @@ const BranchManagement: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setShowAddModal(false);
                     setShowEditModal(false);
                     resetForm();
                   }}
@@ -806,19 +1106,10 @@ const BranchManagement: React.FC = () => {
                 <button
                   type="button"
                   disabled={loading || !formData.name.trim()}
-                  onClick={showEditModal ? handleSaveEdit : handleAddStore}
+                  onClick={handleSaveEdit}
                   className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
                 >
-                  {loading ? (
-                    <span>Saving...</span>
-                  ) : showEditModal ? (
-                    <span>Save Changes</span>
-                  ) : (
-                    <>
-                      <Plus className="w-4 h-4" />
-                      <span>Create Branch</span>
-                    </>
-                  )}
+                  {loading ? <span>Saving...</span> : <span>Save Changes</span>}
                 </button>
               </div>
             </div>

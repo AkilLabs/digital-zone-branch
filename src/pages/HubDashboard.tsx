@@ -1498,21 +1498,21 @@ const HubDashboard: React.FC = () => {
                   </p>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-slate-900 text-white space-y-2">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1">
-                      <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[11px] uppercase tracking-wider text-slate-600 font-semibold flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5 text-blue-600" />
                       Branch ID (Owner Only)
                     </span>
                     <button
                       onClick={() => handleCopyBranchId(createdBranchId, true)}
-                      className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white text-xs font-semibold flex items-center gap-1 cursor-pointer shadow-2xs transition-all"
                     >
                       <Copy className="w-3.5 h-3.5" />
-                      Copy .env Code
+                      <span>Copy .env Code</span>
                     </button>
                   </div>
-                  <code className="block text-xs font-mono text-emerald-300 bg-slate-950 p-2.5 rounded border border-slate-800">
+                  <code className="block text-xs font-mono font-semibold text-blue-700 bg-white p-2.5 rounded-lg border border-slate-200/90 select-all">
                     VITE_BRANCH_ID={createdBranchId}
                   </code>
                 </div>
