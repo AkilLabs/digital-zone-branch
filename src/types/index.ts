@@ -425,6 +425,8 @@ export interface StockRequirement {
   updatedAt?: Date;
   updatedBy?: string;
   updatedByName?: string;
+  _storeId?: string;
+  _storeName?: string;
 }
 
 export interface ServiceRequest {
@@ -438,6 +440,8 @@ export interface ServiceRequest {
   password?: string;
   pattern?: number[];
   status: 'pending' | 'serviced' | 'customer-updated' | 'received' | 'inspecting' | 'waiting-approval' | 'repairing' | 'ready-delivery' | 'delivered';
+  _storeId?: string;
+  _storeName?: string;
   // Job info
   jobSheetNumber?: string;
   jobDate?: string;

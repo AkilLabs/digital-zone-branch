@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   Warehouse,
   Building2,
+  Layers,
   Download,
   FileText,
   FileSpreadsheet,
@@ -28,6 +29,8 @@ import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
 import {
+  collection,
+  doc,
   addDoc,
   getDocs,
   updateDoc,
@@ -36,6 +39,7 @@ import {
   orderBy,
   Timestamp,
 } from 'firebase/firestore';
+import { db } from '../config/firebase';
 import type { StockRequirement, Customer } from '../types';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -45,7 +49,7 @@ type StatusType = 'pending' | 'stock-updated' | 'customer-updated';
 
 function StockRequirementPage() {
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef, currentStore } = useStore();
+  const { getCollectionRef, currentStore, selectedLocation, stores } = useStore();
   const { success, error: showError } = useToastContext();
   const displayName = currentUser?.displayName || currentUser?.email || 'Staff';
 
@@ -118,26 +122,89 @@ function StockRequirementPage() {
   const fetchRequirements = async () => {
     try {
       setLoading(true);
-      const requirementsRef = getCollectionRef('stockRequirements');
-      const q = query(requirementsRef, orderBy('createdAt', 'desc'));
-      const querySnapshot = await getDocs(q);
 
-      const requirementsList = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        productName: doc.data().productName,
-        customerId: doc.data().customerId,
-        customerName: doc.data().customerName,
-        mobile: doc.data().mobile,
-        status: doc.data().status,
-        createdAt: doc.data().createdAt?.toDate() || new Date(),
-        createdBy: doc.data().createdBy,
-        createdByName: doc.data().createdByName,
-        updatedAt: doc.data().updatedAt?.toDate(),
-        updatedBy: doc.data().updatedBy,
-        updatedByName: doc.data().updatedByName,
-      })) as StockRequirement[];
+      if (selectedLocation === 'all_locations') {
+        // Fetch Hub requirements
+        const hubRef = collection(db, 'stockRequirements');
+        const hubSnap = await getDocs(query(hubRef, orderBy('createdAt', 'desc')));
+        const hubList: StockRequirement[] = hubSnap.docs.map(doc => ({
+          id: doc.id,
+          productName: doc.data().productName,
+          customerId: doc.data().customerId,
+          customerName: doc.data().customerName,
+          mobile: doc.data().mobile,
+          status: doc.data().status,
+          createdAt: doc.data().createdAt?.toDate() || new Date(),
+          createdBy: doc.data().createdBy,
+          createdByName: doc.data().createdByName,
+          updatedAt: doc.data().updatedAt?.toDate(),
+          updatedBy: doc.data().updatedBy,
+          updatedByName: doc.data().updatedByName,
+          _storeId: 'hub_warehouse',
+          _storeName: 'Hub Warehouse',
+        })) as StockRequirement[];
 
-      setRequirements(requirementsList);
+        // Fetch each branch
+        const branchPromises = stores
+          .filter((s): s is typeof s & { id: string } => Boolean(s && s.id))
+          .map(async store => {
+            const storeId = store.id;
+            try {
+              const bRef = collection(db, 'stores', storeId, 'stockRequirements');
+              const bSnap = await getDocs(query(bRef, orderBy('createdAt', 'desc')));
+              return bSnap.docs.map(doc => ({
+                id: doc.id,
+                productName: doc.data().productName,
+                customerId: doc.data().customerId,
+                customerName: doc.data().customerName,
+                mobile: doc.data().mobile,
+                status: doc.data().status,
+                createdAt: doc.data().createdAt?.toDate() || new Date(),
+                createdBy: doc.data().createdBy,
+                createdByName: doc.data().createdByName,
+                updatedAt: doc.data().updatedAt?.toDate(),
+                updatedBy: doc.data().updatedBy,
+                updatedByName: doc.data().updatedByName,
+                _storeId: storeId,
+                _storeName: store.name,
+              })) as StockRequirement[];
+            } catch (err) {
+              console.error(`Error loading requirements for store ${store.name}:`, err);
+              return [] as StockRequirement[];
+            }
+          });
+
+        const branchResults = await Promise.all(branchPromises);
+        const allList = [...hubList, ...branchResults.flat()].sort((a, b) => {
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+        setRequirements(allList);
+      } else {
+        const requirementsRef = getCollectionRef('stockRequirements');
+        const q = query(requirementsRef, orderBy('createdAt', 'desc'));
+        const querySnapshot = await getDocs(q);
+        const locName = currentStore ? currentStore.name : 'Hub Warehouse';
+        const locId = currentStore?.id || 'hub_warehouse';
+
+        const requirementsList = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          productName: doc.data().productName,
+          customerId: doc.data().customerId,
+          customerName: doc.data().customerName,
+          mobile: doc.data().mobile,
+          status: doc.data().status,
+          createdAt: doc.data().createdAt?.toDate() || new Date(),
+          createdBy: doc.data().createdBy,
+          createdByName: doc.data().createdByName,
+          updatedAt: doc.data().updatedAt?.toDate(),
+          updatedBy: doc.data().updatedBy,
+          updatedByName: doc.data().updatedByName,
+          _storeId: locId,
+          _storeName: locName,
+        })) as StockRequirement[];
+
+        setRequirements(requirementsList);
+      }
     } catch (error) {
       console.error('Error fetching stock requirements:', error);
     } finally {
@@ -148,7 +215,7 @@ function StockRequirementPage() {
   useEffect(() => {
     fetchCustomers();
     fetchRequirements();
-  }, [currentStore?.id]);
+  }, [selectedLocation, currentStore?.id, stores]);
 
   // Add new customer modal action
   const handleAddCustomer = async (e: React.FormEvent) => {
@@ -280,7 +347,13 @@ function StockRequirementPage() {
   // Update requirement status
   const handleUpdateStatus = async (requirementId: string, newStatus: StatusType) => {
     try {
-      const requirementRef = getDocRef('stockRequirements', requirementId);
+      const targetReq = requirements.find(r => r.id === requirementId);
+      const storeId = targetReq?._storeId;
+      const requirementRef =
+        storeId && storeId !== 'hub_warehouse'
+          ? doc(db, 'stores', storeId, 'stockRequirements', requirementId)
+          : doc(db, 'stockRequirements', requirementId);
+
       await updateDoc(requirementRef, {
         status: newStatus,
         updatedAt: Timestamp.now(),
@@ -307,7 +380,14 @@ function StockRequirementPage() {
   const handleDelete = async (requirementId: string) => {
     if (!window.confirm('Delete this stock requirement?')) return;
     try {
-      await deleteDoc(getDocRef('stockRequirements', requirementId));
+      const targetReq = requirements.find(r => r.id === requirementId);
+      const storeId = targetReq?._storeId;
+      const requirementRef =
+        storeId && storeId !== 'hub_warehouse'
+          ? doc(db, 'stores', storeId, 'stockRequirements', requirementId)
+          : doc(db, 'stockRequirements', requirementId);
+
+      await deleteDoc(requirementRef);
       setRequirements(prev => prev.filter(req => req.id !== requirementId));
       success('Stock requirement deleted');
     } catch (error) {
@@ -398,64 +478,145 @@ function StockRequirementPage() {
     }
 
     try {
-      const doc = new jsPDF();
-      const locationName = currentStore?.name || 'Hub Warehouse (Main Office)';
+      const doc = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const isAllLocs = selectedLocation === 'all_locations';
+      const locationName = isAllLocs
+        ? 'Complete Stock (Chain-wide)'
+        : currentStore?.name || 'Hub Warehouse';
       const dateStr = new Date().toLocaleDateString('en-IN', {
         day: '2-digit',
         month: 'short',
-        year: 'numeric'
+        year: 'numeric',
       });
 
-      doc.setFontSize(15);
+      // Minimal Header
+      doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
-      doc.text('Stock Requirements Sourcing List', 14, 18);
+      doc.setTextColor(17, 24, 39);
+      doc.text('Stock Requirements', 14, 16);
 
-      doc.setFontSize(9);
+      // Minimal Metadata Subtitle
+      doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
-      doc.setTextColor(90);
-      doc.text(`Location: ${locationName} • Date: ${dateStr} • Total Items: ${exportItems.length}`, 14, 25);
+      doc.setTextColor(100, 116, 139);
+      const subInfo = `${locationName}  •  ${dateStr}  •  ${exportItems.length} items${omitCustomerPhone ? '  •  Supplier Copy' : ''}`;
+      doc.text(subInfo, 14, 22);
 
-      if (omitCustomerPhone) {
-        doc.setTextColor(22, 101, 52); // green-800
-        doc.setFont('helvetica', 'bold');
-        doc.text('✓ Supplier Sourcing Copy — Customer phone numbers excluded for privacy', 14, 31);
-      } else {
-        doc.setTextColor(180, 83, 9); // amber-700
-        doc.setFont('helvetica', 'bold');
-        doc.text('⚠ Internal Team Copy — Contains confidential customer mobile numbers', 14, 31);
-      }
+      // Subtle Divider
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.2);
+      doc.line(14, 25, 196, 25);
 
       const headers = omitCustomerPhone
-        ? ['#', 'Required Product / Spare Part', 'Customer Name', 'Status', 'Date Logged']
-        : ['#', 'Required Product / Spare Part', 'Customer Name', 'Phone Number', 'Status', 'Date Logged'];
+        ? (isAllLocs
+            ? ['#', 'Item / Requirement', 'Location', 'Customer', 'Status', 'Date']
+            : ['#', 'Item / Requirement', 'Customer', 'Status', 'Date'])
+        : (isAllLocs
+            ? ['#', 'Item / Requirement', 'Location', 'Customer', 'Phone', 'Status', 'Date']
+            : ['#', 'Item / Requirement', 'Customer', 'Phone', 'Status', 'Date']);
 
       const body = exportItems.map((req, idx) => {
-        const itemDate = req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN') : '—';
+        const itemDate = req.createdAt
+          ? new Date(req.createdAt).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })
+          : '—';
+
+        const statusText =
+          req.status === 'pending'
+            ? 'Pending'
+            : req.status === 'stock-updated'
+            ? 'In Stock'
+            : req.status === 'customer-updated'
+            ? 'Notified'
+            : req.status;
+
+        const locLabel = req._storeName || (req._storeId === 'hub_warehouse' ? 'Hub Warehouse' : 'Branch');
+
         if (omitCustomerPhone) {
-          return [
-            idx + 1,
-            req.productName || '—',
-            req.customerName || 'Walk-in Customer',
-            formatStatusLabel(req.status),
-            itemDate
-          ];
+          return isAllLocs
+            ? [idx + 1, req.productName || '—', locLabel, req.customerName || 'Walk-in', statusText, itemDate]
+            : [idx + 1, req.productName || '—', req.customerName || 'Walk-in', statusText, itemDate];
         }
-        return [
-          idx + 1,
-          req.productName || '—',
-          req.customerName || 'Walk-in Customer',
-          req.mobile || '—',
-          formatStatusLabel(req.status),
-          itemDate
-        ];
+        return isAllLocs
+          ? [idx + 1, req.productName || '—', locLabel, req.customerName || 'Walk-in', req.mobile || '—', statusText, itemDate]
+          : [idx + 1, req.productName || '—', req.customerName || 'Walk-in', req.mobile || '—', statusText, itemDate];
       });
 
       autoTable(doc, {
         head: [headers],
         body,
-        startY: 36,
-        styles: { fontSize: 8.5, cellPadding: 3 },
-        headStyles: { fillColor: omitCustomerPhone ? [30, 58, 138] : [55, 65, 81] },
+        startY: 28,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica',
+          fontSize: 8,
+          textColor: [30, 41, 59],
+          cellPadding: { top: 3.5, bottom: 3.5, left: 2.5, right: 2.5 },
+          lineColor: [241, 245, 249],
+          lineWidth: { bottom: 0.2 },
+        },
+        headStyles: {
+          fillColor: [248, 250, 252],
+          textColor: [71, 85, 105],
+          fontStyle: 'bold',
+          fontSize: 8,
+          lineColor: [226, 232, 240],
+          lineWidth: { bottom: 0.4 },
+        },
+        alternateRowStyles: {
+          fillColor: [253, 254, 255],
+        },
+        columnStyles: omitCustomerPhone
+          ? (isAllLocs
+              ? {
+                  0: { halign: 'center', cellWidth: 8, textColor: [148, 163, 184] },
+                  1: { fontStyle: 'bold', cellWidth: 'auto', textColor: [15, 23, 42] },
+                  2: { cellWidth: 32, textColor: [100, 116, 139] },
+                  3: { cellWidth: 34, textColor: [71, 85, 105] },
+                  4: { halign: 'center', cellWidth: 22 },
+                  5: { halign: 'right', cellWidth: 20, textColor: [100, 116, 139] },
+                }
+              : {
+                  0: { halign: 'center', cellWidth: 10, textColor: [148, 163, 184] },
+                  1: { fontStyle: 'bold', cellWidth: 'auto', textColor: [15, 23, 42] },
+                  2: { cellWidth: 42, textColor: [71, 85, 105] },
+                  3: { halign: 'center', cellWidth: 26 },
+                  4: { halign: 'right', cellWidth: 24, textColor: [100, 116, 139] },
+                })
+          : (isAllLocs
+              ? {
+                  0: { halign: 'center', cellWidth: 8, textColor: [148, 163, 184] },
+                  1: { fontStyle: 'bold', cellWidth: 'auto', textColor: [15, 23, 42] },
+                  2: { cellWidth: 26, textColor: [100, 116, 139] },
+                  3: { cellWidth: 28, textColor: [71, 85, 105] },
+                  4: { cellWidth: 25, textColor: [71, 85, 105] },
+                  5: { halign: 'center', cellWidth: 20 },
+                  6: { halign: 'right', cellWidth: 18, textColor: [100, 116, 139] },
+                }
+              : {
+                  0: { halign: 'center', cellWidth: 10, textColor: [148, 163, 184] },
+                  1: { fontStyle: 'bold', cellWidth: 'auto', textColor: [15, 23, 42] },
+                  2: { cellWidth: 32, textColor: [71, 85, 105] },
+                  3: { cellWidth: 28, textColor: [71, 85, 105] },
+                  4: { halign: 'center', cellWidth: 24 },
+                  5: { halign: 'right', cellWidth: 22, textColor: [100, 116, 139] },
+                }),
+        didDrawPage: (data) => {
+          const pageCount = (doc as any).internal.getNumberOfPages();
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(148, 163, 184);
+          doc.text('Digital Zone', 14, 290);
+          doc.text(`Page ${data.pageNumber} of ${pageCount}`, 196, 290, { align: 'right' });
+        },
       });
 
       const privacySuffix = omitCustomerPhone ? '_without_phone' : '_internal';
@@ -480,8 +641,13 @@ function StockRequirementPage() {
         const row: Record<string, any> = {
           'S.No': idx + 1,
           'Required Product / Spare Part': req.productName || '—',
-          'Customer Name': req.customerName || 'Walk-in Customer',
         };
+
+        if (selectedLocation === 'all_locations') {
+          row['Location'] = req._storeName || (req._storeId === 'hub_warehouse' ? 'Hub Warehouse' : 'Branch');
+        }
+
+        row['Customer Name'] = req.customerName || 'Walk-in Customer';
 
         if (!omitCustomerPhone) {
           row['Customer Phone Number'] = req.mobile || '—';
@@ -515,22 +681,32 @@ function StockRequirementPage() {
     }
 
     try {
+      const isAllLocs = selectedLocation === 'all_locations';
       const headers = omitCustomerPhone
-        ? ['S.No', 'Required Product', 'Customer Name', 'Status', 'Date Logged']
-        : ['S.No', 'Required Product', 'Customer Name', 'Customer Phone', 'Status', 'Date Logged'];
+        ? (isAllLocs
+            ? ['S.No', 'Required Product', 'Location', 'Customer Name', 'Status', 'Date Logged']
+            : ['S.No', 'Required Product', 'Customer Name', 'Status', 'Date Logged'])
+        : (isAllLocs
+            ? ['S.No', 'Required Product', 'Location', 'Customer Name', 'Customer Phone', 'Status', 'Date Logged']
+            : ['S.No', 'Required Product', 'Customer Name', 'Customer Phone', 'Status', 'Date Logged']);
 
       const csvRows = exportItems.map((req, idx) => {
         const itemDate = req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN') : '—';
         const safeProduct = `"${(req.productName || '').replace(/"/g, '""')}"`;
+        const safeLoc = `"${(req._storeName || (req._storeId === 'hub_warehouse' ? 'Hub Warehouse' : 'Branch')).replace(/"/g, '""')}"`;
         const safeCust = `"${(req.customerName || 'Walk-in Customer').replace(/"/g, '""')}"`;
         const safeStatus = `"${formatStatusLabel(req.status)}"`;
         const safeDate = `"${itemDate}"`;
 
         if (omitCustomerPhone) {
-          return [idx + 1, safeProduct, safeCust, safeStatus, safeDate].join(',');
+          return isAllLocs
+            ? [idx + 1, safeProduct, safeLoc, safeCust, safeStatus, safeDate].join(',')
+            : [idx + 1, safeProduct, safeCust, safeStatus, safeDate].join(',');
         }
         const safePhone = `"${(req.mobile || '').replace(/"/g, '""')}"`;
-        return [idx + 1, safeProduct, safeCust, safePhone, safeStatus, safeDate].join(',');
+        return isAllLocs
+          ? [idx + 1, safeProduct, safeLoc, safeCust, safePhone, safeStatus, safeDate].join(',')
+          : [idx + 1, safeProduct, safeCust, safePhone, safeStatus, safeDate].join(',');
       });
 
       const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...csvRows].join('\n');
@@ -575,7 +751,12 @@ function StockRequirementPage() {
                 Log requested items out of stock, track part sourcing & notify customers when stock arrives
               </span>
               <span className="text-gray-300">•</span>
-              {currentStore?.name ? (
+              {selectedLocation === 'all_locations' ? (
+                <span className="inline-flex items-center gap-1 text-blue-800 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                  <Layers className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Complete Stock Requirements (Hub + All Branches)</span>
+                </span>
+              ) : currentStore?.name ? (
                 <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
                   <Building2 className="w-3.5 h-3.5" />
                   <span>Branch: {currentStore.name}</span>
@@ -591,7 +772,7 @@ function StockRequirementPage() {
 
           {/* Header Action Buttons */}
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-            <LocationSwitcher />
+            <LocationSwitcher includeAllLocations />
 
             <button
               type="button"
@@ -923,6 +1104,21 @@ function StockRequirementPage() {
                             <tr key={req.id} className="hover:bg-blue-50/20 transition-colors">
                               <td className="p-2.5">
                                 <p className="font-bold text-gray-900">{req.productName}</p>
+                                {selectedLocation === 'all_locations' && (
+                                  <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                    {req._storeId === 'hub_warehouse' ? (
+                                      <>
+                                        <Warehouse className="w-2.5 h-2.5 text-amber-600" />
+                                        <span>Hub Warehouse</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Building2 className="w-2.5 h-2.5 text-blue-600" />
+                                        <span>{req._storeName || 'Branch'}</span>
+                                      </>
+                                    )}
+                                  </span>
+                                )}
                               </td>
 
                               <td className="p-2.5">

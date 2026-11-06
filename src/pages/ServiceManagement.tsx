@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { deleteDoc, getDocs, orderBy, query, Timestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, deleteDoc, getDocs, orderBy, query, Timestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 import {
   Clock3,
   Search,
@@ -19,11 +20,14 @@ import {
   Flame,
   Layers,
   Banknote,
-  Calendar
+  Calendar,
+  Warehouse,
+  Building2
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 
 import Navbar from '../components/Navbar';
+import LocationSwitcher from '../components/LocationSwitcher';
 import PrintServiceQRLabelsModal from '../components/PrintServiceQRLabelsModal';
 import QRScannerModal from '../components/QRScannerModal';
 import { useAuth } from '../context/AuthContext';
@@ -93,7 +97,7 @@ function formatDate(value?: Date | string) {
 export default function ServiceManagementPage() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef } = useStore();
+  const { getCollectionRef, currentStore, selectedLocation, stores } = useStore();
   const { success, error: showError } = useToastContext();
   const displayName = currentUser?.displayName || currentUser?.email || 'Unknown User';
 
@@ -116,51 +120,166 @@ export default function ServiceManagementPage() {
   const fetchJobs = async () => {
     try {
       setLoading(true);
-      const jobsRef = getCollectionRef('serviceRequests');
-      const q = query(jobsRef, orderBy('createdAt', 'desc'));
-      const snapshot = await getDocs(q);
 
-      const rows = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        const status = (data.status || 'received') as StatusValue;
-        const createdAt = data.createdAt?.toDate?.() || new Date();
-        return {
-          id: doc.id,
-          productName:
-            data.productName ||
-            `${data.brand || ''} ${data.modelName || ''}`.trim() ||
-            'Unknown Device',
-          customerId: data.customerId || '',
-          customerName: data.customerName || '',
-          mobile: data.mobile || '',
-          cost: Number(data.cost || data.estimatedCost || 0),
-          advancePaid: Number(data.advancePaid || 0),
-          balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
-          lockType: data.lockType || 'none',
-          password: data.password,
-          pattern: data.pattern,
-          status,
-          jobSheetNumber: data.jobSheetNumber,
-          qrCodeValue: data.qrCodeValue,
-          jobDate: data.jobDate,
-          jobTime: data.jobTime,
-          serviceType: data.serviceType,
-          priority: data.priority,
-          brand: data.brand,
-          modelName: data.modelName,
-          issues: data.issues || [],
-          issueNotes: data.issueNotes,
-          estimatedRepairTime: data.estimatedRepairTime,
-          createdAt,
-          createdBy: data.createdBy || '',
-          createdByName: data.createdByName,
-          updatedAt: data.updatedAt?.toDate?.(),
-          updatedBy: data.updatedBy,
-          updatedByName: data.updatedByName
-        } as ServiceRequest;
-      });
+      if (selectedLocation === 'all_locations') {
+        // 1. Fetch Hub workshop service requests
+        const hubRef = collection(db, 'serviceRequests');
+        const hubSnap = await getDocs(query(hubRef, orderBy('createdAt', 'desc')));
+        const hubJobs: ServiceRequest[] = hubSnap.docs.map((docSnap) => {
+          const data = docSnap.data();
+          const status = (data.status || 'received') as StatusValue;
+          const createdAt = data.createdAt?.toDate?.() || new Date();
+          return {
+            id: docSnap.id,
+            productName:
+              data.productName ||
+              `${data.brand || ''} ${data.modelName || ''}`.trim() ||
+              'Unknown Device',
+            customerId: data.customerId || '',
+            customerName: data.customerName || '',
+            mobile: data.mobile || '',
+            cost: Number(data.cost || data.estimatedCost || 0),
+            advancePaid: Number(data.advancePaid || 0),
+            balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
+            lockType: data.lockType || 'none',
+            password: data.password,
+            pattern: data.pattern,
+            status,
+            jobSheetNumber: data.jobSheetNumber,
+            qrCodeValue: data.qrCodeValue,
+            jobDate: data.jobDate,
+            jobTime: data.jobTime,
+            serviceType: data.serviceType,
+            priority: data.priority,
+            brand: data.brand,
+            modelName: data.modelName,
+            issues: data.issues || [],
+            issueNotes: data.issueNotes,
+            estimatedRepairTime: data.estimatedRepairTime,
+            createdAt,
+            createdBy: data.createdBy || '',
+            createdByName: data.createdByName,
+            updatedAt: data.updatedAt?.toDate?.(),
+            updatedBy: data.updatedBy,
+            updatedByName: data.updatedByName,
+            _storeId: 'hub_warehouse',
+            _storeName: 'Hub Workshop',
+          } as ServiceRequest;
+        });
 
-      setJobs(rows);
+        // 2. Fetch each branch store's service requests
+        const branchPromises = stores
+          .filter((s): s is typeof s & { id: string } => Boolean(s && s.id))
+          .map(async (store) => {
+            const storeId = store.id;
+            try {
+              const bRef = collection(db, 'stores', storeId, 'serviceRequests');
+              const bSnap = await getDocs(query(bRef, orderBy('createdAt', 'desc')));
+              return bSnap.docs.map((docSnap) => {
+                const data = docSnap.data();
+                const status = (data.status || 'received') as StatusValue;
+                const createdAt = data.createdAt?.toDate?.() || new Date();
+                return {
+                  id: docSnap.id,
+                  productName:
+                    data.productName ||
+                    `${data.brand || ''} ${data.modelName || ''}`.trim() ||
+                    'Unknown Device',
+                  customerId: data.customerId || '',
+                  customerName: data.customerName || '',
+                  mobile: data.mobile || '',
+                  cost: Number(data.cost || data.estimatedCost || 0),
+                  advancePaid: Number(data.advancePaid || 0),
+                  balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
+                  lockType: data.lockType || 'none',
+                  password: data.password,
+                  pattern: data.pattern,
+                  status,
+                  jobSheetNumber: data.jobSheetNumber,
+                  qrCodeValue: data.qrCodeValue,
+                  jobDate: data.jobDate,
+                  jobTime: data.jobTime,
+                  serviceType: data.serviceType,
+                  priority: data.priority,
+                  brand: data.brand,
+                  modelName: data.modelName,
+                  issues: data.issues || [],
+                  issueNotes: data.issueNotes,
+                  estimatedRepairTime: data.estimatedRepairTime,
+                  createdAt,
+                  createdBy: data.createdBy || '',
+                  createdByName: data.createdByName,
+                  updatedAt: data.updatedAt?.toDate?.(),
+                  updatedBy: data.updatedBy,
+                  updatedByName: data.updatedByName,
+                  _storeId: storeId,
+                  _storeName: store.name,
+                } as ServiceRequest;
+              });
+            } catch (err) {
+              console.error(`Error loading service jobs for store ${store.name}:`, err);
+              return [] as ServiceRequest[];
+            }
+          });
+
+        const branchResults = await Promise.all(branchPromises);
+        const allJobs = [...hubJobs, ...branchResults.flat()].sort((a, b) => {
+          const timeA = new Date(a.createdAt).getTime();
+          const timeB = new Date(b.createdAt).getTime();
+          return timeB - timeA;
+        });
+        setJobs(allJobs);
+      } else {
+        const jobsRef = getCollectionRef('serviceRequests');
+        const q = query(jobsRef, orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        const locName = currentStore ? currentStore.name : 'Hub Workshop';
+        const locId = currentStore?.id || 'hub_warehouse';
+
+        const rows = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data();
+          const status = (data.status || 'received') as StatusValue;
+          const createdAt = data.createdAt?.toDate?.() || new Date();
+          return {
+            id: docSnap.id,
+            productName:
+              data.productName ||
+              `${data.brand || ''} ${data.modelName || ''}`.trim() ||
+              'Unknown Device',
+            customerId: data.customerId || '',
+            customerName: data.customerName || '',
+            mobile: data.mobile || '',
+            cost: Number(data.cost || data.estimatedCost || 0),
+            advancePaid: Number(data.advancePaid || 0),
+            balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
+            lockType: data.lockType || 'none',
+            password: data.password,
+            pattern: data.pattern,
+            status,
+            jobSheetNumber: data.jobSheetNumber,
+            qrCodeValue: data.qrCodeValue,
+            jobDate: data.jobDate,
+            jobTime: data.jobTime,
+            serviceType: data.serviceType,
+            priority: data.priority,
+            brand: data.brand,
+            modelName: data.modelName,
+            issues: data.issues || [],
+            issueNotes: data.issueNotes,
+            estimatedRepairTime: data.estimatedRepairTime,
+            createdAt,
+            createdBy: data.createdBy || '',
+            createdByName: data.createdByName,
+            updatedAt: data.updatedAt?.toDate?.(),
+            updatedBy: data.updatedBy,
+            updatedByName: data.updatedByName,
+            _storeId: locId,
+            _storeName: locName,
+          } as ServiceRequest;
+        });
+
+        setJobs(rows);
+      }
     } catch (err) {
       console.error('Failed to fetch service jobs', err);
       showError('Failed to load service jobs');
@@ -171,7 +290,7 @@ export default function ServiceManagementPage() {
 
   useEffect(() => {
     fetchJobs();
-  }, []);
+  }, [selectedLocation, currentStore?.id, stores]);
 
   // Compute stats for KPI strip
   const stats = useMemo(() => {
@@ -230,7 +349,14 @@ export default function ServiceManagementPage() {
 
   const handleStatusChange = async (jobId: string, status: StatusValue) => {
     try {
-      await updateDoc(getDocRef('serviceRequests', jobId), {
+      const targetJob = jobs.find((j) => j.id === jobId);
+      const storeId = targetJob?._storeId;
+      const jobRef =
+        storeId && storeId !== 'hub_warehouse'
+          ? doc(db, 'stores', storeId, 'serviceRequests', jobId)
+          : doc(db, 'serviceRequests', jobId);
+
+      await updateDoc(jobRef, {
         status,
         updatedAt: Timestamp.now(),
         updatedBy: currentUser?.uid,
@@ -264,7 +390,14 @@ export default function ServiceManagementPage() {
     }
     try {
       setDeletingJobId(jobId);
-      await deleteDoc(getDocRef('serviceRequests', jobId));
+      const targetJob = jobs.find((j) => j.id === jobId);
+      const storeId = targetJob?._storeId;
+      const jobRef =
+        storeId && storeId !== 'hub_warehouse'
+          ? doc(db, 'stores', storeId, 'serviceRequests', jobId)
+          : doc(db, 'serviceRequests', jobId);
+
+      await deleteDoc(jobRef);
       setJobs((prev) => prev.filter((job) => job.id !== jobId));
       success('Service job deleted successfully');
     } catch (err) {
@@ -331,14 +464,33 @@ export default function ServiceManagementPage() {
                     Live Workshop
                   </span>
                 </div>
-                <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                  Track intake, manage technician status pipeline, print QR tags & notify customers
+                <p className="text-xs sm:text-sm text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                  <span>Track intake, manage technician status pipeline, print QR tags & notify customers</span>
+                  <span className="text-slate-300">•</span>
+                  {selectedLocation === 'all_locations' ? (
+                    <span className="inline-flex items-center gap-1 text-blue-800 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                      <Layers className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Complete Service Data (Hub Workshop + All Branches)</span>
+                    </span>
+                  ) : currentStore?.name ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                      <Building2 className="w-3.5 h-3.5" />
+                      <span>Branch: {currentStore.name}</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
+                      <Warehouse className="w-3.5 h-3.5" />
+                      <span>Hub Workshop (Main Office)</span>
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
 
             {/* Quick Actions */}
             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+              <LocationSwitcher includeAllLocations />
+
               <button
                 onClick={() => setIsScannerOpen(true)}
                 className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200/80 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all active:scale-95"
@@ -633,10 +785,25 @@ export default function ServiceManagementPage() {
                     <div key={job.id} className="p-4 space-y-3 hover:bg-slate-50/50 transition-colors">
                       {/* Top Bar: Job Ref, Priority & Date */}
                       <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-mono text-xs font-black text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
                             {job.jobSheetNumber || '-'}
                           </span>
+                          {selectedLocation === 'all_locations' && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                              {job._storeId === 'hub_warehouse' ? (
+                                <>
+                                  <Warehouse className="w-2.5 h-2.5 text-amber-600" />
+                                  <span>Hub Workshop</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Building2 className="w-2.5 h-2.5 text-blue-600" />
+                                  <span>{job._storeName || 'Branch'}</span>
+                                </>
+                              )}
+                            </span>
+                          )}
                           {isUrgent && (
                             <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold">
                               <Flame className="w-3 h-3 text-rose-500" /> Urgent
@@ -818,10 +985,25 @@ export default function ServiceManagementPage() {
                           {/* Job ID & Ref */}
                           <td className="py-3.5 pl-5 pr-3">
                             <div className="space-y-1">
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="font-mono text-xs font-black text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
                                   {job.jobSheetNumber || '-'}
                                 </span>
+                                {selectedLocation === 'all_locations' && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                    {job._storeId === 'hub_warehouse' ? (
+                                      <>
+                                        <Warehouse className="w-2.5 h-2.5 text-amber-600" />
+                                        <span>Hub Workshop</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Building2 className="w-2.5 h-2.5 text-blue-600" />
+                                        <span>{job._storeName || 'Branch'}</span>
+                                      </>
+                                    )}
+                                  </span>
+                                )}
                               </div>
                               {isUrgent && (
                                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold">
