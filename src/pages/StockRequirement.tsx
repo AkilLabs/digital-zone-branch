@@ -14,9 +14,16 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
-  CheckCircle2
+  CheckCircle2,
+  Warehouse,
+  Building2,
+  Download,
+  FileText,
+  FileSpreadsheet,
+  EyeOff,
 } from 'lucide-react';
 import Navbar from '../components/Navbar';
+import LocationSwitcher from '../components/LocationSwitcher';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
@@ -30,6 +37,9 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import type { StockRequirement, Customer } from '../types';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type StatusType = 'pending' | 'stock-updated' | 'customer-updated';
 
@@ -64,6 +74,11 @@ function StockRequirementPage() {
   const [newCustomerName, setNewCustomerName] = useState('');
   const [newCustomerPhone, setNewCustomerPhone] = useState('');
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
+
+  // Download & Privacy Confirmation Modal state
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [omitCustomerPhone, setOmitCustomerPhone] = useState(true);
+  const [downloadScope, setDownloadScope] = useState<'filtered' | 'pending' | 'all'>('filtered');
 
   // Click outside to dismiss customer dropdown
   useEffect(() => {
@@ -355,6 +370,186 @@ function StockRequirementPage() {
 
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
 
+  // Items to export based on chosen scope
+  const exportItems = useMemo(() => {
+    if (downloadScope === 'pending') {
+      return requirements.filter(r => r.status === 'pending');
+    }
+    if (downloadScope === 'all') {
+      return requirements;
+    }
+    return filteredRequirements;
+  }, [requirements, filteredRequirements, downloadScope]);
+
+  const formatStatusLabel = (st: string) => {
+    switch (st) {
+      case 'pending': return 'Pending Sourcing';
+      case 'stock-updated': return 'Stock In Store';
+      case 'customer-updated': return 'Customer Notified';
+      default: return st;
+    }
+  };
+
+  // Export handlers
+  const handleExportPDF = () => {
+    if (exportItems.length === 0) {
+      showError('No stock requirement records to export');
+      return;
+    }
+
+    try {
+      const doc = new jsPDF();
+      const locationName = currentStore?.name || 'Hub Warehouse (Main Office)';
+      const dateStr = new Date().toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      });
+
+      doc.setFontSize(15);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Stock Requirements Sourcing List', 14, 18);
+
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(90);
+      doc.text(`Location: ${locationName} • Date: ${dateStr} • Total Items: ${exportItems.length}`, 14, 25);
+
+      if (omitCustomerPhone) {
+        doc.setTextColor(22, 101, 52); // green-800
+        doc.setFont('helvetica', 'bold');
+        doc.text('✓ Supplier Sourcing Copy — Customer phone numbers excluded for privacy', 14, 31);
+      } else {
+        doc.setTextColor(180, 83, 9); // amber-700
+        doc.setFont('helvetica', 'bold');
+        doc.text('⚠ Internal Team Copy — Contains confidential customer mobile numbers', 14, 31);
+      }
+
+      const headers = omitCustomerPhone
+        ? ['#', 'Required Product / Spare Part', 'Customer Name', 'Status', 'Date Logged']
+        : ['#', 'Required Product / Spare Part', 'Customer Name', 'Phone Number', 'Status', 'Date Logged'];
+
+      const body = exportItems.map((req, idx) => {
+        const itemDate = req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN') : '—';
+        if (omitCustomerPhone) {
+          return [
+            idx + 1,
+            req.productName || '—',
+            req.customerName || 'Walk-in Customer',
+            formatStatusLabel(req.status),
+            itemDate
+          ];
+        }
+        return [
+          idx + 1,
+          req.productName || '—',
+          req.customerName || 'Walk-in Customer',
+          req.mobile || '—',
+          formatStatusLabel(req.status),
+          itemDate
+        ];
+      });
+
+      autoTable(doc, {
+        head: [headers],
+        body,
+        startY: 36,
+        styles: { fontSize: 8.5, cellPadding: 3 },
+        headStyles: { fillColor: omitCustomerPhone ? [30, 58, 138] : [55, 65, 81] },
+      });
+
+      const privacySuffix = omitCustomerPhone ? '_without_phone' : '_internal';
+      doc.save(`stock_requirements${privacySuffix}_${new Date().toISOString().split('T')[0]}.pdf`);
+      success(`PDF downloaded ${omitCustomerPhone ? 'without phone numbers' : 'with phone numbers'}`);
+      setShowDownloadModal(false);
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      showError('Failed to generate PDF document');
+    }
+  };
+
+  const handleExportExcel = () => {
+    if (exportItems.length === 0) {
+      showError('No stock requirement records to export');
+      return;
+    }
+
+    try {
+      const rows = exportItems.map((req, idx) => {
+        const itemDate = req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN') : '—';
+        const row: Record<string, any> = {
+          'S.No': idx + 1,
+          'Required Product / Spare Part': req.productName || '—',
+          'Customer Name': req.customerName || 'Walk-in Customer',
+        };
+
+        if (!omitCustomerPhone) {
+          row['Customer Phone Number'] = req.mobile || '—';
+        }
+
+        row['Status'] = formatStatusLabel(req.status);
+        row['Date Logged'] = itemDate;
+        row['Created By'] = req.createdByName || 'Staff';
+
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Stock Requirements');
+
+      const privacySuffix = omitCustomerPhone ? '_without_phone' : '_internal';
+      XLSX.writeFile(wb, `stock_requirements${privacySuffix}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      success(`Excel downloaded ${omitCustomerPhone ? 'without phone numbers' : 'with phone numbers'}`);
+      setShowDownloadModal(false);
+    } catch (err) {
+      console.error('Error exporting Excel:', err);
+      showError('Failed to export Excel spreadsheet');
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (exportItems.length === 0) {
+      showError('No stock requirement records to export');
+      return;
+    }
+
+    try {
+      const headers = omitCustomerPhone
+        ? ['S.No', 'Required Product', 'Customer Name', 'Status', 'Date Logged']
+        : ['S.No', 'Required Product', 'Customer Name', 'Customer Phone', 'Status', 'Date Logged'];
+
+      const csvRows = exportItems.map((req, idx) => {
+        const itemDate = req.createdAt ? new Date(req.createdAt).toLocaleDateString('en-IN') : '—';
+        const safeProduct = `"${(req.productName || '').replace(/"/g, '""')}"`;
+        const safeCust = `"${(req.customerName || 'Walk-in Customer').replace(/"/g, '""')}"`;
+        const safeStatus = `"${formatStatusLabel(req.status)}"`;
+        const safeDate = `"${itemDate}"`;
+
+        if (omitCustomerPhone) {
+          return [idx + 1, safeProduct, safeCust, safeStatus, safeDate].join(',');
+        }
+        const safePhone = `"${(req.mobile || '').replace(/"/g, '""')}"`;
+        return [idx + 1, safeProduct, safeCust, safePhone, safeStatus, safeDate].join(',');
+      });
+
+      const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...csvRows].join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      const privacySuffix = omitCustomerPhone ? '_without_phone' : '_internal';
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', `stock_requirements${privacySuffix}_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      success(`CSV downloaded ${omitCustomerPhone ? 'without phone numbers' : 'with phone numbers'}`);
+      setShowDownloadModal(false);
+    } catch (err) {
+      console.error('Error exporting CSV:', err);
+      showError('Failed to export CSV file');
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(filteredRequirements.length / itemsPerPage));
   const paginatedRequirements = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -375,16 +570,39 @@ function StockRequirementPage() {
               <Package className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
               Stock Requirements
             </h1>
-            <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
-              Log requested items out of stock, track part sourcing & notify customers when stock arrives
-              {currentStore?.name && (
-                <span className="text-gray-400 hidden md:inline"> • Location: <strong className="text-gray-700 font-medium">{currentStore.name}</strong></span>
+            <p className="text-xs sm:text-sm text-gray-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <span>
+                Log requested items out of stock, track part sourcing & notify customers when stock arrives
+              </span>
+              <span className="text-gray-300">•</span>
+              {currentStore?.name ? (
+                <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>Branch: {currentStore.name}</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
+                  <Warehouse className="w-3.5 h-3.5" />
+                  <span>Hub Warehouse (Main Office)</span>
+                </span>
               )}
             </p>
           </div>
 
           {/* Header Action Buttons */}
-          <div className="flex items-center gap-2 self-stretch sm:self-auto">
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            <LocationSwitcher />
+
+            <button
+              type="button"
+              onClick={() => setShowDownloadModal(true)}
+              className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
+              title="Download stock requirements report"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowAddCustomer(true)}
@@ -652,6 +870,17 @@ function StockRequirementPage() {
                   >
                     <ArrowUpDown className="w-3.5 h-3.5" />
                   </button>
+
+                  {/* Quick Download Button in Ledger Toolbar */}
+                  <button
+                    type="button"
+                    onClick={() => setShowDownloadModal(true)}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-gray-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                    title="Export sheet"
+                  >
+                    <Download className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="hidden sm:inline">Export</span>
+                  </button>
                 </div>
               </div>
 
@@ -873,6 +1102,239 @@ function StockRequirementPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* DOWNLOAD & PRIVACY CONFIRMATION MODAL */}
+      {showDownloadModal && (
+        <div
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150"
+          onClick={() => setShowDownloadModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-start justify-between p-4 sm:p-5 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <Download className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Download Stock Requirements</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Confirm customer privacy settings before generating the file
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDownloadModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-4 text-xs">
+              {/* Privacy Confirmation Option Cards */}
+              <div>
+                <label className="font-bold text-slate-800 block mb-2">
+                  Customer Privacy & Phone Number Option:
+                </label>
+                <div className="space-y-2">
+                  {/* Option 1: WITHOUT Customer Phone Number (Recommended & Default) */}
+                  <div
+                    onClick={() => setOmitCustomerPhone(true)}
+                    className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      omitCustomerPhone
+                        ? 'border-emerald-600 bg-emerald-50/50 shadow-2xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 border ${
+                          omitCustomerPhone
+                            ? 'bg-emerald-600 border-emerald-600 text-white'
+                            : 'border-slate-300 bg-white'
+                        }`}
+                      >
+                        {omitCustomerPhone && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                            <EyeOff className="w-4 h-4 text-emerald-600" />
+                            Without Customer Phone Numbers
+                          </span>
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded bg-emerald-100 text-emerald-800 shrink-0">
+                            Safe for Suppliers
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-1 leading-snug">
+                          Customer mobile numbers are <strong>completely removed</strong> from the download.
+                          Recommended when sharing item demand sheets with external distributors, wholesalers, or vendors.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Option 2: INCLUDE Customer Phone Number */}
+                  <div
+                    onClick={() => setOmitCustomerPhone(false)}
+                    className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      !omitCustomerPhone
+                        ? 'border-amber-600 bg-amber-50/50 shadow-2xs'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 border ${
+                          !omitCustomerPhone
+                            ? 'bg-amber-600 border-amber-600 text-white'
+                            : 'border-slate-300 bg-white'
+                        }`}
+                      >
+                        {!omitCustomerPhone && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="font-bold text-slate-900 text-xs sm:text-sm flex items-center gap-1.5">
+                            <Phone className="w-4 h-4 text-amber-600" />
+                            Include Customer Phone Numbers
+                          </span>
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded bg-amber-100 text-amber-800 shrink-0">
+                            Internal Team Only
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-1 leading-snug">
+                          Customer phone numbers will remain visible in the downloaded file.
+                          Use this only for internal staff follow-up and customer call-backs.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scope Selector */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1.5">
+                  Select Items to Include:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDownloadScope('filtered')}
+                    className={`py-2 px-2.5 rounded-lg border text-center transition-all cursor-pointer ${
+                      downloadScope === 'filtered'
+                        ? 'border-blue-600 bg-blue-50 text-blue-800 font-bold'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-medium'
+                    }`}
+                  >
+                    <div className="text-xs">Current Filter</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{filteredRequirements.length} items</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDownloadScope('pending')}
+                    className={`py-2 px-2.5 rounded-lg border text-center transition-all cursor-pointer ${
+                      downloadScope === 'pending'
+                        ? 'border-blue-600 bg-blue-50 text-blue-800 font-bold'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-medium'
+                    }`}
+                  >
+                    <div className="text-xs">Pending Only</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{kpis.pending} items</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDownloadScope('all')}
+                    className={`py-2 px-2.5 rounded-lg border text-center transition-all cursor-pointer ${
+                      downloadScope === 'all'
+                        ? 'border-blue-600 bg-blue-50 text-blue-800 font-bold'
+                        : 'border-slate-200 hover:bg-slate-50 text-slate-700 font-medium'
+                    }`}
+                  >
+                    <div className="text-xs">All Records</div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{requirements.length} items</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Summary Pill */}
+              <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500">Items ready to download:</span>{' '}
+                  <strong className="text-slate-900 font-bold">{exportItems.length} records</strong>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                    omitCustomerPhone
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}
+                >
+                  {omitCustomerPhone ? '✓ No Phone Numbers' : '⚠ Phone Numbers Included'}
+                </span>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="p-4 sm:p-5 pt-3 bg-slate-50/60 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowDownloadModal(false)}
+                className="w-full sm:w-auto px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={handleExportPDF}
+                  disabled={exportItems.length === 0}
+                  className="flex-1 sm:flex-none px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                  title="Download PDF Document"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Download PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={exportItems.length === 0}
+                  className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                  title="Download Excel Spreadsheet"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Download Excel</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportCSV}
+                  disabled={exportItems.length === 0}
+                  className="hidden md:inline-flex px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold items-center justify-center gap-1 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                  title="Download CSV"
+                >
+                  <span>CSV</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

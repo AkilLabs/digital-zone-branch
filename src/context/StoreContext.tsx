@@ -5,12 +5,16 @@ import { useAuth } from './AuthContext';
 import type { Hub, Store } from '../types';
 import { getStoreCollectionRef, getStoreDocRef, getHubCollectionRef, getHubDocRef, isSharedRootCollection } from '../utils/firestore';
 
+export type LocationScope = 'all_locations' | 'hub_warehouse' | string;
+
 interface StoreContextType {
   currentHub: Hub | null;
   currentStore: Store | null;
+  /** Explicit location scope: 'all_locations' (Complete Stock: Hub + Branches), 'hub_warehouse' (Main Office Storage), or a branch store.id */
+  selectedLocation: LocationScope;
   stores: Store[];
   loading: boolean;
-  setCurrentStore: (storeId: string) => void;
+  setCurrentStore: (storeId: LocationScope) => void;
   /** Get a scoped collection ref for the current store — stores/{storeId}/{name} */
   getCollectionRef: (collectionName: string) => CollectionReference;
   /** Get a scoped document ref for the current store — stores/{storeId}/{name}/{docId} */
@@ -21,8 +25,10 @@ interface StoreContextType {
   getHubDoc: (collectionName: string, docId: string) => DocumentReference;
   /** Whether the current user is a hub-level user (owner, hq-admin, hub-admin) */
   isHubUser: boolean;
-  /** Whether the hub user is currently viewing the Central Warehouse / All Branches (currentStore === null) */
+  /** Whether the hub user is currently viewing the Hub Warehouse / All Locations (currentStore === null) */
   isViewingWarehouse: boolean;
+  /** Whether the hub user is currently viewing Complete Stock across Hub + All Branches */
+  isViewingAllLocations: boolean;
   /** Refresh stores list */
   refreshStores: () => Promise<void>;
   /** Re-read the current store document (branch settings) */
@@ -39,6 +45,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const { currentUser } = useAuth();
   const [currentHub, setCurrentHub] = useState<Hub | null>(null);
   const [currentStore, setCurrentStoreState] = useState<Store | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<LocationScope>(() => {
+    const saved = localStorage.getItem('selectedStoreId');
+    return saved || 'hub_warehouse';
+  });
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -70,14 +80,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       storesList.sort((a, b) => a.name.localeCompare(b.name));
       setStores(storesList);
 
-      // In HQ, default to Central Warehouse (null) unless a specific store was selected
+      // In HQ, restore saved scope: 'all_locations', 'hub_warehouse', or a specific store.id
       if (!currentUser?.storeId) {
         const savedStoreId = localStorage.getItem('selectedStoreId');
-        if (!savedStoreId || savedStoreId === 'hub_warehouse') {
+        if (savedStoreId === 'all_locations') {
           setCurrentStoreState(null);
+          setSelectedLocation('all_locations');
+        } else if (!savedStoreId || savedStoreId === 'hub_warehouse') {
+          setCurrentStoreState(null);
+          setSelectedLocation('hub_warehouse');
         } else {
           const saved = storesList.find(s => s.id === savedStoreId);
           setCurrentStoreState(saved || null);
+          setSelectedLocation(saved?.id || 'hub_warehouse');
         }
       }
     } catch (error) {
@@ -142,6 +157,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               createdAt: storeDoc.data().createdAt?.toDate() || new Date(),
               updatedAt: storeDoc.data().updatedAt?.toDate(),
             } as Store);
+            setSelectedLocation(storeDoc.id);
           }
         }
       } catch (error) {
@@ -154,17 +170,26 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     loadHubAndStore();
   }, [currentUser, loadStores]);
 
-  const setCurrentStore = useCallback((storeId: string) => {
+  const setCurrentStore = useCallback((storeId: LocationScope) => {
+    if (storeId === 'all_locations') {
+      setCurrentStoreState(null);
+      setSelectedLocation('all_locations');
+      if (isHubUser) localStorage.setItem('selectedStoreId', 'all_locations');
+      return;
+    }
+
     if (storeId === 'hub_warehouse' || !storeId) {
       setCurrentStoreState(null);
+      setSelectedLocation('hub_warehouse');
       if (isHubUser) localStorage.setItem('selectedStoreId', 'hub_warehouse');
       return;
     }
 
     const store = stores.find(s => s.id === storeId);
-    if (store) {
+    if (store && store.id) {
       setCurrentStoreState(store);
-      if (isHubUser) localStorage.setItem('selectedStoreId', storeId);
+      setSelectedLocation(store.id);
+      if (isHubUser) localStorage.setItem('selectedStoreId', store.id);
     }
   }, [stores, isHubUser]);
 
@@ -217,10 +242,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentHub?.id]);
 
   const isViewingWarehouse = isHubUser && !currentStore;
+  const isViewingAllLocations = isHubUser && selectedLocation === 'all_locations';
 
   const value: StoreContextType = {
     currentHub,
     currentStore,
+    selectedLocation,
     stores,
     loading,
     setCurrentStore,
@@ -230,6 +257,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     getHubDoc,
     isHubUser,
     isViewingWarehouse,
+    isViewingAllLocations,
     refreshStores,
     refreshCurrentStore,
   };
