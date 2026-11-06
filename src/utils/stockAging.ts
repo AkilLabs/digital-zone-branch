@@ -113,3 +113,7 @@ export interface EmployeeTarget {
   createdAt?: any;
   updatedAt?: any;
 }
+
+// Runtime constants to prevent Vite unbundled dev import errors if imported without 'type'
+export const EmployeeTarget = {};
+export const StockAgingSettings = {};
