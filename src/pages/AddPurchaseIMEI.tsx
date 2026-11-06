@@ -1930,127 +1930,156 @@ const AddPurchaseIMEI: React.FC = () => {
         <form onSubmit={handleSubmit} noValidate className="flex flex-col lg:flex-row items-start gap-6">
 
           {/* ================= MINIMAL COLLAPSIBLE LEFT-SIDE STEPPER ================= */}
-          <aside className={`w-full ${isSidebarCollapsed ? 'lg:w-14' : 'lg:w-48 xl:w-52'} shrink-0 lg:sticky lg:top-20 z-10 transition-all duration-200`}>
-            <nav aria-label="Purchase steps" className={`bg-white rounded-xl border border-slate-200/90 shadow-xs ${isSidebarCollapsed ? 'p-2' : 'p-3'}`}>
-              
+          <aside className={`w-full ${isSidebarCollapsed ? 'lg:w-16' : 'lg:w-56'} shrink-0 lg:sticky lg:top-20 z-10 transition-all duration-200`}>
+            {/* Desktop Stepper */}
+            <nav aria-label="Purchase steps" className={`hidden lg:block bg-white rounded-2xl border border-slate-200/90 shadow-2xs ${
+              isSidebarCollapsed ? 'p-2 flex flex-col items-center' : 'p-3.5 space-y-2'
+            }`}>
               {/* Header with Collapse/Expand Toggle */}
-              <div className="flex items-center justify-between mb-2 px-1">
-                {!isSidebarCollapsed && (
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hidden lg:block">
-                    Steps
+              {isSidebarCollapsed ? (
+                <div className="w-full flex items-center justify-center pb-2 mb-1.5 border-b border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsSidebarCollapsed(false)}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                    title="Expand sidebar"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-100">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    IMEI Procurement
                   </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setIsSidebarCollapsed(prev => !prev)}
-                  className="hidden lg:flex items-center justify-center w-6 h-6 rounded-md text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors ml-auto cursor-pointer"
-                  title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar to maximize table width"}
-                  aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                >
-                  {isSidebarCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsSidebarCollapsed(true)}
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                    title="Collapse sidebar for more workspace"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
 
-              {/* Steps: horizontal on mobile, vertical on desktop */}
-              <div className="flex flex-row lg:flex-col gap-1.5">
-                {/* Step 1 */}
-                <button
-                  type="button"
-                  onClick={() => handleStepNavigation(1)}
-                  title="Step 1: Supplier"
-                  className={`flex-1 lg:flex-initial flex items-center ${isSidebarCollapsed ? 'lg:justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2'} rounded-lg text-left transition-all cursor-pointer ${
-                    pageStep === 1
-                      ? 'bg-blue-50/80 text-blue-700 font-semibold border border-blue-200/70'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors ${
-                    pageStep === 1
-                      ? 'bg-blue-600 text-white'
-                      : selectedSupplierId
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {pageStep > 1 && selectedSupplierId ? <Check className="w-3 h-3" /> : '1'}
-                  </span>
-                  {!isSidebarCollapsed && (
-                    <div className="min-w-0 flex-1 hidden sm:block lg:block">
-                      <div className="text-xs truncate">Supplier</div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {selectedSupplierName || 'Select supplier'}
+              {/* Steps (Desktop) */}
+              {isSidebarCollapsed ? (
+                <div className="flex flex-col items-center gap-1 w-full py-1">
+                  {[
+                    {
+                      num: 1,
+                      title: 'Supplier',
+                      desc: selectedSupplierName || 'Select supplier',
+                      done: pageStep > 1 && Boolean(selectedSupplierId)
+                    },
+                    {
+                      num: 2,
+                      title: 'Products & IMEIs',
+                      desc: `${totalQuantity} unit${totalQuantity === 1 ? '' : 's'}`,
+                      done: pageStep > 2 && filledImeisCount === totalQuantity && totalQuantity > 0
+                    },
+                    {
+                      num: 3,
+                      title: 'Payment & Save',
+                      desc: totalAmount > 0 ? `₹${totalAmount.toFixed(0)}` : 'Review & save',
+                      done: false
+                    }
+                  ].map((s, idx) => {
+                    const isCurrent = pageStep === s.num;
+                    return (
+                      <div key={s.num} className="flex flex-col items-center w-full">
+                        {idx > 0 && (
+                          <div className={`w-0.5 h-3.5 my-1 rounded-full transition-colors ${
+                            pageStep >= s.num ? 'bg-blue-300' : 'bg-slate-200'
+                          }`} />
+                        )}
+                        <div className="relative group flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => handleStepNavigation(s.num as 1 | 2 | 3)}
+                            className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                              isCurrent
+                                ? 'bg-blue-600 text-white font-bold text-xs shadow-sm ring-4 ring-blue-100 scale-105'
+                                : s.done
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 font-semibold text-xs'
+                                  : 'bg-slate-50 text-slate-400 border border-slate-200/80 hover:bg-slate-100 hover:text-slate-700 font-medium text-xs'
+                            }`}
+                            aria-label={`Step ${s.num}: ${s.title}`}
+                          >
+                            {s.done ? <Check className="w-4 h-4 text-emerald-600 stroke-[2.5]" /> : s.num}
+                          </button>
+
+                          {/* Hover tooltip flyout */}
+                          <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2.5 py-1.5 rounded-lg bg-slate-900 text-white text-[11px] font-medium whitespace-nowrap shadow-xl opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all z-50">
+                            <span className="font-semibold text-blue-300">Step {s.num}:</span> {s.title}
+                            <div className="text-[10px] text-slate-400 mt-0.5">{s.desc}</div>
+                            <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-900" />
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {[
+                    {
+                      num: 1,
+                      title: 'Supplier',
+                      desc: selectedSupplierName || 'Select supplier',
+                      done: pageStep > 1 && Boolean(selectedSupplierId)
+                    },
+                    {
+                      num: 2,
+                      title: 'Products & IMEIs',
+                      desc: `${totalQuantity} unit${totalQuantity === 1 ? '' : 's'}`,
+                      done: pageStep > 2 && filledImeisCount === totalQuantity && totalQuantity > 0
+                    },
+                    {
+                      num: 3,
+                      title: 'Payment & Save',
+                      desc: totalAmount > 0 ? `₹${totalAmount.toFixed(0)}` : 'Review & save',
+                      done: false
+                    }
+                  ].map((s) => {
+                    const isCurrent = pageStep === s.num;
+                    return (
+                      <button
+                        key={s.num}
+                        type="button"
+                        onClick={() => handleStepNavigation(s.num as 1 | 2 | 3)}
+                        className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all cursor-pointer ${
+                          isCurrent
+                            ? 'bg-blue-50/90 text-blue-800 font-semibold border border-blue-200/90 shadow-2xs ring-1 ring-blue-200'
+                            : s.done
+                              ? 'text-slate-700 hover:bg-slate-50 border border-transparent'
+                              : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50/70 border border-transparent'
+                        }`}
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-mono shrink-0 transition-colors ${
+                          isCurrent
+                            ? 'bg-blue-600 text-white font-bold shadow-xs'
+                            : s.done
+                              ? 'bg-emerald-100 text-emerald-800 font-bold'
+                              : 'bg-slate-100 text-slate-500 font-medium'
+                        }`}>
+                          {s.done ? <Check className="w-4 h-4 text-emerald-700 stroke-[2.5]" /> : s.num}
+                        </div>
 
-                {/* Connector line (desktop only) */}
-                <div className={`hidden lg:block w-px h-2 bg-slate-200 ${isSidebarCollapsed ? 'mx-auto' : 'ml-5'} -my-1`} />
-
-                {/* Step 2 */}
-                <button
-                  type="button"
-                  onClick={() => handleStepNavigation(2)}
-                  title="Step 2: Products & IMEIs"
-                  className={`flex-1 lg:flex-initial flex items-center ${isSidebarCollapsed ? 'lg:justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2'} rounded-lg text-left transition-all cursor-pointer ${
-                    pageStep === 2
-                      ? 'bg-blue-50/80 text-blue-700 font-semibold border border-blue-200/70'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors ${
-                    pageStep === 2
-                      ? 'bg-blue-600 text-white'
-                      : filledImeisCount === totalQuantity && totalQuantity > 0
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    {pageStep > 2 && filledImeisCount === totalQuantity && totalQuantity > 0 ? <Check className="w-3 h-3" /> : '2'}
-                  </span>
-                  {!isSidebarCollapsed && (
-                    <div className="min-w-0 flex-1 hidden sm:block lg:block">
-                      <div className="text-xs truncate">Products & IMEIs</div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {totalQuantity} unit{totalQuantity === 1 ? '' : 's'}
-                      </div>
-                    </div>
-                  )}
-                </button>
-
-                {/* Connector line (desktop only) */}
-                <div className={`hidden lg:block w-px h-2 bg-slate-200 ${isSidebarCollapsed ? 'mx-auto' : 'ml-5'} -my-1`} />
-
-                {/* Step 3 */}
-                <button
-                  type="button"
-                  onClick={() => handleStepNavigation(3)}
-                  title="Step 3: Payment & Save"
-                  className={`flex-1 lg:flex-initial flex items-center ${isSidebarCollapsed ? 'lg:justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2'} rounded-lg text-left transition-all cursor-pointer ${
-                    pageStep === 3
-                      ? 'bg-blue-50/80 text-blue-700 font-semibold border border-blue-200/70'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
-                  }`}
-                >
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors ${
-                    pageStep === 3
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-200 text-slate-600'
-                  }`}>
-                    3
-                  </span>
-                  {!isSidebarCollapsed && (
-                    <div className="min-w-0 flex-1 hidden sm:block lg:block">
-                      <div className="text-xs truncate">Payment & Save</div>
-                      <div className="text-[10px] text-slate-400 truncate">
-                        {totalAmount > 0 ? `₹${totalAmount.toFixed(0)}` : 'Review & save'}
-                      </div>
-                    </div>
-                  )}
-                </button>
-              </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs truncate font-medium">{s.title}</div>
+                          <div className="text-[10px] text-slate-400 truncate mt-0.5">{s.desc}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Minimal summary footer in rail (when expanded) */}
               {!isSidebarCollapsed && selectedSupplierName && (
-                <div className="mt-3 pt-2.5 border-t border-slate-100 hidden lg:block text-[11px] space-y-1">
+                <div className="mt-3 pt-2.5 border-t border-slate-100 text-[11px] space-y-1">
                   <div className="text-slate-400 text-[10px] uppercase font-bold">Supplier</div>
                   <div className="font-semibold text-slate-800 truncate" title={selectedSupplierName}>
                     {selectedSupplierName}
@@ -2063,6 +2092,42 @@ const AddPurchaseIMEI: React.FC = () => {
                 </div>
               )}
             </nav>
+
+            {/* Mobile Stepper Bar (Horizontal) */}
+            <div className="lg:hidden mb-2 bg-white p-2 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="grid grid-cols-3 gap-1 text-center">
+                {[
+                  { num: 1, label: 'Supplier', done: pageStep > 1 && Boolean(selectedSupplierId) },
+                  { num: 2, label: 'Products & IMEIs', done: pageStep > 2 && filledImeisCount === totalQuantity && totalQuantity > 0 },
+                  { num: 3, label: 'Payment', done: false }
+                ].map(s => {
+                  const isCurrent = pageStep === s.num;
+                  return (
+                    <button
+                      key={s.num}
+                      type="button"
+                      onClick={() => handleStepNavigation(s.num as 1 | 2 | 3)}
+                      className={`py-2 px-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                        isCurrent
+                          ? 'bg-blue-600 text-white font-semibold shadow-2xs'
+                          : s.done
+                            ? 'bg-emerald-50 text-emerald-800'
+                            : 'text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        {s.done ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        ) : (
+                          <span className="text-[11px]">{s.num}.</span>
+                        )}
+                        <span className="truncate">{s.label}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </aside>
 
           {/* ================= MAIN CONTENT (Steps 1, 2, 3) ================= */}

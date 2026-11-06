@@ -1429,59 +1429,117 @@ const AddPurchase: React.FC = () => {
           <div className="flex flex-col lg:flex-row items-start gap-6 w-full">
 
             {/* ================= DESKTOP STEPPER RAIL (COLLAPSIBLE) ================= */}
-            <aside className={`hidden md:block transition-all duration-200 shrink-0 ${isSidebarCollapsed ? 'w-14' : 'w-64'
+            <aside className={`hidden md:block transition-all duration-200 shrink-0 ${isSidebarCollapsed ? 'w-16' : 'w-60'
               }`}>
-              <nav className="sticky top-20 bg-white rounded-xl border border-slate-200/90 p-3 shadow-2xs space-y-2">
-                <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-100">
-                  {!isSidebarCollapsed && (
+              <nav className={`sticky top-20 bg-white rounded-2xl border border-slate-200/90 shadow-2xs ${
+                isSidebarCollapsed ? 'p-2 flex flex-col items-center' : 'p-3.5 space-y-2'
+              }`}>
+                {/* Header with Collapse/Expand Toggle */}
+                {isSidebarCollapsed ? (
+                  <div className="w-full flex items-center justify-center pb-2 mb-1.5 border-b border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsSidebarCollapsed(false)}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                      title="Expand sidebar"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between pb-2 mb-1 border-b border-slate-100">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                       Procurement Steps
                     </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                    className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors ml-auto cursor-pointer"
-                    title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar for more workspace'}
-                  >
-                    {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-                  </button>
-                </div>
-
-                {stepsMeta.map((s) => {
-                  const isCurrent = pageStep === s.number;
-                  const isDone = pageStep > s.number;
-
-                  return (
                     <button
-                      key={s.number}
                       type="button"
-                      onClick={() => handleStepNavigation(s.number as 1 | 2 | 3)}
-                      className={`w-full flex items-center gap-3 p-2.5 rounded-lg text-left transition-all cursor-pointer ${isCurrent
-                        ? 'bg-blue-50 text-blue-700 font-semibold border border-blue-200/80 shadow-2xs'
-                        : isDone
-                          ? 'text-slate-700 hover:bg-slate-50'
-                          : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50/60'
-                        }`}
+                      onClick={() => setIsSidebarCollapsed(true)}
+                      className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                      title="Collapse sidebar for more workspace"
                     >
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono shrink-0 transition-colors ${isCurrent
-                        ? 'bg-blue-600 text-white font-bold'
-                        : isDone
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-slate-100 text-slate-500'
-                        }`}>
-                        {isDone ? <Check className="w-4 h-4 text-emerald-700" /> : s.number}
-                      </div>
-
-                      {!isSidebarCollapsed && (
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs truncate">{s.title}</div>
-                          <div className="text-[10px] text-slate-400 truncate mt-0.5">{s.subtitle}</div>
-                        </div>
-                      )}
+                      <ChevronLeft className="w-4 h-4" />
                     </button>
-                  );
-                })}
+                  </div>
+                )}
+
+                {/* Steps */}
+                {isSidebarCollapsed ? (
+                  <div className="flex flex-col items-center gap-1 w-full py-1">
+                    {stepsMeta.map((s, idx) => {
+                      const isCurrent = pageStep === s.number;
+                      const isDone = pageStep > s.number;
+                      return (
+                        <div key={s.number} className="flex flex-col items-center w-full">
+                          {idx > 0 && (
+                            <div className={`w-0.5 h-3.5 my-1 rounded-full transition-colors ${
+                              pageStep >= s.number ? 'bg-blue-300' : 'bg-slate-200'
+                            }`} />
+                          )}
+                          <div className="relative group flex justify-center">
+                            <button
+                              type="button"
+                              onClick={() => handleStepNavigation(s.number as 1 | 2 | 3)}
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
+                                isCurrent
+                                  ? 'bg-blue-600 text-white font-bold text-xs shadow-sm ring-4 ring-blue-100 scale-105'
+                                  : isDone
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 font-semibold text-xs'
+                                    : 'bg-slate-50 text-slate-400 border border-slate-200/80 hover:bg-slate-100 hover:text-slate-700 font-medium text-xs'
+                              }`}
+                              aria-label={`Step ${s.number}: ${s.title}`}
+                            >
+                              {isDone ? <Check className="w-4 h-4 text-emerald-600 stroke-[2.5]" /> : s.number}
+                            </button>
+
+                            {/* Floating hover tooltip flyout */}
+                            <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2.5 py-1.5 rounded-lg bg-slate-900 text-white text-[11px] font-medium whitespace-nowrap shadow-xl opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all z-50">
+                              <span className="font-semibold text-blue-300">Step {s.number}:</span> {s.title}
+                              <div className="text-[10px] text-slate-400 mt-0.5">{s.subtitle}</div>
+                              <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-900" />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {stepsMeta.map((s) => {
+                      const isCurrent = pageStep === s.number;
+                      const isDone = pageStep > s.number;
+
+                      return (
+                        <button
+                          key={s.number}
+                          type="button"
+                          onClick={() => handleStepNavigation(s.number as 1 | 2 | 3)}
+                          className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all cursor-pointer ${
+                            isCurrent
+                              ? 'bg-blue-50/90 text-blue-800 font-semibold border border-blue-200/90 shadow-2xs ring-1 ring-blue-200'
+                              : isDone
+                                ? 'text-slate-700 hover:bg-slate-50 border border-transparent'
+                                : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50/70 border border-transparent'
+                          }`}
+                        >
+                          <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-mono shrink-0 transition-colors ${
+                            isCurrent
+                              ? 'bg-blue-600 text-white font-bold shadow-xs'
+                              : isDone
+                                ? 'bg-emerald-100 text-emerald-800 font-bold'
+                                : 'bg-slate-100 text-slate-500 font-medium'
+                          }`}>
+                            {isDone ? <Check className="w-4 h-4 text-emerald-700 stroke-[2.5]" /> : s.number}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs truncate font-medium">{s.title}</div>
+                            <div className="text-[10px] text-slate-400 truncate mt-0.5">{s.subtitle}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {!isSidebarCollapsed && selectedSupplierName && (
                   <div className="mt-3 pt-2.5 border-t border-slate-100 text-[11px] space-y-1">
