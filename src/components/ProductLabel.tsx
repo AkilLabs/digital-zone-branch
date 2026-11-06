@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import type { Product, ShopDetails } from '../types';
 import { Printer, X, Minus, Plus, QrCode, CheckCircle2 } from 'lucide-react';
-import logo from '../assets/logo.png';
 import { encodePrice } from '../utils/secretCode';
 
 interface ProductLabelProps {
@@ -92,7 +91,6 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
   const [copies, setCopies] = useState<number[]>(() => items.map(p => Math.max(1, p.quantity || 1)));
   const [previewIndex, setPreviewIndex] = useState(0);
   const [qrCodeDataUrls, setQrCodeDataUrls] = useState<{ [key: string]: string }>({});
-  const [logoDataUrl, setLogoDataUrl] = useState<string>('');
 
   const shopName = shopDetails?.shopName || 'Digital Zone';
 
@@ -101,7 +99,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
     setPreviewIndex(0);
   }, [items]);
 
-  // Generate QR codes and convert logo to base64
+  // Generate QR codes
   useEffect(() => {
     let cancelled = false;
 
@@ -113,8 +111,8 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
           if (qrUrls[code]) continue;
           qrUrls[code] = await QRCode.toDataURL(code, {
             width: 200,
-            margin: 1,
-            errorCorrectionLevel: 'L',
+            margin: 0,
+            errorCorrectionLevel: 'M',
             color: { dark: '#000000', light: '#FFFFFF' }
           });
         }
@@ -124,24 +122,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
       }
     };
 
-    const convertLogoToBase64 = () => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (ctx && !cancelled) {
-          ctx.drawImage(img, 0, 0);
-          setLogoDataUrl(canvas.toDataURL('image/png'));
-        }
-      };
-      img.src = logo;
-    };
-
     generateQRCodes();
-    convertLogoToBase64();
     return () => {
       cancelled = true;
     };
@@ -181,28 +162,37 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
       return;
     }
 
-    const logoSrc = logoDataUrl || logo;
     const labelList: string[] = [];
 
     items.forEach((prod, index) => {
       const qrDataUrl = qrCodeDataUrls[String(prod.productCode || '')];
+      const secret = prod.cost ? escapeHtml(encodePrice(prod.cost)) : '';
+      const formattedPrice = Number(prod.mrp || 0).toLocaleString('en-IN', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+
       const labelHtml = `
         <div class="label">
-          <div class="label-content">
-            <div class="label-header">
-              <div class="header-left">
-                <img src="${logoSrc}" alt="" class="label-logo" />
-                <div class="shop-name">${escapeHtml(shopName)}</div>
+          <div class="label-inner">
+            <div class="qr-col">
+              <div class="qr-box">
+                <img src="${qrDataUrl}" alt="" class="qr-img" />
               </div>
-              <div class="secret-cost">${escapeHtml(encodePrice(prod.cost))}</div>
+              <div class="code-text">${escapeHtml(prod.productCode)}</div>
             </div>
-            <div class="label-body">
-              <img src="${qrDataUrl}" alt="" class="body-qr-code" />
-              <div class="product-name">${escapeHtml(prod.name)}</div>
-            </div>
-            <div class="label-footer">
-              <span class="product-code">${escapeHtml(prod.productCode)}</span>
-              <span class="product-mrp">MRP: ₹${Number(prod.mrp || 0).toFixed(2)}</span>
+            <div class="info-col">
+              <div class="meta-row">
+                <span class="shop-title">${escapeHtml(shopName)}</span>
+                ${secret ? `<span class="secret-tag">${secret}</span>` : ''}
+              </div>
+              <div class="name-block">
+                <div class="prod-title">${escapeHtml(prod.name)}</div>
+              </div>
+              <div class="price-row">
+                <span class="mrp-badge">MRP</span>
+                <span class="price-amount">₹${formattedPrice}</span>
+              </div>
             </div>
           </div>
         </div>`;
@@ -226,7 +216,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
           <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             @page { size: A4; margin: 0.45cm; }
-            body { font-family: 'Segoe UI', Arial, sans-serif; background: white; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: white; -webkit-font-smoothing: antialiased; }
             .labels-container {
               display: grid;
               grid-template-columns: repeat(4, 4.8cm);
@@ -242,65 +232,129 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
             .label {
               width: 4.8cm;
               height: 2.4cm;
-              border: 0.1mm solid #eee;
+              border: 0.1mm solid #e5e5e5;
               display: flex;
               background: white;
               page-break-inside: avoid;
               break-inside: avoid-page;
               overflow: hidden;
             }
-            .label-content {
+            .label-inner {
               width: 100%;
               height: 100%;
-              padding: 0.8mm 1.2mm;
+              padding: 1.2mm 1.5mm;
+              display: flex;
+              align-items: stretch;
+              gap: 1.8mm;
+              overflow: hidden;
+            }
+            .qr-col {
+              width: 14.5mm;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: space-between;
+              flex-shrink: 0;
+            }
+            .qr-box {
+              width: 14mm;
+              height: 14mm;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .qr-img {
+              width: 100%;
+              height: 100%;
+              object-fit: contain;
+              image-rendering: -webkit-optimize-contrast;
+            }
+            .code-text {
+              font-size: 5pt;
+              font-family: 'Consolas', 'Courier New', monospace;
+              font-weight: 700;
+              color: #0f172a;
+              letter-spacing: 0.3px;
+              text-align: center;
+              width: 100%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+              line-height: 1.1;
+            }
+            .info-col {
+              flex: 1;
+              min-width: 0;
               display: flex;
               flex-direction: column;
               justify-content: space-between;
+              overflow: hidden;
+              padding: 0.2mm 0;
             }
-            .label-header {
+            .meta-row {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              padding-bottom: 0.5mm;
-              border-bottom: 0.2px solid #eee;
-              height: 3.8mm;
+              gap: 1mm;
+              border-bottom: 0.2mm solid #e2e8f0;
+              padding-bottom: 0.6mm;
+              line-height: 1;
             }
-            .header-left { display: flex; align-items: center; gap: 1mm; overflow: hidden; }
-            .secret-cost { font-size: 4.5pt; font-family: monospace; color: #777; white-space: nowrap; }
-            .label-logo { width: 3.2mm; height: 3.2mm; object-fit: contain; }
-            .shop-name {
-              font-size: 4.5pt;
-              font-weight: 600;
+            .shop-title {
+              font-size: 5.2pt;
+              font-weight: 800;
               text-transform: uppercase;
-              white-space: nowrap;
+              letter-spacing: 0.4px;
+              color: #334155;
               overflow: hidden;
               text-overflow: ellipsis;
-              color: #444;
+              white-space: nowrap;
             }
-            .label-body { flex: 1; display: flex; align-items: center; gap: 1.2mm; overflow: hidden; padding: 0.5mm 0; }
-            .body-qr-code { width: 9.5mm; height: 9.5mm; object-fit: contain; flex-shrink: 0; }
-            .product-name {
+            .secret-tag {
+              font-size: 4.8pt;
+              font-family: 'Consolas', monospace;
+              font-weight: 700;
+              color: #64748b;
+              white-space: nowrap;
+            }
+            .name-block {
               flex: 1;
-              font-size: 6.5pt;
-              font-weight: 500;
-              line-height: 1.2;
+              display: flex;
+              align-items: center;
+              overflow: hidden;
+              padding: 0.5mm 0;
+            }
+            .prod-title {
+              font-size: 7.2pt;
+              font-weight: 700;
+              line-height: 1.22;
+              color: #0f172a;
               overflow: hidden;
               word-break: break-word;
               display: -webkit-box;
               -webkit-line-clamp: 3;
               -webkit-box-orient: vertical;
-              color: #222;
             }
-            .label-footer {
+            .price-row {
               display: flex;
-              justify-content: space-between;
-              align-items: center;
-              padding-top: 0.5mm;
-              border-top: 0.2px solid #eee;
-              height: 3.5mm;
+              align-items: baseline;
+              gap: 1.2mm;
+              border-top: 0.2mm solid #e2e8f0;
+              padding-top: 0.6mm;
+              line-height: 1;
             }
-            .product-code { font-size: 5pt; font-family: monospace; color: #666; }
-            .product-mrp { font-size: 6pt; font-weight: bold; color: #000; }
+            .mrp-badge {
+              font-size: 5pt;
+              font-weight: 700;
+              color: #64748b;
+              letter-spacing: 0.3px;
+            }
+            .price-amount {
+              font-size: 8.5pt;
+              font-weight: 900;
+              color: #000;
+              letter-spacing: -0.2px;
+            }
             @media print {
               body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
               .label { border: 0.1mm solid transparent; }
@@ -324,38 +378,67 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
 
   const renderPreview = (prod: Product) => {
     const qr = qrCodeDataUrls[String(prod.productCode || '')];
+    const secret = prod.cost ? encodePrice(prod.cost) : '';
+    const formattedPrice = Number(prod.mrp || 0).toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
     return (
       <div
-        className="bg-white rounded-md shadow-sm ring-1 ring-slate-200 flex overflow-hidden select-none"
+        className="bg-white rounded-lg shadow-sm ring-1 ring-slate-200/90 flex overflow-hidden select-none"
         style={{ width: 240, height: 120 }}
         aria-label="Label preview"
       >
-        <div className="flex flex-col justify-between w-full h-full p-2">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-1 h-5">
-            <div className="flex items-center gap-1 overflow-hidden">
-              <img src={logoDataUrl || logo} alt="" className="object-contain w-auto max-w-[20px] h-[14px]" />
-              <span className="font-semibold text-[8px] uppercase truncate text-slate-600">{shopName}</span>
+        <div className="flex w-full h-full p-2.5 gap-2.5">
+          {/* Left: QR + Product Code */}
+          <div className="flex flex-col items-center justify-between shrink-0" style={{ width: 72 }}>
+            <div className="w-[70px] h-[70px] flex items-center justify-center bg-white">
+              {qr ? (
+                <img src={qr} alt="" className="w-full h-full object-contain" />
+              ) : (
+                <div className="w-full h-full bg-slate-100 rounded flex items-center justify-center text-slate-300 animate-pulse">
+                  <QrCode className="w-6 h-6" />
+                </div>
+              )}
             </div>
-            <span className="font-mono text-[7.5px] text-slate-500">{encodePrice(prod.cost)}</span>
+            <span className="font-mono font-bold text-[8px] text-slate-800 tracking-wider truncate max-w-full">
+              {prod.productCode || '—'}
+            </span>
           </div>
-          <div className="flex-1 flex items-center gap-2 overflow-hidden py-1">
-            {qr ? (
-              <img src={qr} alt="" className="w-[48px] h-[48px] object-contain shrink-0" />
-            ) : (
-              <div className="w-[48px] h-[48px] bg-slate-100 rounded flex items-center justify-center text-slate-300 shrink-0 animate-pulse">
-                <QrCode className="w-5 h-5" />
+
+          {/* Right: Info */}
+          <div className="flex-1 flex flex-col justify-between min-w-0 py-0.5">
+            {/* Header: Shop & Secret */}
+            <div className="flex items-center justify-between gap-1 border-b border-slate-100 pb-1">
+              <span className="font-bold text-[8px] tracking-wider uppercase text-slate-600 truncate">
+                {shopName}
+              </span>
+              {secret && (
+                <span className="font-mono text-[7.5px] font-semibold text-slate-500 shrink-0">
+                  {secret}
+                </span>
+              )}
+            </div>
+
+            {/* Product Name */}
+            <div className="flex-1 flex items-center py-1">
+              <div
+                className="font-bold text-[11px] leading-tight text-slate-900 overflow-hidden"
+                style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}
+                title={prod.name}
+              >
+                {prod.name}
               </div>
-            )}
-            <div
-              className="font-semibold text-[10px] leading-tight text-slate-900 overflow-hidden"
-              style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}
-            >
-              {prod.name}
             </div>
-          </div>
-          <div className="flex justify-between items-center border-t border-slate-100 pt-1 h-5 text-[8px]">
-            <span className="font-mono text-slate-500">{prod.productCode}</span>
-            <span className="font-bold text-slate-900">MRP: ₹{Number(prod.mrp || 0).toFixed(2)}</span>
+
+            {/* Price Footer */}
+            <div className="flex items-baseline gap-1 border-t border-slate-100 pt-1">
+              <span className="text-[8px] font-bold text-slate-500 uppercase">MRP</span>
+              <span className="text-[12px] font-extrabold text-slate-900 font-mono tracking-tight">
+                ₹{formattedPrice}
+              </span>
+            </div>
           </div>
         </div>
       </div>
