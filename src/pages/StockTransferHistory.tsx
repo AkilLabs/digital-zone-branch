@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -24,9 +24,12 @@ import {
   ChevronsRight,
   Plus,
   RotateCcw,
-  Boxes
+  Boxes,
+  Bookmark,
+  Edit3,
+  Trash2
 } from 'lucide-react';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { useStore } from '../context/StoreContext';
 import type { StockTransfer } from '../types';
@@ -34,6 +37,7 @@ import Navbar from '../components/Navbar';
 import { printStockTransferInvoice } from '../utils/printStockTransferInvoice';
 
 export const StockTransferHistory: React.FC = () => {
+  const navigate = useNavigate();
   const { stores, currentHub } = useStore();
 
   // Data states
@@ -153,6 +157,8 @@ export const StockTransferHistory: React.FC = () => {
           if (rawStatus !== 'dispatched' && rawStatus !== 'in-transit' && rawStatus !== 'picked') return false;
         } else if (statusFilter === 'pending') {
           if (rawStatus !== 'pending' && rawStatus !== 'triggered') return false;
+        } else if (statusFilter === 'draft') {
+          if (rawStatus !== 'draft') return false;
         } else if (rawStatus !== statusFilter) {
           return false;
         }
@@ -337,9 +343,28 @@ export const StockTransferHistory: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const handleDeleteDraft = async (draftId?: string) => {
+    if (!draftId) return;
+    if (!window.confirm(`Are you sure you want to delete draft transfer ${draftId}?`)) return;
+    try {
+      await deleteDoc(doc(db, 'stockTransfers', draftId));
+      setTransfers((prev) => prev.filter((t) => t.id !== draftId));
+    } catch (err) {
+      console.error('Error deleting draft transfer:', err);
+    }
+  };
+
   // Status badge renderer
   const renderStatusBadge = (status: string | undefined) => {
     const s = (status || 'completed').toLowerCase();
+    if (s === 'draft') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200/80">
+          <Bookmark className="w-3 h-3 text-amber-600" />
+          <span>Draft</span>
+        </span>
+      );
+    }
     if (s === 'completed' || s === 'received') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/80">
@@ -561,6 +586,7 @@ export const StockTransferHistory: React.FC = () => {
                 { id: 'completed', label: 'Received' },
                 { id: 'in-transit', label: 'In Transit' },
                 { id: 'pending', label: 'Pending' },
+                { id: 'draft', label: 'Drafts' },
               ].map((pill) => {
                 const isActive = statusFilter === pill.id;
                 return (
@@ -835,22 +861,46 @@ export const StockTransferHistory: React.FC = () => {
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedTransfer(t)}
-                              title="View itemized manifest"
-                              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePrintDeliveryChallan(t)}
-                              title="Print Gate Pass Challan"
-                              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                            >
-                              <Printer className="w-4 h-4" />
-                            </button>
+                            {t.status === 'draft' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/stock-transfer?resumeDraft=${t.id}`)}
+                                  title="Resume / Complete Draft"
+                                  className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 border border-amber-200"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Resume</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteDraft(t.id)}
+                                  title="Delete Draft"
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTransfer(t)}
+                                  title="View itemized manifest"
+                                  className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintDeliveryChallan(t)}
+                                  title="Print Gate Pass Challan"
+                                  className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Printer className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1071,14 +1121,25 @@ export const StockTransferHistory: React.FC = () => {
                 Close
               </button>
 
-              <button
-                type="button"
-                onClick={() => handlePrintDeliveryChallan(selectedTransfer)}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-xs transition-all"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print Gate Pass Challan</span>
-              </button>
+              {selectedTransfer.status === 'draft' ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/stock-transfer?resumeDraft=${selectedTransfer.id}`)}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-xs transition-all"
+                >
+                  <Edit3 className="w-4 h-4" />
+                  <span>Resume & Dispatch Transfer</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handlePrintDeliveryChallan(selectedTransfer)}
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-xs transition-all"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Gate Pass Challan</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

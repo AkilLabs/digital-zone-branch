@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import Navbar from '../components/Navbar';
-import { collection, getDocs, doc, query, orderBy, Timestamp, writeBatch } from 'firebase/firestore';
+import { collection, getDocs, doc, query, orderBy, Timestamp, writeBatch, setDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { Product, StockTransfer, StockTransferItem } from '../types';
 import { syncStoreProducts, updateLocalProductQuantities, upsertLocalProducts } from '../utils/productSyncCache';
@@ -24,8 +24,40 @@ import {
   Printer,
   Store,
   Boxes,
-  Check
+  Check,
+  Smartphone,
+  Receipt,
+  X,
+  Filter,
+  Bookmark,
+  Edit3,
 } from 'lucide-react';
+
+export type ProductTypeFilter = 'all' | 'imei' | 'non_imei' | 'non_imei_gst';
+
+const isIMEIProduct = (p: Product): boolean => {
+  if (p.imei && p.imei.trim()) return true;
+  if (p.productCode) {
+    const num = parseInt(p.productCode, 10);
+    if (!Number.isNaN(num) && num >= 10000001) return true;
+  }
+  if ((p as any).isIMEIPurchase === true) return true;
+  return false;
+};
+
+const isGSTProduct = (p: Product): boolean => {
+  return Boolean(
+    p.gstEnabled === true ||
+    (p.taxPercent !== undefined && Number(p.taxPercent) > 0) ||
+    (p as any).isGstPurchase === true
+  );
+};
+
+const getProductType = (p: Product): 'imei' | 'non_imei_gst' | 'non_imei' => {
+  if (isIMEIProduct(p)) return 'imei';
+  if (isGSTProduct(p)) return 'non_imei_gst';
+  return 'non_imei';
+};
 
 /**
  * Returns the correct Firestore collection reference for products at a given location.
@@ -62,8 +94,10 @@ const StockTransferPage: React.FC = () => {
   const { invalidateProducts } = useInvalidateCache();
   const [searchParams] = useSearchParams();
 
-  // Navigation tab: 'create' or 'history'
-  const [activeTab, setActiveTab] = useState<'create' | 'history'>('create');
+  // Navigation tab: 'create' | 'drafts' | 'history'
+  const [activeTab, setActiveTab] = useState<'create' | 'drafts' | 'history'>('create');
+  const [currentDraftId, setCurrentDraftId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   // Multi-step state: 1 = Route, 2 = Items, 3 = Review & Dispatch
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
@@ -76,7 +110,9 @@ const StockTransferPage: React.FC = () => {
   const [sourceProducts, setSourceProducts] = useState<Product[]>([]);
   const [selectedItems, setSelectedItems] = useState<StockTransferItem[]>([]);
   const [searchText, setSearchText] = useState('');
+  const [productTypeFilter, setProductTypeFilter] = useState<ProductTypeFilter>('all');
   const [brandFilter, setBrandFilter] = useState<string>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [notes, setNotes] = useState('');
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -99,6 +135,11 @@ const StockTransferPage: React.FC = () => {
   const [historySearch, setHistorySearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedTransferForView, setSelectedTransferForView] = useState<StockTransfer | null>(null);
+
+  // Memoized drafts list
+  const draftTransfers = useMemo(() => {
+    return transfers.filter((t) => (t.status as string) === 'draft');
+  }, [transfers]);
 
   // Toast notification
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -125,6 +166,24 @@ const StockTransferPage: React.FC = () => {
     }
   }, [currentHub?.id, searchParams]);
 
+  // Check URL params for direct draft resume or tab switch
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'drafts') {
+      setActiveTab('drafts');
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const resumeId = searchParams.get('resumeDraft');
+    if (resumeId && transfers.length > 0) {
+      const draft = transfers.find((t) => t.id === resumeId);
+      if (draft && (draft.status as string) === 'draft') {
+        handleResumeDraft(draft);
+      }
+    }
+  }, [searchParams, transfers]);
+
   useEffect(() => {
     if (currentHub?.id) {
       loadTransfers();
@@ -145,15 +204,16 @@ const StockTransferPage: React.FC = () => {
     return stores.find(s => s.id === id)?.name || 'Branch Store';
   };
 
-  const loadSourceProducts = async () => {
-    if (!fromStoreId) return;
+  const loadSourceProducts = async (overrideFromId?: string) => {
+    const targetId = overrideFromId || fromStoreId;
+    if (!targetId) return;
     setLoadingProducts(true);
     try {
       const isHq =
-        fromStoreId === currentHub?.id ||
-        fromStoreId === 'hub_warehouse' ||
-        fromStoreId === 'digital_zone_hq';
-      const storeScopeId = isHq ? null : fromStoreId;
+        targetId === currentHub?.id ||
+        targetId === 'hub_warehouse' ||
+        targetId === 'digital_zone_hq';
+      const storeScopeId = isHq ? null : targetId;
       const prods = await syncStoreProducts(storeScopeId);
 
       if (isHq) {
@@ -273,6 +333,7 @@ const StockTransferPage: React.FC = () => {
         quantity: 1,
         cost: product.cost,
         mrp: product.mrp,
+        imei: product.imei || '',
       },
     ]);
   };
@@ -291,6 +352,132 @@ const StockTransferPage: React.FC = () => {
     setSelectedItems(prev => prev.filter(i => i.productId !== productId));
   };
 
+  const generateTransferId = async (): Promise<string> => {
+    try {
+      const transfersRef = collection(db, 'stockTransfers');
+      const snap = await getDocs(transfersRef);
+
+      let maxNum = 0;
+      snap.docs.forEach((d) => {
+        const id = d.id || '';
+        const match = id.match(/TRF(?:-\d+)?-(\d+)/i) || id.match(/TRF-(\d+)/i) || id.match(/\d+$/);
+        if (match) {
+          const num = parseInt(match[1] || match[0], 10);
+          if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
+          }
+        }
+      });
+
+      const nextNum = maxNum + 1;
+      let candidateNumber = nextNum;
+      let candidateId = `TRF-${String(candidateNumber).padStart(4, '0')}`;
+
+      // Ensure uniqueness
+      const existingIds = new Set(snap.docs.map((d) => d.id));
+      while (existingIds.has(candidateId)) {
+        candidateNumber++;
+        candidateId = `TRF-${String(candidateNumber).padStart(4, '0')}`;
+      }
+
+      return candidateId;
+    } catch (err) {
+      console.error('Error generating transfer ID:', err);
+      const d = new Date();
+      const datePart = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      return `TRF-${datePart}-${Math.floor(1000 + Math.random() * 9000)}`;
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (!currentHub?.id || !fromStoreId || !toStoreId) {
+      showToast('Please select origin and destination locations first', 'error');
+      return;
+    }
+    if (fromStoreId === toStoreId) {
+      showToast('Source and destination must be different', 'error');
+      return;
+    }
+    if (selectedItems.length === 0) {
+      showToast('Add at least one product before saving as draft', 'error');
+      return;
+    }
+
+    setSavingDraft(true);
+    try {
+      const fromStoreName = getLocationName(fromStoreId);
+      const toStoreName = getLocationName(toStoreId);
+      const totalQuantity = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
+      const totalValue = selectedItems.reduce((sum, i) => sum + (i.cost || 0) * i.quantity, 0);
+
+      const draftId = currentDraftId || (await generateTransferId());
+      const nowTs = Timestamp.now();
+
+      const draftData: any = {
+        id: draftId,
+        transferId: draftId,
+        hubId: currentHub.id,
+        transferType: (fromStoreId === currentHub.id ? 'hq_to_branch' : 'branch_to_branch'),
+        fromStoreId,
+        fromStoreName,
+        toStoreId,
+        toStoreName,
+        items: selectedItems,
+        totalItems: selectedItems.length,
+        totalQuantity,
+        totalValue,
+        status: 'draft',
+        notes: notes.trim(),
+        updatedAt: nowTs,
+      };
+
+      if (!currentDraftId) {
+        draftData.createdAt = nowTs;
+        draftData.createdBy = currentUser?.uid || '';
+        draftData.createdByName = currentUser?.displayName || currentUser?.email || 'HQ Admin';
+      }
+
+      await setDoc(doc(db, 'stockTransfers', draftId), draftData, { merge: true });
+      setCurrentDraftId(draftId);
+      await loadTransfers();
+      showToast(`Transfer draft saved successfully (${draftId})`);
+    } catch (err) {
+      console.error('Error saving draft transfer:', err);
+      showToast('Failed to save draft transfer', 'error');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const handleResumeDraft = async (draft: StockTransfer) => {
+    if (!draft.fromStoreId || !draft.toStoreId) return;
+    setFromStoreId(draft.fromStoreId);
+    setToStoreId(draft.toStoreId);
+    setSelectedItems(draft.items || []);
+    setNotes(draft.notes || '');
+    setCurrentDraftId(draft.id || null);
+    setCurrentStep(2);
+    setActiveTab('create');
+    setCompletedTransfer(null);
+    await loadSourceProducts(draft.fromStoreId);
+    showToast(`Resumed draft ${draft.id}`);
+  };
+
+  const handleDeleteDraft = async (draftId: string) => {
+    if (!window.confirm(`Are you sure you want to delete draft ${draftId}?`)) return;
+    try {
+      await deleteDoc(doc(db, 'stockTransfers', draftId));
+      setTransfers(prev => prev.filter(t => t.id !== draftId));
+      if (currentDraftId === draftId) {
+        setCurrentDraftId(null);
+      }
+      showToast(`Draft ${draftId} deleted successfully`);
+    } catch (err) {
+      console.error('Error deleting draft:', err);
+      showToast('Failed to delete draft', 'error');
+    }
+  };
+
   const handleSubmitTransfer = async () => {
     if (!currentHub?.id || !fromStoreId || !toStoreId || selectedItems.length === 0) return;
     if (fromStoreId === toStoreId) {
@@ -306,8 +493,13 @@ const StockTransferPage: React.FC = () => {
       const totalQuantity = selectedItems.reduce((sum, i) => sum + i.quantity, 0);
       const totalValue = selectedItems.reduce((sum, i) => sum + i.cost * i.quantity, 0);
 
+      // Generate clean sequential business transfer ID (e.g. TRF-0001) or reuse draft ID
+      const properTransferId = currentDraftId || (await generateTransferId());
+
       // Create transfer record
-      const transferData = {
+      const transferData: any = {
+        id: properTransferId,
+        transferId: properTransferId,
         hubId: currentHub.id,
         transferType: (fromStoreId === currentHub.id ? 'hq_to_branch' : 'branch_to_branch') as any,
         fromStoreId,
@@ -320,13 +512,17 @@ const StockTransferPage: React.FC = () => {
         totalValue,
         status: 'completed' as const,
         notes: notes.trim(),
-        createdAt: Timestamp.now(),
-        createdBy: currentUser?.uid || '',
-        createdByName: currentUser?.displayName || currentUser?.email || 'HQ Admin',
         completedAt: Timestamp.now(),
         completedBy: currentUser?.uid || '',
         completedByName: currentUser?.displayName || currentUser?.email || 'HQ Admin',
+        updatedAt: Timestamp.now(),
       };
+
+      if (!currentDraftId) {
+        transferData.createdAt = Timestamp.now();
+        transferData.createdBy = currentUser?.uid || '';
+        transferData.createdByName = currentUser?.displayName || currentUser?.email || 'HQ Admin';
+      }
 
       // Collect destination product data from local Delta-Sync cache
       const destStoreScopeId = toStoreId === currentHub?.id ? null : toStoreId;
@@ -348,7 +544,7 @@ const StockTransferPage: React.FC = () => {
       const batch = writeBatch(db);
       const nowTs = Timestamp.now();
 
-      const transferDocRef = doc(collection(db, 'stockTransfers'));
+      const transferDocRef = doc(db, 'stockTransfers', properTransferId);
       batch.set(transferDocRef, transferData);
 
       const sourceQuantityChanges: Array<{ productId: string; quantityDelta: number }> = [];
@@ -435,7 +631,7 @@ const StockTransferPage: React.FC = () => {
 
       // Show completed receipt screen
       setCompletedTransfer({
-        id: transferDocRef.id,
+        id: properTransferId,
         fromName: fromStoreName,
         toName: toStoreName,
         totalQuantity,
@@ -445,9 +641,10 @@ const StockTransferPage: React.FC = () => {
         date: new Date()
       });
 
-      // Reset items form
+      // Reset items form and draft state
       setSelectedItems([]);
       setNotes('');
+      setCurrentDraftId(null);
       await loadSourceProducts();
       await loadTransfers();
       showToast(`Dispatched ${totalQuantity} units to ${toStoreName} successfully!`);
@@ -493,24 +690,63 @@ const StockTransferPage: React.FC = () => {
   const availableBrands = useMemo(() => {
     const set = new Set<string>();
     sourceProducts.forEach(p => {
-      if (p.brand) set.add(p.brand);
+      if (p.brand && p.brand.trim()) set.add(p.brand.trim());
     });
     return Array.from(set).sort();
   }, [sourceProducts]);
 
+  // Distinct categories in source inventory
+  const availableCategories = useMemo(() => {
+    const set = new Set<string>();
+    sourceProducts.forEach(p => {
+      if (p.category && p.category.trim()) set.add(p.category.trim());
+    });
+    return Array.from(set).sort();
+  }, [sourceProducts]);
+
+  // Type counts for quick filter pills (All, IMEI, Non-IMEI, Non-IMEI GST)
+  const typeCounts = useMemo(() => {
+    let imei = 0;
+    let nonImeiGst = 0;
+    let nonImei = 0;
+    sourceProducts.forEach((p) => {
+      const t = getProductType(p);
+      if (t === 'imei') imei++;
+      else if (t === 'non_imei_gst') nonImeiGst++;
+      else nonImei++;
+    });
+    return {
+      all: sourceProducts.length,
+      imei,
+      non_imei: nonImei,
+      non_imei_gst: nonImeiGst,
+    };
+  }, [sourceProducts]);
+
   const filteredProducts = useMemo(() => {
     return sourceProducts.filter(p => {
-      if (brandFilter !== 'all' && p.brand !== brandFilter) return false;
+      // Product type filter
+      if (productTypeFilter !== 'all') {
+        const t = getProductType(p);
+        if (t !== productTypeFilter) return false;
+      }
+      // Brand filter
+      if (brandFilter !== 'all' && (p.brand || '').trim() !== brandFilter) return false;
+      // Category filter
+      if (categoryFilter !== 'all' && (p.category || '').trim() !== categoryFilter) return false;
+
+      // Text search
       const q = searchText.trim().toLowerCase();
       if (!q) return true;
       return (
         p.name.toLowerCase().includes(q) ||
         p.productCode?.toLowerCase().includes(q) ||
         p.brand?.toLowerCase().includes(q) ||
-        p.category?.toLowerCase().includes(q)
+        p.category?.toLowerCase().includes(q) ||
+        (p.imei && p.imei.toLowerCase().includes(q))
       );
     });
-  }, [sourceProducts, brandFilter, searchText]);
+  }, [sourceProducts, productTypeFilter, brandFilter, categoryFilter, searchText]);
 
   const totalTransferQty = useMemo(() => {
     return selectedItems.reduce((acc, i) => acc + i.quantity, 0);
@@ -574,7 +810,7 @@ const StockTransferPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Tab Switcher: Create Transfer vs History */}
+          {/* Tab Switcher: Create Transfer vs Drafts vs History */}
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200/80 w-fit">
             <button
               onClick={() => {
@@ -591,21 +827,194 @@ const StockTransferPage: React.FC = () => {
               <span>New Transfer</span>
             </button>
             <button
+              onClick={() => {
+                setActiveTab('drafts');
+                setCompletedTransfer(null);
+              }}
+              className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer ${
+                activeTab === 'drafts'
+                  ? 'bg-white text-amber-700 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Bookmark className="w-3.5 h-3.5 text-amber-600" />
+              <span>Drafts</span>
+              {draftTransfers.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">
+                  {draftTransfers.length}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => navigate('/stock-transfer/history')}
               className="px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer text-slate-600 hover:text-blue-700 hover:bg-white"
             >
               <Clock className="w-3.5 h-3.5" />
               <span>Transfer History</span>
-              {transfers.length > 0 && (
+              {transfers.filter(t => (t.status as string) !== 'draft').length > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-200 text-slate-700">
-                  {transfers.length}
+                  {transfers.filter(t => (t.status as string) !== 'draft').length}
                 </span>
               )}
             </button>
           </div>
         </div>
 
-        {activeTab === 'create' ? (
+        {activeTab === 'drafts' ? (
+          /* ================= DRAFTS VIEW ================= */
+          <div className="space-y-4 animate-in fade-in duration-150">
+            <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-slate-900">Saved Transfer Drafts</h2>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                    {draftTransfers.length} {draftTransfers.length === 1 ? 'Draft' : 'Drafts'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Drafts retain your product selection, branches, and notes without mutating or reserving physical stock.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentDraftId(null);
+                  setSelectedItems([]);
+                  setNotes('');
+                  setCurrentStep(1);
+                  setActiveTab('create');
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Start Fresh Transfer</span>
+              </button>
+            </div>
+
+            {draftTransfers.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-16 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 mx-auto mb-3">
+                  <Bookmark className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-slate-800">No transfer drafts saved</h3>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+                  When creating an inter-store transfer, you can save your progress as a draft and resume or dispatch it anytime.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentDraftId(null);
+                    setSelectedItems([]);
+                    setNotes('');
+                    setCurrentStep(1);
+                    setActiveTab('create');
+                  }}
+                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Create Stock Transfer
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {draftTransfers.map((draft) => {
+                  const draftQty = draft.totalQuantity || (draft.items || []).reduce((s, i) => s + i.quantity, 0);
+                  const draftVal = draft.totalValue || (draft.items || []).reduce((s, i) => s + (i.cost || 0) * i.quantity, 0);
+                  return (
+                    <div
+                      key={draft.id}
+                      className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-sm transition-all p-4 flex flex-col justify-between"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md">
+                            {draft.id}
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200/80">
+                            <Bookmark className="w-3 h-3 text-amber-600" />
+                            <span>Draft</span>
+                          </span>
+                        </div>
+
+                        {/* Origin -> Destination Route */}
+                        <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200/60 text-xs">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 min-w-0">
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">From</span>
+                              <span className="font-semibold text-slate-800 truncate block">
+                                {draft.fromStoreName || getLocationName(draft.fromStoreId)}
+                              </span>
+                            </div>
+                            <ArrowRight className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                            <div className="flex-1 min-w-0 text-right">
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">To</span>
+                              <span className="font-semibold text-slate-800 truncate block">
+                                {draft.toStoreName || getLocationName(draft.toStoreId)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Metrics */}
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="bg-slate-50/80 rounded-lg p-2 border border-slate-100">
+                            <span className="text-[10px] text-slate-400 block">Items</span>
+                            <span className="font-bold text-slate-800">
+                              {draft.totalItems || draft.items?.length || 0} SKUs ({draftQty} pcs)
+                            </span>
+                          </div>
+                          <div className="bg-slate-50/80 rounded-lg p-2 border border-slate-100">
+                            <span className="text-[10px] text-slate-400 block">Est. Cost Value</span>
+                            <span className="font-bold text-blue-700 font-mono">
+                              ₹{draftVal.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Notes preview */}
+                        {draft.notes && (
+                          <p className="text-[11px] text-slate-500 italic truncate bg-amber-50/50 p-1.5 rounded-lg border border-amber-100">
+                            "{draft.notes}"
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Card Actions */}
+                      <div className="flex items-center justify-between gap-2 pt-3 mt-3 border-t border-slate-100">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDraft(draft.id!)}
+                          title="Delete draft"
+                          className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTransferForView(draft)}
+                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
+                          >
+                            Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleResumeDraft(draft)}
+                            className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <span>Resume</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'create' ? (
           completedTransfer ? (
             /* ================= SUCCESS DISPATCH RECEIPT ================= */
             <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-6 sm:p-10 text-center max-w-2xl mx-auto animate-in zoom-in-95 duration-150">
@@ -775,6 +1184,52 @@ const StockTransferPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Draft in progress banner */}
+              {currentDraftId && (
+                <div className="bg-amber-50 border border-amber-200/90 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 flex-shrink-0">
+                      <Bookmark className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                        <span>Editing Saved Draft:</span>
+                        <span className="font-mono bg-white px-2 py-0.5 rounded-md border border-amber-200 text-amber-800">
+                          {currentDraftId}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-amber-700 mt-0.5">
+                        Stock remains in source location until you confirm & dispatch.
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      disabled={savingDraft || submitting}
+                      onClick={handleSaveDraft}
+                      className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold rounded-lg transition-colors cursor-pointer text-xs flex items-center gap-1"
+                    >
+                      <Bookmark className="w-3.5 h-3.5" />
+                      <span>{savingDraft ? 'Saving...' : 'Update Draft'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentDraftId(null);
+                        setSelectedItems([]);
+                        setNotes('');
+                        setCurrentStep(1);
+                        showToast('Draft closed. Started new blank transfer.');
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-amber-200 text-slate-700 font-semibold rounded-lg transition-colors cursor-pointer text-xs"
+                    >
+                      Discard & Start Fresh
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* ================= STEP 1: ROUTE SELECTION ================= */}
               {currentStep === 1 && (
                 <div className="space-y-6 animate-in fade-in duration-150">
@@ -919,7 +1374,7 @@ const StockTransferPage: React.FC = () => {
                     {/* Left: Source Inventory Picker (7 cols) */}
                     <div className="lg:col-span-7 space-y-4">
                       {/* Search and Filter Box */}
-                      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 space-y-3">
+                      <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 space-y-3.5">
                         <div className="flex items-center justify-between">
                           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
                             <Package className="w-4 h-4 text-blue-600" />
@@ -937,39 +1392,170 @@ const StockTransferPage: React.FC = () => {
                             type="text"
                             value={searchText}
                             onChange={(e) => setSearchText(e.target.value)}
-                            placeholder="Search by product name, brand, SKU code..."
-                            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-800"
+                            placeholder="Search by product name, brand, SKU code, IMEI..."
+                            className="w-full pl-9 pr-9 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-800"
                           />
-                        </div>
-
-                        {/* Brand filter chips */}
-                        {availableBrands.length > 0 && (
-                          <div className="flex items-center gap-1.5 overflow-x-auto hide-scrollbar pt-1">
+                          {searchText && (
                             <button
                               type="button"
-                              onClick={() => setBrandFilter('all')}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                                brandFilter === 'all'
+                              onClick={() => setSearchText('')}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                              title="Clear search"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Product Type Filter Pills: All Items, IMEI, Non-IMEI, Non-IMEI GST */}
+                        <div>
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center gap-1">
+                            <Filter className="w-3 h-3" />
+                            <span>Product Type</span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setProductTypeFilter('all')}
+                              className={`py-1.5 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                                productTypeFilter === 'all'
                                   ? 'bg-blue-600 text-white shadow-2xs'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                  : 'bg-slate-100 hover:bg-slate-200/80 text-slate-600'
                               }`}
                             >
-                              All Brands
-                            </button>
-                            {availableBrands.map((b) => (
-                              <button
-                                key={b}
-                                type="button"
-                                onClick={() => setBrandFilter(b)}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                                  brandFilter === b
-                                  ? 'bg-blue-600 text-white shadow-2xs'
-                                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              <span>All Types</span>
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                                  productTypeFilter === 'all' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
                                 }`}
                               >
-                                {b}
-                              </button>
-                            ))}
+                                {typeCounts.all}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setProductTypeFilter('imei')}
+                              className={`py-1.5 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                                productTypeFilter === 'imei'
+                                  ? 'bg-amber-600 text-white shadow-2xs'
+                                  : 'bg-amber-50/80 hover:bg-amber-100 text-amber-800 border border-amber-200/60'
+                              }`}
+                            >
+                              <span className="flex items-center gap-1">
+                                <Smartphone className="w-3 h-3" />
+                                <span>IMEI Product</span>
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                                  productTypeFilter === 'imei' ? 'bg-white/20 text-white' : 'bg-amber-200/80 text-amber-900 font-bold'
+                                }`}
+                              >
+                                {typeCounts.imei}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setProductTypeFilter('non_imei')}
+                              className={`py-1.5 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                                productTypeFilter === 'non_imei'
+                                  ? 'bg-slate-800 text-white shadow-2xs'
+                                  : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700'
+                              }`}
+                            >
+                              <span>Non-IMEI</span>
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                                  productTypeFilter === 'non_imei' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                                }`}
+                              >
+                                {typeCounts.non_imei}
+                              </span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setProductTypeFilter('non_imei_gst')}
+                              className={`py-1.5 px-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-between ${
+                                productTypeFilter === 'non_imei_gst'
+                                  ? 'bg-emerald-600 text-white shadow-2xs'
+                                  : 'bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/60'
+                              }`}
+                            >
+                              <span className="flex items-center gap-1">
+                                <Receipt className="w-3 h-3" />
+                                <span>Non-IMEI GST</span>
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                                  productTypeFilter === 'non_imei_gst' ? 'bg-white/20 text-white' : 'bg-emerald-200/80 text-emerald-900 font-bold'
+                                }`}
+                              >
+                                {typeCounts.non_imei_gst}
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Brand & Category Dropdown Selectors */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-100">
+                          <div>
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                              Filter by Brand
+                            </label>
+                            <select
+                              value={brandFilter}
+                              onChange={(e) => setBrandFilter(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 font-medium focus:bg-white focus:border-blue-500 outline-none transition-all cursor-pointer"
+                            >
+                              <option value="all">All Brands ({availableBrands.length})</option>
+                              {availableBrands.map((b) => (
+                                <option key={b} value={b}>
+                                  {b}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 block">
+                              Filter by Category
+                            </label>
+                            <select
+                              value={categoryFilter}
+                              onChange={(e) => setCategoryFilter(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 font-medium focus:bg-white focus:border-blue-500 outline-none transition-all cursor-pointer"
+                            >
+                              <option value="all">All Categories ({availableCategories.length})</option>
+                              {availableCategories.map((c) => (
+                                <option key={c} value={c}>
+                                  {c}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Filter Status & Reset Action */}
+                        {(productTypeFilter !== 'all' || brandFilter !== 'all' || categoryFilter !== 'all' || searchText) && (
+                          <div className="flex items-center justify-between pt-1 text-xs">
+                            <span className="text-[11px] text-slate-500">
+                              Filtered to <strong className="text-slate-800">{filteredProducts.length}</strong> items
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProductTypeFilter('all');
+                                setBrandFilter('all');
+                                setCategoryFilter('all');
+                                setSearchText('');
+                              }}
+                              className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                              <span>Reset Filters</span>
+                            </button>
                           </div>
                         )}
                       </div>
@@ -984,23 +1570,71 @@ const StockTransferPage: React.FC = () => {
                         ) : filteredProducts.length === 0 ? (
                           <div className="py-10 text-center text-slate-400 text-xs">
                             <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            No available stock found matching your query.
+                            <p>No available stock found matching your query.</p>
+                            {(productTypeFilter !== 'all' || brandFilter !== 'all' || categoryFilter !== 'all' || searchText) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProductTypeFilter('all');
+                                  setBrandFilter('all');
+                                  setCategoryFilter('all');
+                                  setSearchText('');
+                                }}
+                                className="mt-2 text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                              >
+                                Clear all filters
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <div className="max-h-[500px] overflow-y-auto space-y-2 pr-1">
                             {filteredProducts.map((product) => {
                               const alreadyAdded = selectedItems.find((i) => i.productId === product.id);
+                              const isImei = isIMEIProduct(product);
+                              const isGst = isGSTProduct(product);
+
                               return (
                                 <div
                                   key={product.id}
                                   className="p-3 bg-slate-50/70 hover:bg-blue-50/40 rounded-xl border border-slate-200/80 transition-colors flex items-center justify-between gap-3 text-xs"
                                 >
                                   <div className="min-w-0 flex-1">
-                                    <div className="font-bold text-slate-900 truncate">{product.name}</div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-slate-900 truncate">{product.name}</span>
+                                      {isImei ? (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                          <Smartphone className="w-2.5 h-2.5 text-amber-600" />
+                                          <span>IMEI</span>
+                                        </span>
+                                      ) : isGst ? (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                          <Receipt className="w-2.5 h-2.5 text-emerald-600" />
+                                          <span>GST</span>
+                                        </span>
+                                      ) : (
+                                        <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                                          Non-IMEI
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 mt-1">
                                       <span className="font-mono">{product.productCode || 'No SKU'}</span>
+                                      {product.imei && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="font-mono text-amber-800 bg-amber-50 px-1 rounded font-semibold text-[10px] border border-amber-200/60">
+                                            IMEI: {product.imei}
+                                          </span>
+                                        </>
+                                      )}
                                       <span>•</span>
                                       <span>{product.brand}</span>
+                                      {product.category && (
+                                        <>
+                                          <span>•</span>
+                                          <span>{product.category}</span>
+                                        </>
+                                      )}
                                       <span>•</span>
                                       <span className="font-semibold text-emerald-600">
                                         {product.quantity} in stock
@@ -1065,8 +1699,13 @@ const StockTransferPage: React.FC = () => {
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0 flex-1">
                                       <div className="font-bold text-slate-900 truncate">{item.productName}</div>
-                                      <div className="text-[11px] text-slate-500 font-mono">
-                                        {item.productCode} • Max available: {maxAvailable}
+                                      <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 flex-wrap">
+                                        <span>{item.productCode} • Max available: {maxAvailable}</span>
+                                        {item.imei && (
+                                          <span className="text-amber-800 bg-amber-50 px-1 rounded font-semibold text-[10px] border border-amber-200/60">
+                                            IMEI: {item.imei}
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                     <button
@@ -1134,13 +1773,23 @@ const StockTransferPage: React.FC = () => {
                         )}
 
                         {/* Action buttons */}
-                        <div className="flex gap-2 pt-2">
+                        <div className="flex items-center gap-2 pt-2">
                           <button
                             type="button"
                             onClick={() => setCurrentStep(1)}
-                            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
                           >
                             ← Back
+                          </button>
+                          <button
+                            type="button"
+                            disabled={selectedItems.length === 0 || savingDraft}
+                            onClick={handleSaveDraft}
+                            className="px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 active:scale-[0.99] border border-amber-200/90 disabled:opacity-50 disabled:cursor-not-allowed text-amber-800 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                            title="Save manifest as draft without modifying inventory"
+                          >
+                            <Bookmark className="w-3.5 h-3.5 text-amber-600" />
+                            <span>{savingDraft ? 'Saving...' : 'Save Draft'}</span>
                           </button>
                           <button
                             type="button"
@@ -1237,7 +1886,14 @@ const StockTransferPage: React.FC = () => {
                           {selectedItems.map((item, index) => (
                             <tr key={item.productId} className="hover:bg-slate-50">
                               <td className="py-2.5 px-3 text-center font-mono text-slate-400">{index + 1}</td>
-                              <td className="py-2.5 px-4 font-bold text-slate-900">{item.productName}</td>
+                              <td className="py-2.5 px-4">
+                                <div className="font-bold text-slate-900">{item.productName}</div>
+                                {item.imei && (
+                                  <span className="inline-block font-mono text-[10px] text-amber-800 bg-amber-50 px-1 rounded border border-amber-200/60 mt-0.5">
+                                    IMEI: {item.imei}
+                                  </span>
+                                )}
+                              </td>
                               <td className="py-2.5 px-3 font-mono text-slate-600">{item.productCode || '—'}</td>
                               <td className="py-2.5 px-3 text-slate-600">{item.brand} • {item.category}</td>
                               <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-900 bg-slate-50/50">
@@ -1285,7 +1941,7 @@ const StockTransferPage: React.FC = () => {
                   </div>
 
                   {/* Step 3 Action Buttons */}
-                  <div className="flex items-center justify-between gap-3 pt-2">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
                     <button
                       type="button"
                       onClick={() => setCurrentStep(2)}
@@ -1294,24 +1950,37 @@ const StockTransferPage: React.FC = () => {
                       ← Back to Edit Items
                     </button>
 
-                    <button
-                      type="button"
-                      disabled={submitting || selectedItems.length === 0}
-                      onClick={handleSubmitTransfer}
-                      className="flex-1 max-w-sm py-3 px-6 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-xs hover:shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      {submitting ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>Dispatching Inventory...</span>
-                        </>
-                      ) : (
-                        <>
-                          <ArrowLeftRight className="w-4 h-4" />
-                          <span>Confirm & Dispatch Transfer ({totalTransferQty} units)</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={submitting || savingDraft || selectedItems.length === 0}
+                        onClick={handleSaveDraft}
+                        className="py-3 px-5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-2xs"
+                        title="Save changes to draft without modifying inventory"
+                      >
+                        <Bookmark className="w-4 h-4 text-amber-600" />
+                        <span>{savingDraft ? 'Saving Draft...' : 'Save as Draft'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={submitting || savingDraft || selectedItems.length === 0}
+                        onClick={handleSubmitTransfer}
+                        className="py-3 px-6 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-xs hover:shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        {submitting ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            <span>Dispatching Inventory...</span>
+                          </>
+                        ) : (
+                          <>
+                            <ArrowLeftRight className="w-4 h-4" />
+                            <span>Confirm & Dispatch Transfer ({totalTransferQty} units)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1335,7 +2004,7 @@ const StockTransferPage: React.FC = () => {
 
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
-                  {['all', 'completed', 'in-transit'].map((st) => (
+                  {['all', 'completed', 'in-transit', 'draft'].map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -1346,7 +2015,7 @@ const StockTransferPage: React.FC = () => {
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      {st === 'all' ? 'All' : st === 'completed' ? 'Completed' : 'In Transit'}
+                      {st === 'all' ? 'All' : st === 'completed' ? 'Completed' : st === 'in-transit' ? 'In Transit' : 'Drafts'}
                     </button>
                   ))}
                 </div>
@@ -1430,40 +2099,70 @@ const StockTransferPage: React.FC = () => {
                           </td>
 
                           <td className="py-3 px-3 text-center">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              <Check className="w-3 h-3" />
-                              {t.status}
-                            </span>
+                            {t.status === 'draft' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                                <Bookmark className="w-3 h-3 text-amber-600" />
+                                Draft
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <Check className="w-3 h-3" />
+                                {t.status}
+                              </span>
+                            )}
                           </td>
 
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setSelectedTransferForView(t)}
-                                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                              >
-                                View
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handlePrintDeliveryChallan({
-                                    id: t.id || 'N/A',
-                                    fromName: t.fromStoreName,
-                                    toName: t.toStoreName,
-                                    totalQuantity: t.totalQuantity,
-                                    totalValue: t.totalValue,
-                                    items: t.items || [],
-                                    notes: t.notes,
-                                    date: t.createdAt instanceof Date ? t.createdAt : new Date()
-                                  })
-                                }
-                                title="Print Gate Pass Challan"
-                                className="p-1 text-slate-400 hover:text-blue-600 rounded-md hover:bg-slate-100 transition-colors cursor-pointer"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
+                              {t.status === 'draft' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResumeDraft(t)}
+                                    className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 border border-amber-200"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>Resume</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteDraft(t.id!)}
+                                    title="Delete draft"
+                                    className="p-1 text-slate-400 hover:text-rose-600 rounded-md hover:bg-rose-50 transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedTransferForView(t)}
+                                    className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                                  >
+                                    View
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handlePrintDeliveryChallan({
+                                        id: t.id || 'N/A',
+                                        fromName: t.fromStoreName,
+                                        toName: t.toStoreName,
+                                        totalQuantity: t.totalQuantity,
+                                        totalValue: t.totalValue,
+                                        items: t.items || [],
+                                        notes: t.notes,
+                                        date: t.createdAt instanceof Date ? t.createdAt : new Date()
+                                      })
+                                    }
+                                    title="Print Gate Pass Challan"
+                                    className="p-1 text-slate-400 hover:text-blue-600 rounded-md hover:bg-slate-100 transition-colors cursor-pointer"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1553,25 +2252,40 @@ const StockTransferPage: React.FC = () => {
                 >
                   Close
                 </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    handlePrintDeliveryChallan({
-                      id: selectedTransferForView.id || 'N/A',
-                      fromName: selectedTransferForView.fromStoreName,
-                      toName: selectedTransferForView.toStoreName,
-                      totalQuantity: selectedTransferForView.totalQuantity,
-                      totalValue: selectedTransferForView.totalValue,
-                      items: selectedTransferForView.items || [],
-                      notes: selectedTransferForView.notes,
-                      date: selectedTransferForView.createdAt instanceof Date ? selectedTransferForView.createdAt : new Date()
-                    })
-                  }
-                  className="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Print Delivery Challan</span>
-                </button>
+                {selectedTransferForView.status === 'draft' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t = selectedTransferForView;
+                      setSelectedTransferForView(null);
+                      handleResumeDraft(t);
+                    }}
+                    className="flex-1 py-2 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span>Resume & Dispatch Draft</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handlePrintDeliveryChallan({
+                        id: selectedTransferForView.id || 'N/A',
+                        fromName: selectedTransferForView.fromStoreName,
+                        toName: selectedTransferForView.toStoreName,
+                        totalQuantity: selectedTransferForView.totalQuantity,
+                        totalValue: selectedTransferForView.totalValue,
+                        items: selectedTransferForView.items || [],
+                        notes: selectedTransferForView.notes,
+                        date: selectedTransferForView.createdAt instanceof Date ? selectedTransferForView.createdAt : new Date()
+                      })
+                    }
+                    className="flex-1 py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Delivery Challan</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>

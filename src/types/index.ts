@@ -183,6 +183,7 @@ export interface StockTransferItem {
 }
 
 export type TransferStatus =
+  | 'draft'
   | 'triggered'
   | 'picked'
   | 'received'
