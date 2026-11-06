@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Search, Trash2, Plus, Minus, ExternalLink, UserPlus, ShoppingCart, Wrench, CreditCard, QrCode, X, Printer, Share2, Download, RefreshCw, Calendar, Receipt, Check, Hourglass, ChevronDown, User, Tag, ArrowRight } from 'lucide-react';
+import { Search, Trash2, Plus, Minus, ExternalLink, UserPlus, ShoppingCart, Wrench, CreditCard, QrCode, X, Printer, Share2, Download, RefreshCw, Calendar, Receipt, Check, Hourglass, ChevronDown, User, Tag, ArrowRight, ArrowLeft, AlertCircle } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import LocationSwitcher from '../components/LocationSwitcher';
 import ShareModal from '../components/ShareModal';
@@ -243,6 +243,8 @@ function Billing() {
   const [customerGstNo, setCustomerGstNo] = useState('');
   const [customerAddress, setCustomerAddress] = useState('');
   const [customerError, setCustomerError] = useState('');
+  const [existingCustomerMatch, setExistingCustomerMatch] = useState<any | null>(null);
+  const [existingCreditCustomerMatch, setExistingCreditCustomerMatch] = useState<any | null>(null);
 
   const [customerDisplay, setCustomerDisplay] = useState('Walk In Customer');
 
@@ -375,6 +377,32 @@ function Billing() {
       (c.email && c.email.toLowerCase().includes(q))
     );
   });
+
+  const selectExistingCustomer = (c: any) => {
+    const display = `${c.name} • ${c.phone}${c.email ? ` • ${c.email}` : ''}${c.address ? ` • Address: ${c.address}` : ''}${c.gstNo ? ` • GST No: ${c.gstNo}` : ''} `;
+    setCustomerDisplay(display);
+    setCustomerModalOpen(false);
+    setCustomerError('');
+    setExistingCustomerMatch(null);
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerEmail('');
+    setCustomerGstNo('');
+    setCustomerAddress('');
+    success(`Selected customer: ${c.name}`);
+  };
+
+  const selectExistingCreditCustomer = (c: any) => {
+    const display = `${c.name} • ${c.phone}${c.email ? ` • ${c.email}` : ''} `;
+    setCreditCustomerDisplay(display);
+    setCreditCustomerModalOpen(false);
+    setCreditCustomerError('');
+    setExistingCreditCustomerMatch(null);
+    setCreditCustomerName('');
+    setCreditCustomerPhone('');
+    setCreditCustomerEmail('');
+    success(`Selected credit customer: ${c.name}`);
+  };
 
   const parseCustomerDisplay = (display: string) => {
     const parts = display.split(' • ').map(part => part.trim()).filter(Boolean);
@@ -725,7 +753,10 @@ function Billing() {
     : 0;
 
   const openFinanceModal = () => {
-    setFinanceProviderDraft(financeProvider || financeProviders[0]?.name || '');
+    const matched = financeProviders.find(
+      fp => (fp.name || '').trim().toUpperCase() === (financeProvider || '').trim().toUpperCase()
+    );
+    setFinanceProviderDraft(matched ? matched.name : (financeProviders[0]?.name || ''));
     setFinanceTenureDraft(financeTenureMonths);
     setFinanceDownPaymentDraft(financeDownPayment);
     setFinanceProcessingFeeDraft(financeProcessingFee);
@@ -742,8 +773,18 @@ function Billing() {
     const total = Number(grandTotal) || 0;
 
     if (!financeProviderDraft.trim()) {
-      showError('Please enter finance provider name');
+      showError('Please select a finance provider');
       return;
+    }
+
+    if (financeProviders.length > 0) {
+      const isValid = financeProviders.some(
+        fp => (fp.name || '').trim().toUpperCase() === financeProviderDraft.trim().toUpperCase()
+      );
+      if (!isValid) {
+        showError('Please select a configured finance partner');
+        return;
+      }
     }
 
     if (typeof financeTenureDraft !== 'number' || !Number.isInteger(financeTenureDraft) || financeTenureDraft <= 0) {
@@ -935,8 +976,8 @@ function Billing() {
       try {
         setLoadingCustomers(true);
         const customersRef = getCollectionRef('customers');
-        const q = query(customersRef, orderBy('createdAt', 'desc'), limit(100));
-        const querySnapshot = await getDocs(q);
+        // Fetch complete customer database without 100 limit
+        const querySnapshot = await getDocs(customersRef);
 
         const customersList = querySnapshot.docs.map(doc => ({
           id: doc.id,
@@ -945,35 +986,43 @@ function Billing() {
           email: doc.data().email || '',
           gstNo: doc.data().gstNo || '',
           address: doc.data().address || '',
-        }));
+          createdAt: doc.data().createdAt,
+        })).sort((a: any, b: any) => {
+          const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+          const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+          return tB - tA;
+        });
 
         setCustomers(customersList);
       } catch (error) {
         console.error('Error fetching customers:', error);
-        // If collection doesn't exist yet, silently continue
       } finally {
         setLoadingCustomers(false);
       }
-    }
+    };
 
     const fetchCreditCustomers = async () => {
       try {
         setLoadingCreditCustomers(true);
         const creditCustomersRef = getCollectionRef('creditCustomers');
-        const q = query(creditCustomersRef, orderBy('createdAt', 'desc'), limit(100));
-        const querySnapshot = await getDocs(q);
+        // Fetch complete credit customer database without 100 limit
+        const querySnapshot = await getDocs(creditCustomersRef);
 
         const creditCustomersList = querySnapshot.docs.map(doc => ({
           id: doc.id,
           name: doc.data().name || '',
           phone: doc.data().phone || '',
           email: doc.data().email || '',
-        }));
+          createdAt: doc.data().createdAt,
+        })).sort((a: any, b: any) => {
+          const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+          const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+          return tB - tA;
+        });
 
         setCreditCustomers(creditCustomersList);
       } catch (error) {
         console.error('Error fetching credit customers:', error);
-        // If collection doesn't exist yet, silently continue
       } finally {
         setLoadingCreditCustomers(false);
       }
@@ -2249,7 +2298,7 @@ function Billing() {
             <button
               className={`w-full md:w-16 lg:w-20 flex-1 md:flex-none h-12 md:h-16 rounded-xl flex flex-col items-center justify-center transition-all duration-150 active:scale-95 ${
                 entryType === 'product' && !gstEnabled
-                  ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900/10'
+                  ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-600/20'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
               }`}
               onClick={() => {
@@ -2844,7 +2893,7 @@ function Billing() {
                           setSelectedCost('');
                           setSelectedQty('');
                         }}
-                        className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs sm:text-sm font-semibold transition active:scale-[0.99] shadow-xs flex items-center justify-center gap-2"
+                        className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-xs sm:text-sm font-bold transition shadow-sm hover:shadow-md flex items-center justify-center gap-2"
                       >
                         <Plus className="w-4 h-4" />
                         <span>Add to Order</span>
@@ -3220,7 +3269,12 @@ function Billing() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 animate-in fade-in duration-150">
                   <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl max-h-[85vh] flex flex-col border border-slate-100 overflow-hidden">
                     <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
-                      <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Search Customer</h4>
+                      <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center justify-between w-full pr-3">
+                        <span>Search Customer</span>
+                        <span className="text-xs text-slate-400 font-normal font-sans">
+                          {filteredCustomers.length} {filteredCustomers.length === 1 ? 'customer' : 'customers'}
+                        </span>
+                      </h4>
                       <button
                         className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
                         onClick={() => setCustomerSearchOpen(false)}
@@ -3308,6 +3362,7 @@ function Billing() {
                         onClick={() => {
                           setCustomerModalOpen(false);
                           setCustomerError('');
+                          setExistingCustomerMatch(null);
                         }}
                         aria-label="Close"
                       >
@@ -3333,11 +3388,50 @@ function Billing() {
                         <input
                           type="tel"
                           value={customerPhone}
-                          onChange={(e) => setCustomerPhone(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCustomerPhone(val);
+                            setCustomerError('');
+                            const trimmed = val.trim();
+                            if (trimmed.length >= 7) {
+                              const match = customers.find(c => c.phone && c.phone.trim() === trimmed);
+                              setExistingCustomerMatch(match || null);
+                            } else {
+                              setExistingCustomerMatch(null);
+                            }
+                          }}
                           placeholder="10-digit mobile number"
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-800"
                         />
                       </div>
+
+                      {/* Duplicate Detection Alert & Quick Select */}
+                      {existingCustomerMatch && (
+                        <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl space-y-2 animate-in fade-in duration-150">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                            <div className="text-xs text-amber-900 min-w-0">
+                              <p className="font-semibold text-amber-800">Customer already exists with this mobile number:</p>
+                              <p className="text-sm font-bold text-slate-900 mt-0.5 truncate">
+                                {existingCustomerMatch.name}
+                              </p>
+                              <p className="text-[11px] font-mono text-slate-600 mt-0.5">
+                                Phone: {existingCustomerMatch.phone}
+                                {existingCustomerMatch.email ? ` • ${existingCustomerMatch.email}` : ''}
+                                {existingCustomerMatch.gstNo ? ` • GST: ${existingCustomerMatch.gstNo}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => selectExistingCustomer(existingCustomerMatch)}
+                            className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>Select & Use Existing Customer ({existingCustomerMatch.name})</span>
+                          </button>
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1">Email (Optional)</label>
                         <input
@@ -3375,6 +3469,7 @@ function Billing() {
                         onClick={() => {
                           setCustomerModalOpen(false);
                           setCustomerError('');
+                          setExistingCustomerMatch(null);
                           setCustomerName('');
                           setCustomerPhone('');
                           setCustomerEmail('');
@@ -3385,7 +3480,7 @@ function Billing() {
                         Cancel
                       </button>
                       <button
-                        className="px-4 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold transition shadow-xs"
+                        className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-xs font-semibold transition shadow-sm"
                         onClick={async () => {
                           if (!customerName.trim()) {
                             setCustomerError('Name is required.');
@@ -3397,12 +3492,31 @@ function Billing() {
                           }
 
                           try {
+                            const trimmedPhone = customerPhone.trim();
+                            const localMatch = customers.find(c => c.phone && c.phone.trim() === trimmedPhone);
+                            if (localMatch) {
+                              setExistingCustomerMatch(localMatch);
+                              setCustomerError(`A customer with this phone number already exists: "${localMatch.name}". Click "Select & Use Existing Customer" above to avoid duplicate.`);
+                              return;
+                            }
+
                             const customersRef = getCollectionRef('customers');
-                            const q = query(customersRef, where('phone', '==', customerPhone.trim()));
+                            const q = query(customersRef, where('phone', '==', trimmedPhone));
                             const existingCustomers = await getDocs(q);
 
                             if (!existingCustomers.empty) {
-                              setCustomerError('Customer with this phone number already exists.');
+                              const matchedDoc = existingCustomers.docs[0];
+                              const matchedData = matchedDoc.data();
+                              const existingCust = {
+                                id: matchedDoc.id,
+                                name: matchedData.name || '',
+                                phone: matchedData.phone || trimmedPhone,
+                                email: matchedData.email || '',
+                                gstNo: matchedData.gstNo || '',
+                                address: matchedData.address || '',
+                              };
+                              setExistingCustomerMatch(existingCust);
+                              setCustomerError(`A customer with this phone number already exists: "${existingCust.name}". Click "Select & Use Existing Customer" above to avoid duplicate.`);
                               return;
                             }
 
@@ -3570,11 +3684,49 @@ function Billing() {
                         <input
                           type="tel"
                           value={creditCustomerPhone}
-                          onChange={(e) => setCreditCustomerPhone(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCreditCustomerPhone(val);
+                            setCreditCustomerError('');
+                            const trimmed = val.trim();
+                            if (trimmed.length >= 7) {
+                              const match = creditCustomers.find(c => c.phone && c.phone.trim() === trimmed);
+                              setExistingCreditCustomerMatch(match || null);
+                            } else {
+                              setExistingCreditCustomerMatch(null);
+                            }
+                          }}
                           placeholder="10-digit mobile number"
                           className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-800"
                         />
                       </div>
+
+                      {/* Duplicate Detection Alert & Quick Select */}
+                      {existingCreditCustomerMatch && (
+                        <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl space-y-2 animate-in fade-in duration-150">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                            <div className="text-xs text-amber-900 min-w-0">
+                              <p className="font-semibold text-amber-800">Credit customer already exists with this mobile number:</p>
+                              <p className="text-sm font-bold text-slate-900 mt-0.5 truncate">
+                                {existingCreditCustomerMatch.name}
+                              </p>
+                              <p className="text-[11px] font-mono text-slate-600 mt-0.5">
+                                Phone: {existingCreditCustomerMatch.phone}
+                                {existingCreditCustomerMatch.email ? ` • ${existingCreditCustomerMatch.email}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => selectExistingCreditCustomer(existingCreditCustomerMatch)}
+                            className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs"
+                          >
+                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>Select & Use Existing Customer ({existingCreditCustomerMatch.name})</span>
+                          </button>
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 mb-1">Email (Optional)</label>
                         <input
@@ -3609,12 +3761,29 @@ function Billing() {
                           }
 
                           try {
+                            const trimmedPhone = creditCustomerPhone.trim();
+                            const localMatch = creditCustomers.find(c => c.phone && c.phone.trim() === trimmedPhone);
+                            if (localMatch) {
+                              setExistingCreditCustomerMatch(localMatch);
+                              setCreditCustomerError(`A credit customer with this phone number already exists: "${localMatch.name}". Click "Select & Use Existing Customer" above to avoid duplicate.`);
+                              return;
+                            }
+
                             const creditCustomersRef = getCollectionRef('creditCustomers');
-                            const q = query(creditCustomersRef, where('phone', '==', creditCustomerPhone.trim()));
+                            const q = query(creditCustomersRef, where('phone', '==', trimmedPhone));
                             const existingCreditCustomers = await getDocs(q);
 
                             if (!existingCreditCustomers.empty) {
-                              setCreditCustomerError('Credit customer with this phone number already exists.');
+                              const matchedDoc = existingCreditCustomers.docs[0];
+                              const matchedData = matchedDoc.data();
+                              const existingCust = {
+                                id: matchedDoc.id,
+                                name: matchedData.name || '',
+                                phone: matchedData.phone || trimmedPhone,
+                                email: matchedData.email || '',
+                              };
+                              setExistingCreditCustomerMatch(existingCust);
+                              setCreditCustomerError(`A credit customer with this phone number already exists: "${existingCust.name}". Click "Select & Use Existing Customer" above to avoid duplicate.`);
                               return;
                             }
 
@@ -4127,7 +4296,7 @@ function Billing() {
                           }}
                           className={`w-full py-2 px-1 rounded-xl border transition-all flex flex-col items-center justify-center gap-1 ${
                             selectedPayment === payment.id
-                              ? 'border-slate-900 bg-slate-900 text-white shadow-2xs font-semibold'
+                              ? 'border-blue-600 bg-blue-600 text-white shadow-sm font-semibold'
                               : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                           }`}
                         >
@@ -4148,7 +4317,7 @@ function Billing() {
                           <button
                             type="button"
                             onClick={() => setShowQrModal(true)}
-                            className="absolute -top-1.5 -right-1.5 p-1 bg-slate-900 text-white rounded-full shadow hover:bg-slate-800 transition active:scale-95"
+                            className="absolute -top-1.5 -right-1.5 p-1 bg-blue-600 text-white rounded-full shadow hover:bg-blue-700 transition active:scale-95"
                             title="Show UPI QR"
                           >
                             <QrCode className="w-3 h-3" />
@@ -4222,7 +4391,7 @@ function Billing() {
                   <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs">
                     <div className="flex justify-between items-center">
                       <div>
-                        <span className="font-bold text-slate-900">{financeProvider || 'BAJAJ'} Finance</span>
+                        <span className="font-bold text-slate-900">{financeProvider ? `${financeProvider} Finance` : 'Finance / EMI'}</span>
                         <span className="text-slate-500 ml-1.5">({financeTenureMonths || 0} mos)</span>
                       </div>
                       <button
@@ -4255,7 +4424,7 @@ function Billing() {
                   {/* Dominant Primary Save CTA */}
                   <button
                     onClick={saveOrder}
-                    className="w-full py-3 bg-slate-900 hover:bg-slate-800 active:scale-[0.99] text-white rounded-xl text-sm font-bold transition shadow-xs flex items-center justify-center gap-2"
+                    className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-sm font-bold transition shadow-md hover:shadow-lg flex items-center justify-center gap-2"
                   >
                     <span>{isEditMode ? 'Update Bill' : 'Save Bill'}</span>
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/20 text-white font-normal">
@@ -4298,121 +4467,6 @@ function Billing() {
                   </div>
                 </div>
 
-                {/* Finance Modal */}
-                {showFinanceModal && (
-                  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 py-6">
-                    <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-150">
-                      <div className="flex items-center justify-between px-5 py-4 bg-slate-900 text-white">
-                        <div>
-                          <h4 className="text-base font-bold">Finance Details</h4>
-                          <p className="text-xs text-slate-300">Processing fee is kept separate from the invoice total</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={closeFinanceModal}
-                          className="p-1 rounded-lg text-slate-400 hover:text-white transition"
-                          aria-label="Close"
-                        >
-                          <X className="w-5 h-5" />
-                        </button>
-                      </div>
-
-                      <div className="p-5 space-y-4">
-                        <div>
-                          <label className="block mb-1 text-xs font-bold text-slate-700 uppercase tracking-wider">Finance Provider</label>
-                          <select
-                            value={financeProviderDraft}
-                            onChange={(e) => setFinanceProviderDraft(e.target.value)}
-                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-800"
-                          >
-                            <option value="">Select Provider</option>
-                            {financeProviders.map(fp => (
-                              <option key={fp.id} value={fp.name}>{fp.name}</option>
-                            ))}
-                            {financeProviders.length === 0 && !loadingFinance && (
-                              <option value="BAJAJ">BAJAJ (Default)</option>
-                            )}
-                          </select>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className="block mb-1 text-xs font-bold text-slate-700 uppercase tracking-wider">Tenure (Months)</label>
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              value={financeTenureDraft}
-                              onChange={(e) => setFinanceTenureDraft(e.target.value === '' ? '' : Number(e.target.value))}
-                              placeholder="6"
-                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium"
-                            />
-                          </div>
-                          <div>
-                            <label className="block mb-1 text-xs font-bold text-slate-700 uppercase tracking-wider">Down Payment</label>
-                            <div className="relative">
-                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">₹</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={financeDownPaymentDraft}
-                                onChange={(e) => setFinanceDownPaymentDraft(e.target.value)}
-                                placeholder="0"
-                                className="w-full pl-6 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block mb-1 text-xs font-bold text-slate-700 uppercase tracking-wider">Processing Fee</label>
-                          <div className="relative">
-                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">₹</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={financeProcessingFeeDraft}
-                              onChange={(e) => setFinanceProcessingFeeDraft(e.target.value)}
-                              placeholder="0"
-                              className="w-full pl-6 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium"
-                            />
-                          </div>
-                          <p className="mt-1 text-[11px] text-slate-400">Shown separately and not included in bill grand total.</p>
-                        </div>
-
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-1.5 text-xs">
-                          <div className="flex justify-between items-center">
-                            <span className="text-slate-500">Financed Amount:</span>
-                            <span className="font-semibold text-slate-900">₹{Math.round(Math.max(0, (Number(grandTotal) || 0) - (parseFloat(financeDownPaymentDraft) || 0)))}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-slate-500">Monthly EMI Estimate:</span>
-                            <span className="font-bold text-blue-700">₹{typeof financeTenureDraft === 'number' && financeTenureDraft > 0 ? Math.round(Math.max(0, (Number(grandTotal) || 0) - (parseFloat(financeDownPaymentDraft) || 0)) / financeTenureDraft) : 0}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={closeFinanceModal}
-                            className="flex-1 rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={confirmFinanceModal}
-                            className="flex-1 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 transition shadow-xs"
-                          >
-                            Confirm Finance
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </aside>
           </main>
@@ -4435,7 +4489,7 @@ function Billing() {
             </div>
             <button
               onClick={() => setShowMobileOrderPanel(true)}
-              className="relative flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl font-bold shadow-md active:scale-95 transition text-xs whitespace-nowrap"
+              className="relative flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold shadow-md active:scale-95 transition text-xs whitespace-nowrap"
             >
               <span>View Order</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -4443,6 +4497,343 @@ function Billing() {
           </div>
         </div>
       </div>
+
+      {/* Full-Screen Minimal EMI / Finance Modal with Transparent Backdrop Blur */}
+      {showFinanceModal && (
+        <div
+          className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 md:p-8 animate-in fade-in duration-200 text-slate-800"
+          onClick={closeFinanceModal}
+        >
+          <div
+            className="w-full max-w-4xl lg:max-w-5xl max-h-[92vh] bg-white rounded-3xl shadow-2xl border border-slate-200/90 flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Minimal Top Header Bar */}
+            <header className="px-6 py-4 bg-white border-b border-slate-200/90 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={closeFinanceModal}
+                  className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition active:scale-95"
+                  title="Close (Esc)"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">EMI & Finance Setup</h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200">
+                      EMI Plan
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">Configure customer loan parameters, tenure and down payment</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="text-right hidden sm:block">
+                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Invoice Grand Total</p>
+                  <p className="text-base font-extrabold text-slate-900 leading-none">
+                    ₹{grandTotal % 1 !== 0 ? grandTotal.toFixed(2) : grandTotal}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeFinanceModal}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition active:scale-95"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </header>
+
+            {/* Scrollable Minimal Content Area */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-slate-50/50">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
+                {/* Left Configuration Panel (7 Cols) */}
+                <div className="lg:col-span-7 space-y-4">
+                  {/* 1. Configured Finance Partner Selector */}
+                  <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        1. Select Finance Provider
+                      </label>
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        {loadingFinance ? 'Loading partners...' : `${financeProviders.length} configured`}
+                      </span>
+                    </div>
+
+                    {loadingFinance ? (
+                      <div className="py-6 rounded-xl bg-slate-50 border border-slate-200/80 text-center text-xs text-slate-500 animate-pulse">
+                        Loading configured finance partners...
+                      </div>
+                    ) : financeProviders.length === 0 ? (
+                      <div className="p-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/70 text-xs text-amber-900 flex items-start gap-2.5">
+                        <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold text-amber-900">No finance partners configured</p>
+                          <p className="text-[11px] text-amber-700 mt-0.5">
+                            Please configure your approved finance partners under <span className="font-semibold">Master &gt; Finance Providers</span>.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                          {financeProviders.map(fp => {
+                            const partnerName = fp.name || '';
+                            const isSelected = financeProviderDraft.trim().toUpperCase() === partnerName.trim().toUpperCase();
+                            return (
+                              <button
+                                key={fp.id}
+                                type="button"
+                                onClick={() => setFinanceProviderDraft(partnerName)}
+                                className={`py-3 px-3 rounded-xl border text-xs sm:text-sm font-bold transition-all text-center flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+                                  isSelected
+                                    ? 'border-blue-600 bg-blue-50/80 text-blue-700 shadow-2xs ring-2 ring-blue-600/30'
+                                    : 'border-slate-200 bg-slate-50/60 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+                                }`}
+                              >
+                                {isSelected && <Check className="w-3.5 h-3.5 text-blue-600 stroke-[3] flex-shrink-0" />}
+                                <span className="truncate">{partnerName}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {financeProviders.length > 8 && (
+                          <div className="pt-1">
+                            <select
+                              value={financeProviderDraft}
+                              onChange={(e) => setFinanceProviderDraft(e.target.value)}
+                              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                            >
+                              <option value="">-- Or choose from list --</option>
+                              {financeProviders.map(fp => (
+                                <option key={fp.id} value={fp.name}>{fp.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Tenure (Months) */}
+                  <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        2. Loan Tenure (Months)
+                      </label>
+                      <span className="text-xs text-blue-700 font-bold">
+                        {financeTenureDraft ? `${financeTenureDraft} Months` : 'Select Tenure'}
+                      </span>
+                    </div>
+
+                    {/* Preset Tenure Buttons */}
+                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                      {[3, 6, 8, 9, 12, 18, 24].map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setFinanceTenureDraft(t)}
+                          className={`py-2 rounded-xl text-xs font-bold transition-all ${
+                            financeTenureDraft === t
+                              ? 'bg-blue-600 text-white shadow-2xs ring-1 ring-blue-600'
+                              : 'bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {t}m
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Custom input */}
+                    <div className="pt-1">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={financeTenureDraft}
+                        onChange={(e) => setFinanceTenureDraft(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="Or enter custom months (e.g. 10)"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 3. Down Payment & Processing Fee */}
+                  <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-2xs space-y-4">
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                          3. Customer Down Payment
+                        </label>
+                        <span className="text-xs font-mono text-slate-500">
+                          Paid now in store
+                        </span>
+                      </div>
+
+                      <div className="relative mb-2">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={financeDownPaymentDraft}
+                          onChange={(e) => setFinanceDownPaymentDraft(e.target.value)}
+                          placeholder="0"
+                          className="w-full pl-8 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        />
+                      </div>
+
+                      {/* Quick Percentage Chips */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: '₹0 (Zero DP)', pct: 0 },
+                          { label: '10%', pct: 0.10 },
+                          { label: '20%', pct: 0.20 },
+                          { label: '33%', pct: 0.3333 },
+                          { label: '50%', pct: 0.50 },
+                        ].map((chip) => {
+                          const amt = Math.round(Number(grandTotal || 0) * chip.pct);
+                          return (
+                            <button
+                              key={chip.label}
+                              type="button"
+                              onClick={() => setFinanceDownPaymentDraft(String(amt))}
+                              className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200/70 border border-slate-200 text-slate-700 text-xs font-semibold transition"
+                            >
+                              {chip.label} {chip.pct > 0 && `(₹${amt})`}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Processing Fee */}
+                    <div className="pt-3 border-t border-slate-100">
+                      <label className="block text-xs font-bold text-slate-900 uppercase tracking-wider mb-1.5">
+                        4. Processing Fee (Optional)
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₹</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={financeProcessingFeeDraft}
+                          onChange={(e) => setFinanceProcessingFeeDraft(e.target.value)}
+                          placeholder="0"
+                          className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        />
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        This fee is charged directly by the finance provider and does not increase the bill total.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Summary & Live Calculation Card (5 Cols) */}
+                <div className="lg:col-span-5 space-y-4 lg:sticky lg:top-2">
+                  <div className="bg-white rounded-3xl border border-slate-200/90 p-6 shadow-sm space-y-5">
+                    <div>
+                      <span className="text-[10px] font-bold tracking-wider uppercase text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
+                        Live Loan Calculation
+                      </span>
+
+                      {/* Hero Monthly EMI Amount */}
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Estimated Monthly EMI</p>
+                        <div className="flex items-baseline gap-1 mt-1">
+                          <span className="text-3xl sm:text-4xl font-extrabold text-blue-700 tracking-tight">
+                            ₹{typeof financeTenureDraft === 'number' && financeTenureDraft > 0
+                              ? Math.round(Math.max(0, (Number(grandTotal) || 0) - (parseFloat(financeDownPaymentDraft) || 0)) / financeTenureDraft)
+                              : 0}
+                          </span>
+                          <span className="text-xs text-slate-400 font-medium">/ month</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Breakdown Rows */}
+                    <div className="space-y-2 text-xs border-y border-slate-100 py-3.5 text-slate-600">
+                      <div className="flex justify-between items-center">
+                        <span>Invoice Total</span>
+                        <span className="font-semibold text-slate-900">
+                          ₹{grandTotal % 1 !== 0 ? grandTotal.toFixed(2) : grandTotal}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center text-emerald-700">
+                        <span>Down Payment (Paid now)</span>
+                        <span className="font-bold">
+                          - ₹{Math.round(parseFloat(financeDownPaymentDraft) || 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-1 border-t border-dashed border-slate-200 font-bold text-slate-900 text-sm">
+                        <span>Financed Principal</span>
+                        <span className="text-blue-700">
+                          ₹{Math.round(Math.max(0, (Number(grandTotal) || 0) - (parseFloat(financeDownPaymentDraft) || 0)))}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-1">
+                        <span>Tenure</span>
+                        <span className="font-semibold text-slate-800">
+                          {financeTenureDraft || 0} Months
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span>Processing Fee (Upfront)</span>
+                        <span className="font-semibold text-slate-800">
+                          ₹{Math.round(parseFloat(financeProcessingFeeDraft) || 0)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span>Provider</span>
+                        <span className="font-semibold text-slate-800">
+                          {financeProviderDraft || '—'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Info note */}
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/70 text-[11px] text-slate-500">
+                      Customer pays down payment in store. Remaining principal is paid directly to {financeProviderDraft || 'the finance partner'} across {financeTenureDraft || 0} monthly installments.
+                    </div>
+
+                    {/* Action Buttons in Card */}
+                    <div className="space-y-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={confirmFinanceModal}
+                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-sm font-bold transition shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+                      >
+                        <Check className="w-4 h-4" />
+                        <span>Confirm & Apply EMI Plan</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={closeFinanceModal}
+                        className="w-full py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                      >
+                        Cancel & Return to Bill
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* QR Code Modal - Minimal & Professional */}
       {showQrModal && upiQrCode && (
@@ -4653,7 +5044,7 @@ function Billing() {
                 <button
                   type="button"
                   onClick={handlePrintInvoice}
-                  className="flex items-center justify-center gap-2 py-2.5 px-3 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white rounded-xl text-xs sm:text-sm font-semibold transition-all shadow-xs"
+                  className="flex items-center justify-center gap-2 py-2.5 px-3 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white rounded-xl text-xs sm:text-sm font-semibold transition-all shadow-sm"
                 >
                   <Printer className="w-4 h-4" />
                   <span>Print Bill</span>
