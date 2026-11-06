@@ -6,6 +6,7 @@ import { db } from '../config/firebase';
 import { getDoc, getDocs, setDoc, runTransaction, Timestamp } from 'firebase/firestore';
 import logo from '../assets/logo.png';
 import type { ServiceRequest, ShopDetails } from '../types';
+import { getBranchServicePrefix } from '../utils/serviceSequence';
 
 interface PrintServiceQRLabelsModalProps {
   isOpen: boolean;
@@ -31,7 +32,7 @@ export default function PrintServiceQRLabelsModal({
   shopName: initialShopName = 'Digital Zone',
   job = null
 }: PrintServiceQRLabelsModalProps) {
-  const { getCollectionRef, getDocRef } = useStore();
+  const { getCollectionRef, getDocRef, currentStore, stores } = useStore();
   const [shopName, setShopName] = useState<string>(initialShopName);
   const [startNum, setStartNum] = useState<number>(1);
   const [count, setCount] = useState<number>(job ? 2 : 12);
@@ -61,19 +62,10 @@ export default function PrintServiceQRLabelsModal({
     }
   }, [isOpen, getDocRef]);
 
-  // Derive dynamic shop prefix from shopName (e.g. "Digital Zone" -> "DZ", "The Legend Mobiles" -> "TLM")
+  // Derive standardized branch service prefix (e.g. DZ-AN, DZ-MDU, DZ-HUB)
   const shopPrefix = useMemo(() => {
-    if (!shopName || !shopName.trim()) return 'JOB';
-    const clean = shopName.trim();
-    const words = clean.split(/\s+/).filter(Boolean);
-    if (words.length > 1) {
-      return words
-        .map((w) => w[0].toUpperCase())
-        .join('')
-        .slice(0, 4);
-    }
-    return clean.slice(0, 3).toUpperCase();
-  }, [shopName]);
+    return getBranchServicePrefix(currentStore, stores);
+  }, [currentStore, stores]);
 
   // Update default count if job changes
   useEffect(() => {

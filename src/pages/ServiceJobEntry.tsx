@@ -33,6 +33,7 @@ import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
 import { db } from '../config/firebase';
 import type { Customer, ServiceRequest, Brand } from '../types';
+import { getBranchServicePrefix } from '../utils/serviceSequence';
 
 type SparePartRow = {
   partName: string;
@@ -196,7 +197,7 @@ function buildDefaultChecklist(items: Array<{ key: string }>) {
 export default function ServiceJobEntryPage() {
   const navigate = useNavigate();
   const { currentUser } = useAuth();
-  const { getCollectionRef, getDocRef } = useStore();
+  const { getCollectionRef, getDocRef, currentStore, stores } = useStore();
   const { success, error: showError } = useToastContext();
   const displayName = currentUser?.displayName || currentUser?.email || 'Unknown User';
 
@@ -297,29 +298,10 @@ export default function ServiceJobEntryPage() {
     }));
   }, [computedBalance]);
 
-  const [shopPrefix, setShopPrefix] = useState('DZ');
-
-  useEffect(() => {
-    const fetchShop = async () => {
-      try {
-        const snap = await getDoc(getDocRef('settings', 'shopDetails'));
-        if (snap.exists()) {
-          const name = snap.data().shopName;
-          if (name && name.trim()) {
-            const words = name.trim().split(/\s+/).filter(Boolean);
-            const pfx =
-              words.length > 1
-                ? words.map((w: string) => w[0].toUpperCase()).join('').slice(0, 4)
-                : name.trim().slice(0, 3).toUpperCase();
-            setShopPrefix(pfx);
-          }
-        }
-      } catch (e) {
-        console.error('Error fetching shop name', e);
-      }
-    };
-    fetchShop();
-  }, [getDocRef]);
+  // Derive standardized branch service prefix (e.g. DZ-AN, DZ-MDU, DZ-HUB)
+  const shopPrefix = useMemo(() => {
+    return getBranchServicePrefix(currentStore, stores);
+  }, [currentStore, stores]);
 
   // Fetch systematic next job number
   useEffect(() => {
@@ -533,6 +515,7 @@ export default function ServiceJobEntryPage() {
 
       const isSystematic =
         form.jobSheetNumber.startsWith('TLM-') ||
+        form.jobSheetNumber.startsWith('DZ-') ||
         form.jobSheetNumber.startsWith(`${shopPrefix}-`);
 
       await runTransaction(db, async (transaction) => {
@@ -547,6 +530,7 @@ export default function ServiceJobEntryPage() {
 
           if (
             form.qrCodeValue.startsWith('TLM-') ||
+            form.qrCodeValue.startsWith('DZ-') ||
             form.qrCodeValue.startsWith(`${shopPrefix}-`) ||
             !form.qrCodeValue.trim()
           ) {

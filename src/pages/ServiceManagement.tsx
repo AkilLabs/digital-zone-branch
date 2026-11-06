@@ -8,7 +8,6 @@ import {
   Wrench,
   Printer,
   QrCode,
-  Camera,
   Plus,
   ExternalLink,
   Phone,
@@ -22,14 +21,14 @@ import {
   Banknote,
   Calendar,
   Warehouse,
-  Building2
+  Building2,
+  ChevronDown
 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 
 import Navbar from '../components/Navbar';
 import LocationSwitcher from '../components/LocationSwitcher';
 import PrintServiceQRLabelsModal from '../components/PrintServiceQRLabelsModal';
-import QRScannerModal from '../components/QRScannerModal';
 import { useAuth } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { useToastContext } from '../context/ToastContext';
@@ -43,30 +42,35 @@ const STATUS_OPTIONS: Array<{
   label: string;
   pillClass: string;
   dotClass: string;
+  subtleClass: string;
 }> = [
   {
     value: 'received',
     label: 'Received',
-    pillClass: 'bg-amber-50 text-amber-700 border-amber-200',
-    dotClass: 'bg-amber-500'
+    pillClass: 'bg-amber-50 text-amber-800 border-amber-200/80',
+    dotClass: 'bg-amber-500',
+    subtleClass: 'hover:border-amber-300'
   },
   {
     value: 'repairing',
-    label: 'Repairing',
-    pillClass: 'bg-sky-50 text-sky-700 border-sky-200',
-    dotClass: 'bg-sky-500'
+    label: 'In Repair',
+    pillClass: 'bg-sky-50 text-sky-800 border-sky-200/80',
+    dotClass: 'bg-sky-500',
+    subtleClass: 'hover:border-sky-300'
   },
   {
     value: 'serviced',
-    label: 'Serviced (Ready)',
-    pillClass: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-    dotClass: 'bg-indigo-500'
+    label: 'Ready for Pickup',
+    pillClass: 'bg-indigo-50 text-indigo-800 border-indigo-200/80',
+    dotClass: 'bg-indigo-500',
+    subtleClass: 'hover:border-indigo-300'
   },
   {
     value: 'delivered',
     label: 'Delivered',
-    pillClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    dotClass: 'bg-emerald-500'
+    pillClass: 'bg-emerald-50 text-emerald-800 border-emerald-200/80',
+    dotClass: 'bg-emerald-500',
+    subtleClass: 'hover:border-emerald-300'
   }
 ];
 
@@ -75,7 +79,7 @@ function getStatusMeta(status: StatusValue) {
 }
 
 function formatDate(value?: Date | string) {
-  if (!value) return '-';
+  if (!value) return '—';
   if (value instanceof Date) {
     return value.toLocaleDateString('en-IN', {
       day: '2-digit',
@@ -91,7 +95,7 @@ function formatDate(value?: Date | string) {
       year: 'numeric'
     });
   }
-  return value;
+  return String(value);
 }
 
 export default function ServiceManagementPage() {
@@ -106,16 +110,11 @@ export default function ServiceManagementPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | StatusValue>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'urgent'>('all');
+  const [branchFilter, setBranchFilter] = useState<'all' | string>('all');
   const [isLabelsModalOpen, setIsLabelsModalOpen] = useState(false);
   const [selectedJobForLabel, setSelectedJobForLabel] = useState<ServiceRequest | null>(null);
-  const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [printingJobId, setPrintingJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
-
-  const handleScanLookup = (scannedCode: string) => {
-    setSearch(scannedCode);
-    success(`Filtering job by QR Code: ${scannedCode}`);
-  };
 
   const fetchJobs = async () => {
     try {
@@ -130,6 +129,7 @@ export default function ServiceManagementPage() {
           const status = (data.status || 'received') as StatusValue;
           const createdAt = data.createdAt?.toDate?.() || new Date();
           return {
+            ...data,
             id: docSnap.id,
             productName:
               data.productName ||
@@ -138,48 +138,43 @@ export default function ServiceManagementPage() {
             customerId: data.customerId || '',
             customerName: data.customerName || '',
             mobile: data.mobile || '',
-            cost: Number(data.cost || data.estimatedCost || 0),
-            advancePaid: Number(data.advancePaid || 0),
-            balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
-            lockType: data.lockType || 'none',
-            password: data.password,
-            pattern: data.pattern,
+            cost: Number(data.cost || data.approvedCost || 0),
+            lockType: data.lockType || 'pattern',
+            createdBy: data.createdBy || '',
             status,
             jobSheetNumber: data.jobSheetNumber,
             qrCodeValue: data.qrCodeValue,
             jobDate: data.jobDate,
             jobTime: data.jobTime,
-            serviceType: data.serviceType,
-            priority: data.priority,
-            brand: data.brand,
-            modelName: data.modelName,
-            issues: data.issues || [],
-            issueNotes: data.issueNotes,
-            estimatedRepairTime: data.estimatedRepairTime,
+            priority: data.priority || 'normal',
+            brand: data.brand || '',
+            modelName: data.modelName || '',
+            color: data.color || '',
+            issues: Array.isArray(data.issues) ? data.issues : [],
+            issueNotes: data.issueNotes || '',
+            advancePaid: Number(data.advancePaid || 0),
+            balanceAmount: Number(data.balanceAmount || 0),
+            serviceType: data.serviceType || 'walk-in',
             createdAt,
-            createdBy: data.createdBy || '',
-            createdByName: data.createdByName,
-            updatedAt: data.updatedAt?.toDate?.(),
-            updatedBy: data.updatedBy,
-            updatedByName: data.updatedByName,
             _storeId: 'hub_warehouse',
-            _storeName: 'Hub Workshop',
+            _storeName: 'Hub Workshop (Main Office)'
           } as ServiceRequest;
         });
 
-        // 2. Fetch each branch store's service requests
-        const branchPromises = stores
-          .filter((s): s is typeof s & { id: string } => Boolean(s && s.id))
+        // 2. Fetch service requests from each branch subcollection
+        const branchJobsPromises = stores
+          .filter((store): store is typeof store & { id: string } => Boolean(store && store.id))
           .map(async (store) => {
             const storeId = store.id;
             try {
-              const bRef = collection(db, 'stores', storeId, 'serviceRequests');
-              const bSnap = await getDocs(query(bRef, orderBy('createdAt', 'desc')));
-              return bSnap.docs.map((docSnap) => {
+              const storeRef = collection(db, 'stores', storeId, 'serviceRequests');
+              const snap = await getDocs(query(storeRef, orderBy('createdAt', 'desc')));
+              return snap.docs.map((docSnap) => {
                 const data = docSnap.data();
                 const status = (data.status || 'received') as StatusValue;
                 const createdAt = data.createdAt?.toDate?.() || new Date();
                 return {
+                  ...data,
                   id: docSnap.id,
                   productName:
                     data.productName ||
@@ -188,59 +183,57 @@ export default function ServiceManagementPage() {
                   customerId: data.customerId || '',
                   customerName: data.customerName || '',
                   mobile: data.mobile || '',
-                  cost: Number(data.cost || data.estimatedCost || 0),
-                  advancePaid: Number(data.advancePaid || 0),
-                  balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
-                  lockType: data.lockType || 'none',
-                  password: data.password,
-                  pattern: data.pattern,
+                  cost: Number(data.cost || data.approvedCost || 0),
+                  lockType: data.lockType || 'pattern',
+                  createdBy: data.createdBy || '',
                   status,
                   jobSheetNumber: data.jobSheetNumber,
                   qrCodeValue: data.qrCodeValue,
                   jobDate: data.jobDate,
                   jobTime: data.jobTime,
-                  serviceType: data.serviceType,
-                  priority: data.priority,
-                  brand: data.brand,
-                  modelName: data.modelName,
-                  issues: data.issues || [],
-                  issueNotes: data.issueNotes,
-                  estimatedRepairTime: data.estimatedRepairTime,
+                  priority: data.priority || 'normal',
+                  brand: data.brand || '',
+                  modelName: data.modelName || '',
+                  color: data.color || '',
+                  issues: Array.isArray(data.issues) ? data.issues : [],
+                  issueNotes: data.issueNotes || '',
+                  advancePaid: Number(data.advancePaid || 0),
+                  balanceAmount: Number(data.balanceAmount || 0),
+                  serviceType: data.serviceType || 'walk-in',
                   createdAt,
-                  createdBy: data.createdBy || '',
-                  createdByName: data.createdByName,
-                  updatedAt: data.updatedAt?.toDate?.(),
-                  updatedBy: data.updatedBy,
-                  updatedByName: data.updatedByName,
                   _storeId: storeId,
-                  _storeName: store.name,
+                  _storeName: store.name || 'Branch'
                 } as ServiceRequest;
               });
             } catch (err) {
-              console.error(`Error loading service jobs for store ${store.name}:`, err);
-              return [] as ServiceRequest[];
+              console.error(`Failed to fetch service requests for branch ${storeId}:`, err);
+              return [];
             }
           });
 
-        const branchResults = await Promise.all(branchPromises);
-        const allJobs = [...hubJobs, ...branchResults.flat()].sort((a, b) => {
-          const timeA = new Date(a.createdAt).getTime();
-          const timeB = new Date(b.createdAt).getTime();
-          return timeB - timeA;
-        });
-        setJobs(allJobs);
-      } else {
-        const jobsRef = getCollectionRef('serviceRequests');
-        const q = query(jobsRef, orderBy('createdAt', 'desc'));
-        const snapshot = await getDocs(q);
-        const locName = currentStore ? currentStore.name : 'Hub Workshop';
-        const locId = currentStore?.id || 'hub_warehouse';
+        const branchJobsNested = await Promise.all(branchJobsPromises);
+        const branchJobs = branchJobsNested.flat();
 
-        const rows = snapshot.docs.map((docSnap) => {
+        const combined = [...hubJobs, ...branchJobs];
+        combined.sort((a, b) => {
+          const tA = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
+          const tB = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
+          return tB - tA;
+        });
+
+        setJobs(combined);
+      } else {
+        const collectionRef = getCollectionRef('serviceRequests');
+        const q = query(collectionRef, orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+
+        const loaded: ServiceRequest[] = snapshot.docs.map((docSnap) => {
           const data = docSnap.data();
           const status = (data.status || 'received') as StatusValue;
           const createdAt = data.createdAt?.toDate?.() || new Date();
+
           return {
+            ...data,
             id: docSnap.id,
             productName:
               data.productName ||
@@ -249,40 +242,34 @@ export default function ServiceManagementPage() {
             customerId: data.customerId || '',
             customerName: data.customerName || '',
             mobile: data.mobile || '',
-            cost: Number(data.cost || data.estimatedCost || 0),
-            advancePaid: Number(data.advancePaid || 0),
-            balanceAmount: data.balanceAmount !== undefined ? Number(data.balanceAmount) : undefined,
-            lockType: data.lockType || 'none',
-            password: data.password,
-            pattern: data.pattern,
+            cost: Number(data.cost || data.approvedCost || 0),
+            lockType: data.lockType || 'pattern',
+            createdBy: data.createdBy || '',
             status,
             jobSheetNumber: data.jobSheetNumber,
             qrCodeValue: data.qrCodeValue,
             jobDate: data.jobDate,
             jobTime: data.jobTime,
-            serviceType: data.serviceType,
-            priority: data.priority,
-            brand: data.brand,
-            modelName: data.modelName,
-            issues: data.issues || [],
-            issueNotes: data.issueNotes,
-            estimatedRepairTime: data.estimatedRepairTime,
+            priority: data.priority || 'normal',
+            brand: data.brand || '',
+            modelName: data.modelName || '',
+            color: data.color || '',
+            issues: Array.isArray(data.issues) ? data.issues : [],
+            issueNotes: data.issueNotes || '',
+            advancePaid: Number(data.advancePaid || 0),
+            balanceAmount: Number(data.balanceAmount || 0),
+            serviceType: data.serviceType || 'walk-in',
             createdAt,
-            createdBy: data.createdBy || '',
-            createdByName: data.createdByName,
-            updatedAt: data.updatedAt?.toDate?.(),
-            updatedBy: data.updatedBy,
-            updatedByName: data.updatedByName,
-            _storeId: locId,
-            _storeName: locName,
+            _storeId: currentStore?.id || 'hub_warehouse',
+            _storeName: currentStore?.name || 'Hub Workshop'
           } as ServiceRequest;
         });
 
-        setJobs(rows);
+        setJobs(loaded);
       }
     } catch (err) {
-      console.error('Failed to fetch service jobs', err);
-      showError('Failed to load service jobs');
+      console.error('Failed to load service jobs:', err);
+      showError('Failed to load service requests');
     } finally {
       setLoading(false);
     }
@@ -290,128 +277,153 @@ export default function ServiceManagementPage() {
 
   useEffect(() => {
     fetchJobs();
-  }, [selectedLocation, currentStore?.id, stores]);
+  }, [getCollectionRef, selectedLocation, stores.length]);
 
-  // Compute stats for KPI strip
   const stats = useMemo(() => {
     const total = jobs.length;
-    let received = 0;
-    let repairing = 0;
-    let serviced = 0;
-    let delivered = 0;
-    let totalValue = 0;
-    let urgentCount = 0;
+    const received = jobs.filter((j) => j.status === 'received').length;
+    const repairing = jobs.filter((j) => j.status === 'repairing').length;
+    const serviced = jobs.filter((j) => j.status === 'serviced').length;
+    const delivered = jobs.filter((j) => j.status === 'delivered').length;
+    const urgentCount = jobs.filter((j) => j.priority === 'urgent').length;
+    const totalValue = jobs.reduce((sum, j) => sum + Number(j.cost || 0), 0);
 
-    for (const job of jobs) {
-      if (job.status === 'received') received++;
-      else if (job.status === 'repairing') repairing++;
-      else if (job.status === 'serviced') serviced++;
-      else if (job.status === 'delivered') delivered++;
-
-      totalValue += Number(job.cost || 0);
-      if (job.priority === 'urgent') urgentCount++;
-    }
-
-    return {
-      total,
-      received,
-      repairing,
-      serviced,
-      delivered,
-      totalValue,
-      urgentCount
-    };
+    return { total, received, repairing, serviced, delivered, urgentCount, totalValue };
   }, [jobs]);
 
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
-      const statusOk = statusFilter === 'all' ? true : job.status === statusFilter;
-      const priorityOk = priorityFilter === 'all' ? true : job.priority === 'urgent';
-      const q = search.trim().toLowerCase();
-      const searchOk = !q
-        ? true
-        : [
-            job.jobSheetNumber,
-            job.qrCodeValue,
-            job.customerName,
-            job.mobile,
-            job.productName,
-            job.brand,
-            job.modelName,
-            job.imei1,
-            job.issueNotes
-          ]
-            .filter(Boolean)
-            .some((val) => String(val).toLowerCase().includes(q));
-      return statusOk && priorityOk && searchOk;
-    });
-  }, [jobs, search, statusFilter, priorityFilter]);
+      // Branch filter if in all_locations
+      if (selectedLocation === 'all_locations' && branchFilter !== 'all') {
+        if (job._storeId !== branchFilter) return false;
+      }
 
-  const handleStatusChange = async (jobId: string, status: StatusValue) => {
+      // Status filter
+      if (statusFilter !== 'all' && job.status !== statusFilter) {
+        return false;
+      }
+
+      // Priority filter
+      if (priorityFilter === 'urgent' && job.priority !== 'urgent') {
+        return false;
+      }
+
+      // Text search
+      if (!search.trim()) return true;
+
+      const q = search.toLowerCase().trim();
+      const jobCode = (job.jobSheetNumber || job.qrCodeValue || job.id || '').toLowerCase();
+      const customer = (job.customerName || '').toLowerCase();
+      const phone = (job.mobile || '').toLowerCase();
+      const device = (job.productName || '').toLowerCase();
+      const brand = (job.brand || '').toLowerCase();
+      const issues = (job.issues || []).join(' ').toLowerCase();
+      const notes = (job.issueNotes || '').toLowerCase();
+      const storeName = (job._storeName || '').toLowerCase();
+
+      return (
+        jobCode.includes(q) ||
+        customer.includes(q) ||
+        phone.includes(q) ||
+        device.includes(q) ||
+        brand.includes(q) ||
+        issues.includes(q) ||
+        notes.includes(q) ||
+        storeName.includes(q)
+      );
+    });
+  }, [jobs, search, statusFilter, priorityFilter, branchFilter, selectedLocation]);
+
+  const handleStatusChange = async (jobId: string, newStatus: StatusValue) => {
     try {
       const targetJob = jobs.find((j) => j.id === jobId);
-      const storeId = targetJob?._storeId;
-      const jobRef =
-        storeId && storeId !== 'hub_warehouse'
-          ? doc(db, 'stores', storeId, 'serviceRequests', jobId)
-          : doc(db, 'serviceRequests', jobId);
+      const targetStoreId = (targetJob as any)?._storeId;
 
-      await updateDoc(jobRef, {
-        status,
+      const payload: any = {
+        status: newStatus,
         updatedAt: Timestamp.now(),
-        updatedBy: currentUser?.uid,
+        updatedBy: currentUser?.uid || '',
         updatedByName: displayName
-      });
-      setJobs((prev) => prev.map((job) => (job.id === jobId ? { ...job, status } : job)));
-      success(`Status updated to ${getStatusMeta(status).label}`);
+      };
+
+      if (newStatus === 'delivered') {
+        payload.deliveryDate = new Date().toISOString().split('T')[0];
+        payload.deliveredBy = displayName;
+      }
+
+      if (targetStoreId && targetStoreId !== 'hub_warehouse') {
+        const storeRef = doc(db, 'stores', targetStoreId, 'serviceRequests', jobId);
+        await updateDoc(storeRef, payload);
+      } else {
+        const hubRef = doc(db, 'serviceRequests', jobId);
+        await updateDoc(hubRef, payload);
+      }
+
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === jobId
+            ? {
+                ...job,
+                status: newStatus,
+                ...(newStatus === 'delivered'
+                  ? {
+                      deliveryDate: payload.deliveryDate,
+                      deliveredBy: payload.deliveredBy
+                    }
+                  : {})
+              }
+            : job
+        )
+      );
+
+      success(`Job status updated to ${getStatusMeta(newStatus).label}`);
     } catch (err) {
-      console.error('Failed to update status', err);
-      showError('Failed to update status');
+      console.error('Failed to update status:', err);
+      showError('Failed to update job status');
+    }
+  };
+
+  const handleDelete = async (jobId: string) => {
+    if (!window.confirm('Are you sure you want to delete this service job record?')) return;
+    try {
+      setDeletingJobId(jobId);
+      const targetJob = jobs.find((j) => j.id === jobId);
+      const targetStoreId = (targetJob as any)?._storeId;
+
+      if (targetStoreId && targetStoreId !== 'hub_warehouse') {
+        const storeRef = doc(db, 'stores', targetStoreId, 'serviceRequests', jobId);
+        await deleteDoc(storeRef);
+      } else {
+        const hubRef = doc(db, 'serviceRequests', jobId);
+        await deleteDoc(hubRef);
+      }
+
+      setJobs((prev) => prev.filter((j) => j.id !== jobId));
+      success('Service request deleted successfully');
+    } catch (err) {
+      console.error('Failed to delete service request:', err);
+      showError('Failed to delete service request');
+    } finally {
+      setDeletingJobId(null);
     }
   };
 
   const handlePrintJobSheet = async (job: ServiceRequest) => {
-    if (!job.id) return;
     try {
-      setPrintingJobId(job.id);
+      setPrintingJobId(job.id || 'current');
       await printJobSheet(job);
       success('Job sheet generated for print');
     } catch (err) {
-      console.error('Error printing job sheet:', err);
+      console.error('Failed to print job sheet:', err);
       showError('Failed to print job sheet');
     } finally {
       setPrintingJobId(null);
     }
   };
 
-  const handleDelete = async (jobId: string) => {
-    if (!window.confirm('Are you sure you want to delete this service job sheet permanently?')) {
-      return;
-    }
-    try {
-      setDeletingJobId(jobId);
-      const targetJob = jobs.find((j) => j.id === jobId);
-      const storeId = targetJob?._storeId;
-      const jobRef =
-        storeId && storeId !== 'hub_warehouse'
-          ? doc(db, 'stores', storeId, 'serviceRequests', jobId)
-          : doc(db, 'serviceRequests', jobId);
-
-      await deleteDoc(jobRef);
-      setJobs((prev) => prev.filter((job) => job.id !== jobId));
-      success('Service job deleted successfully');
-    } catch (err) {
-      console.error('Failed to delete service job', err);
-      showError('Failed to delete service job');
-    } finally {
-      setDeletingJobId(null);
-    }
-  };
-
   const handleWhatsAppUpdate = (job: ServiceRequest) => {
-    const rawPhone = (job.mobile || '').replace(/\D/g, '');
-    const cleanPhone = rawPhone.length === 10 ? `91${rawPhone}` : rawPhone;
-    if (!cleanPhone) {
+    const cleanPhone = (job.mobile || '').replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
       showError('No valid customer phone number found');
       return;
     }
@@ -444,86 +456,82 @@ export default function ServiceManagementPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/50">
+    <div className="min-h-screen bg-slate-50/60 flex flex-col antialiased">
       <Navbar />
 
-      <main className="max-w-full w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4 pb-24 sm:pb-8 space-y-3.5">
-        {/* Header Bar */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
+      <main className="w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 pb-24 sm:pb-12 space-y-4">
+        {/* ================= HEADER BAR ================= */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-2xs">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-xs shrink-0">
-                <Wrench className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                    Service & Repair Management
-                  </h1>
-                  <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                    Live Workshop
-                  </span>
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-xs shrink-0">
+                  <Wrench className="w-5 h-5" />
                 </div>
-                <p className="text-xs sm:text-sm text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1">
-                  <span>Track intake, manage technician status pipeline, print QR tags & notify customers</span>
-                  <span className="text-slate-300">•</span>
-                  {selectedLocation === 'all_locations' ? (
-                    <span className="inline-flex items-center gap-1 text-blue-800 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                      <Layers className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Complete Service Data (Hub Workshop + All Branches)</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                      Service Management
+                    </h1>
+                    <span className="hidden sm:inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200/80">
+                      Workshop Desk
                     </span>
-                  ) : currentStore?.name ? (
-                    <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
-                      <Building2 className="w-3.5 h-3.5" />
-                      <span>Branch: {currentStore.name}</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
-                      <Warehouse className="w-3.5 h-3.5" />
-                      <span>Hub Workshop (Main Office)</span>
-                    </span>
-                  )}
-                </p>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span>Intake tracking, technician workflow, device tags & customer alerts</span>
+                    <span className="text-slate-300">•</span>
+                    {selectedLocation === 'all_locations' ? (
+                      <span className="inline-flex items-center gap-1 text-blue-800 font-bold bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                        <Layers className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Complete Service Data (Hub + All Branches)</span>
+                      </span>
+                    ) : currentStore?.name ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Branch: {currentStore.name}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-amber-900 font-semibold bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                        <Warehouse className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Hub Workshop (Main Office)</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Quick Actions */}
+            {/* Top Controls & Actions */}
             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
               <LocationSwitcher includeAllLocations />
 
               <button
-                onClick={() => setIsScannerOpen(true)}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200/80 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all active:scale-95"
-                title="Scan QR sticker on device"
-              >
-                <Camera className="w-4 h-4 text-blue-600" />
-                <span>Scan Device QR</span>
-              </button>
-
-              <button
+                type="button"
                 onClick={() => {
                   setSelectedJobForLabel(null);
                   setIsLabelsModalOpen(true);
                 }}
-                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200/80 text-slate-700 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all active:scale-95"
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
                 title="Print batch QR code stickers"
               >
                 <QrCode className="w-4 h-4 text-purple-600" />
-                <span>Print QR Stickers</span>
+                <span>Print Stickers</span>
               </button>
 
               <button
+                type="button"
                 onClick={fetchJobs}
                 disabled={loading}
-                className="p-2 bg-slate-100 hover:bg-slate-200/80 text-slate-600 rounded-xl transition-all"
+                className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-all cursor-pointer shadow-2xs"
                 title="Refresh service list"
               >
                 <RotateCw className={`w-4 h-4 ${loading ? 'animate-spin text-blue-600' : ''}`} />
               </button>
 
               <button
+                type="button"
                 onClick={() => navigate('/service-management/create')}
-                className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-all active:scale-95"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs hover:shadow-sm transition-all cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 <span>New Job Sheet</span>
@@ -532,162 +540,225 @@ export default function ServiceManagementPage() {
           </div>
         </div>
 
-        {/* KPI Metrics Strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
+        {/* ================= METRICS STRIP ================= */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           {/* Total Jobs */}
-          <div className="bg-white border border-slate-200/80 rounded-xl p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Total Jobs</p>
-              <p className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5 font-mono">
+          <button
+            type="button"
+            onClick={() => setStatusFilter('all')}
+            className={`bg-white border rounded-xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between ${
+              statusFilter === 'all'
+                ? 'border-blue-500 ring-2 ring-blue-500/10 shadow-xs'
+                : 'border-slate-200/90 shadow-2xs hover:border-slate-300'
+            }`}
+          >
+            <div className="flex items-center justify-between text-slate-400">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Intake</span>
+              <Layers className="w-3.5 h-3.5 text-slate-500" />
+            </div>
+            <div className="mt-2">
+              <div className="text-xl sm:text-2xl font-black font-mono text-slate-900 leading-tight">
                 {stats.total}
-              </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">All repair records</p>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">All repair records</div>
             </div>
-            <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
-              <Layers className="w-4 h-4" />
-            </div>
-          </div>
+          </button>
 
-          {/* Received / In Queue */}
-          <div className="bg-white border border-amber-200/80 rounded-xl p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">Received</p>
-              <p className="text-xl sm:text-2xl font-black text-amber-700 mt-0.5 font-mono">
+          {/* Received */}
+          <button
+            type="button"
+            onClick={() => setStatusFilter('received')}
+            className={`bg-white border rounded-xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between ${
+              statusFilter === 'received'
+                ? 'border-amber-500 ring-2 ring-amber-500/10 shadow-xs'
+                : 'border-slate-200/90 shadow-2xs hover:border-amber-300'
+            }`}
+          >
+            <div className="flex items-center justify-between text-amber-600">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Received</span>
+              <Clock3 className="w-3.5 h-3.5" />
+            </div>
+            <div className="mt-2">
+              <div className="text-xl sm:text-2xl font-black font-mono text-amber-700 leading-tight">
                 {stats.received}
-              </p>
-              <p className="text-[10px] text-amber-600/80 mt-0.5">Awaiting technician</p>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Awaiting technician</div>
             </div>
-            <div className="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
-              <Clock3 className="w-4 h-4" />
-            </div>
-          </div>
+          </button>
 
-          {/* Repairing */}
-          <div className="bg-white border border-sky-200/80 rounded-xl p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-sky-700 uppercase tracking-wider">Repairing</p>
-              <p className="text-xl sm:text-2xl font-black text-sky-700 mt-0.5 font-mono">
+          {/* In Repair */}
+          <button
+            type="button"
+            onClick={() => setStatusFilter('repairing')}
+            className={`bg-white border rounded-xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between ${
+              statusFilter === 'repairing'
+                ? 'border-sky-500 ring-2 ring-sky-500/10 shadow-xs'
+                : 'border-slate-200/90 shadow-2xs hover:border-sky-300'
+            }`}
+          >
+            <div className="flex items-center justify-between text-sky-600">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-sky-700">In Repair</span>
+              <Wrench className="w-3.5 h-3.5" />
+            </div>
+            <div className="mt-2">
+              <div className="text-xl sm:text-2xl font-black font-mono text-sky-700 leading-tight">
                 {stats.repairing}
-              </p>
-              <p className="text-[10px] text-sky-600/80 mt-0.5">On workbench</p>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Active workbench</div>
             </div>
-            <div className="w-9 h-9 rounded-lg bg-sky-50 flex items-center justify-center text-sky-600">
-              <Wrench className="w-4 h-4" />
-            </div>
-          </div>
+          </button>
 
           {/* Serviced / Ready */}
-          <div className="bg-white border border-indigo-200/80 rounded-xl p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">Ready for Pickup</p>
-              <p className="text-xl sm:text-2xl font-black text-indigo-700 mt-0.5 font-mono">
+          <button
+            type="button"
+            onClick={() => setStatusFilter('serviced')}
+            className={`bg-white border rounded-xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between ${
+              statusFilter === 'serviced'
+                ? 'border-indigo-500 ring-2 ring-indigo-500/10 shadow-xs'
+                : 'border-slate-200/90 shadow-2xs hover:border-indigo-300'
+            }`}
+          >
+            <div className="flex items-center justify-between text-indigo-600">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">Ready Pickup</span>
+              <CheckCircle2 className="w-3.5 h-3.5" />
+            </div>
+            <div className="mt-2">
+              <div className="text-xl sm:text-2xl font-black font-mono text-indigo-700 leading-tight">
                 {stats.serviced}
-              </p>
-              <p className="text-[10px] text-indigo-600/80 mt-0.5">Testing complete</p>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">QC passed & ready</div>
             </div>
-            <div className="w-9 h-9 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
-              <CheckCircle2 className="w-4 h-4" />
-            </div>
-          </div>
+          </button>
 
           {/* Delivered */}
-          <div className="bg-white border border-emerald-200/80 rounded-xl p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider">Delivered</p>
-              <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-0.5 font-mono">
+          <button
+            type="button"
+            onClick={() => setStatusFilter('delivered')}
+            className={`bg-white border rounded-xl p-3 text-left transition-all cursor-pointer flex flex-col justify-between ${
+              statusFilter === 'delivered'
+                ? 'border-emerald-500 ring-2 ring-emerald-500/10 shadow-xs'
+                : 'border-slate-200/90 shadow-2xs hover:border-emerald-300'
+            }`}
+          >
+            <div className="flex items-center justify-between text-emerald-600">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Delivered</span>
+              <Smartphone className="w-3.5 h-3.5" />
+            </div>
+            <div className="mt-2">
+              <div className="text-xl sm:text-2xl font-black font-mono text-emerald-700 leading-tight">
                 {stats.delivered}
-              </p>
-              <p className="text-[10px] text-emerald-600/80 mt-0.5">Handed over</p>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Handed to customer</div>
             </div>
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
-              <Smartphone className="w-4 h-4" />
-            </div>
-          </div>
+          </button>
 
           {/* Total Value */}
-          <div className="bg-white border border-slate-200/80 rounded-xl p-3 sm:p-3.5 shadow-xs flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Repair Value</p>
-              <p className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5 font-mono tabular-nums">
+          <div className="bg-white border border-slate-200/90 rounded-xl p-3 shadow-2xs flex flex-col justify-between">
+            <div className="flex items-center justify-between text-slate-400">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Pipeline Value</span>
+              <Banknote className="w-3.5 h-3.5 text-slate-500" />
+            </div>
+            <div className="mt-2">
+              <div className="text-xl sm:text-2xl font-black font-mono text-slate-900 leading-tight">
                 ₹{stats.totalValue.toLocaleString('en-IN')}
-              </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                {stats.urgentCount > 0 ? (
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-between">
+                <span>Estimated revenue</span>
+                {stats.urgentCount > 0 && (
                   <span className="text-rose-600 font-bold inline-flex items-center gap-0.5">
                     <Flame className="w-3 h-3" /> {stats.urgentCount} Urgent
                   </span>
-                ) : (
-                  'Estimated revenue'
                 )}
-              </p>
-            </div>
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-700">
-              <Banknote className="w-4 h-4" />
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Filter Toolbar & Search Bar */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 shadow-xs space-y-3">
+        {/* ================= FILTER TOOLBAR ================= */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-3 sm:p-4 shadow-2xs space-y-3">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             {/* Search Input */}
-            <div className="relative flex-1 max-w-lg">
+            <div className="relative flex-1 min-w-[240px] max-w-md xl:max-w-xl">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by job #, customer name, mobile, device or fault..."
-                className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-blue-500 rounded-xl pl-9 pr-9 py-2 text-xs sm:text-sm text-slate-900 placeholder:text-slate-400 outline-none transition-all"
+                placeholder="Search job #, customer name, mobile, device, fault..."
+                className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-blue-500 rounded-xl pl-9 pr-9 py-2 text-xs text-slate-900 placeholder:text-slate-400 outline-none transition-all"
               />
               {search && (
                 <button
+                  type="button"
                   onClick={() => setSearch('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            {/* Quick Priority Toggle */}
-            <div className="flex items-center gap-2 self-start md:self-auto">
+            {/* Secondary Filters */}
+            <div className="flex items-center gap-2 flex-wrap md:flex-nowrap">
+              {/* Branch filter if in all_locations */}
+              {selectedLocation === 'all_locations' && (
+                <div className="relative">
+                  <select
+                    value={branchFilter}
+                    onChange={(e) => setBranchFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 rounded-xl pl-3 pr-8 py-2 text-xs font-semibold text-slate-700 outline-none hover:bg-slate-100 transition-all cursor-pointer appearance-none"
+                  >
+                    <option value="all">All Locations (Hub + Branches)</option>
+                    <option value="hub_warehouse">Hub Workshop (Main Office)</option>
+                    {stores.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {st.name || 'Branch'}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              )}
+
+              {/* Priority Pill */}
               <button
+                type="button"
                 onClick={() => setPriorityFilter(priorityFilter === 'all' ? 'urgent' : 'all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
                   priorityFilter === 'urgent'
-                    ? 'bg-rose-50 border-rose-200 text-rose-700 shadow-xs'
+                    ? 'bg-rose-50 border-rose-200 text-rose-700 shadow-2xs'
                     : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                 }`}
               >
                 <Flame className={`w-3.5 h-3.5 ${priorityFilter === 'urgent' ? 'text-rose-600' : 'text-slate-400'}`} />
                 <span>Urgent Only</span>
                 {stats.urgentCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-rose-600 text-white font-bold">
+                  <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-rose-600 text-white font-bold">
                     {stats.urgentCount}
                   </span>
                 )}
               </button>
 
-              <div className="text-xs text-slate-500 font-medium pl-2 hidden sm:block">
-                Showing <span className="font-bold text-slate-900">{filteredJobs.length}</span> of {jobs.length} jobs
+              <div className="text-xs text-slate-500 font-medium pl-2 hidden sm:block whitespace-nowrap">
+                Showing <strong>{filteredJobs.length}</strong> of {jobs.length} jobs
               </div>
             </div>
           </div>
 
           {/* Status Tabs Bar */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-t border-slate-100 pt-2.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-t border-slate-100 pt-2.5 scrollbar-none">
             <button
+              type="button"
               onClick={() => setStatusFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap cursor-pointer ${
                 statusFilter === 'all'
-                  ? 'bg-blue-600 text-white shadow-xs'
+                  ? 'bg-blue-600 text-white shadow-2xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
-              <span>All Jobs</span>
+              <span>All Statuses</span>
               <span
-                className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
                   statusFilter === 'all' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
                 }`}
               >
@@ -710,10 +781,11 @@ export default function ServiceManagementPage() {
               return (
                 <button
                   key={status.value}
+                  type="button"
                   onClick={() => setStatusFilter(status.value)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap border ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap border cursor-pointer ${
                     isActive
-                      ? `${status.pillClass} font-black ring-2 ring-blue-500/20`
+                      ? `${status.pillClass} font-black shadow-2xs`
                       : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
@@ -732,49 +804,53 @@ export default function ServiceManagementPage() {
           </div>
         </div>
 
-        {/* Data Container: Table for Desktop & Cards for Mobile */}
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden">
+        {/* ================= DATA CONTAINER ================= */}
+        <div className="bg-white border border-slate-200/90 rounded-2xl shadow-2xs overflow-hidden">
           {loading ? (
             <div className="p-16 text-center">
               <RotateCw className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-3" />
-              <p className="text-sm font-semibold text-slate-800">Loading service jobs...</p>
-              <p className="text-xs text-slate-400 mt-1">Retrieving workshop pipeline records</p>
+              <p className="text-sm font-semibold text-slate-800">Loading service intake ledger...</p>
+              <p className="text-xs text-slate-400 mt-1">Fetching repair jobs across active location</p>
             </div>
           ) : filteredJobs.length === 0 ? (
             <div className="p-16 text-center max-w-md mx-auto">
-              <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-3">
-                <Wrench className="w-7 h-7" />
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto mb-3">
+                <Wrench className="w-6 h-6" />
               </div>
               <h3 className="text-base font-bold text-slate-900">No service jobs found</h3>
               <p className="text-xs text-slate-500 mt-1">
-                {search || statusFilter !== 'all' || priorityFilter !== 'all'
-                  ? 'No repair jobs match your current search or filter criteria. Try clearing filters.'
-                  : 'No repair requests in your workshop ledger yet. Create your first job sheet!'}
+                {search || statusFilter !== 'all' || priorityFilter !== 'all' || branchFilter !== 'all'
+                  ? 'No repair jobs matched your current search or filter settings.'
+                  : 'No repair requests in this workshop ledger yet. Create your first job sheet!'}
               </p>
               <div className="mt-4 flex items-center justify-center gap-2">
-                {(search || statusFilter !== 'all' || priorityFilter !== 'all') && (
+                {(search || statusFilter !== 'all' || priorityFilter !== 'all' || branchFilter !== 'all') && (
                   <button
+                    type="button"
                     onClick={() => {
                       setSearch('');
                       setStatusFilter('all');
                       setPriorityFilter('all');
+                      setBranchFilter('all');
                     }}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold"
+                    className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer"
                   >
                     Clear Filters
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={() => navigate('/service-management/create')}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
-                  <Plus className="w-3.5 h-3.5" /> New Job Sheet
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Job Sheet</span>
                 </button>
               </div>
             </div>
           ) : (
             <>
-              {/* Mobile View: Responsive Service Cards */}
+              {/* Mobile View: Cards */}
               <div className="lg:hidden divide-y divide-slate-100">
                 {filteredJobs.map((job) => {
                   const statusMeta = getStatusMeta(job.status);
@@ -783,11 +859,11 @@ export default function ServiceManagementPage() {
 
                   return (
                     <div key={job.id} className="p-4 space-y-3 hover:bg-slate-50/50 transition-colors">
-                      {/* Top Bar: Job Ref, Priority & Date */}
+                      {/* Top Bar: Job Ref, Branch, Priority & Date */}
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-mono text-xs font-black text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
-                            {job.jobSheetNumber || '-'}
+                          <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                            {job.jobSheetNumber || '—'}
                           </span>
                           {selectedLocation === 'all_locations' && (
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
@@ -824,7 +900,7 @@ export default function ServiceManagementPage() {
                             <span>{job.productName}</span>
                           </p>
                           <p className="text-xs text-slate-600 font-medium mt-0.5 ml-5.5">
-                            Customer: <span className="text-slate-900 font-bold">{job.customerName || 'Walk-in'}</span>
+                            Customer: <strong className="text-slate-900">{job.customerName || 'Walk-in'}</strong>
                           </p>
                           {job.mobile && (
                             <p className="text-xs text-slate-500 font-mono ml-5.5">{job.mobile}</p>
@@ -833,13 +909,13 @@ export default function ServiceManagementPage() {
 
                         {/* Cost & Advance */}
                         <div className="text-right shrink-0">
-                          <p className="text-xs text-slate-400">Total Cost</p>
-                          <p className="text-base font-black text-slate-900 font-mono tabular-nums">
+                          <span className="text-[10px] text-slate-400 block uppercase font-bold">Cost</span>
+                          <span className="text-base font-bold text-slate-900 font-mono tabular-nums">
                             ₹{Number(job.cost || 0).toLocaleString('en-IN')}
-                          </p>
+                          </span>
                           {job.advancePaid && job.advancePaid > 0 ? (
                             <p className="text-[10px] text-emerald-600 font-semibold font-mono">
-                              Paid: ₹{job.advancePaid}
+                              Adv: ₹{job.advancePaid}
                             </p>
                           ) : null}
                         </div>
@@ -868,7 +944,7 @@ export default function ServiceManagementPage() {
                         </div>
                       )}
 
-                      {/* Status Selector & Direct Communication */}
+                      {/* Status Selector & Communication Actions */}
                       <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                         <div className="flex items-center gap-2 flex-1">
                           <span
@@ -881,7 +957,7 @@ export default function ServiceManagementPage() {
                           <select
                             value={job.status}
                             onChange={(e) => handleStatusChange(job.id || '', e.target.value as StatusValue)}
-                            className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-700 font-medium focus:border-blue-500 outline-none flex-1"
+                            className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-700 font-medium focus:border-blue-500 outline-none flex-1 cursor-pointer"
                           >
                             {STATUS_OPTIONS.map((opt) => (
                               <option key={opt.value} value={opt.value}>
@@ -896,9 +972,10 @@ export default function ServiceManagementPage() {
                           {job.mobile && (
                             <>
                               <button
+                                type="button"
                                 onClick={() => handleWhatsAppUpdate(job)}
-                                className="p-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
-                                title="Send WhatsApp Status Update"
+                                className="p-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer"
+                                title="Send WhatsApp Status Alert"
                               >
                                 <MessageSquare className="w-3.5 h-3.5" />
                               </button>
@@ -915,36 +992,39 @@ export default function ServiceManagementPage() {
                           <Link
                             to={`/view-job/${jobCode}`}
                             target="_blank"
-                            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                            className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
                             title="Open Public Tracking Page"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
                           </Link>
 
                           <button
+                            type="button"
                             onClick={() => {
                               setSelectedJobForLabel(job);
                               setIsLabelsModalOpen(true);
                             }}
-                            className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors"
+                            className="p-2 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 rounded-lg transition-colors cursor-pointer"
                             title="Print Device Sticker Label (4.8cm × 2.4cm)"
                           >
                             <QrCode className="w-3.5 h-3.5" />
                           </button>
 
                           <button
+                            type="button"
                             onClick={() => handlePrintJobSheet(job)}
                             disabled={printingJobId === job.id}
-                            className="p-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors disabled:opacity-50"
+                            className="p-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
                             title="Print PDF Job Sheet"
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
 
                           <button
+                            type="button"
                             onClick={() => handleDelete(job.id || '')}
                             disabled={deletingJobId === job.id}
-                            className="p-2 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors disabled:opacity-50"
+                            className="p-2 bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
                             title="Delete Job"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -956,18 +1036,18 @@ export default function ServiceManagementPage() {
                 })}
               </div>
 
-              {/* Desktop View: Full-featured Table */}
+              {/* Desktop View: Clean Table */}
               <div className="hidden lg:block overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                       <th className="py-3.5 pl-5 pr-3">Job ID & Ref</th>
                       <th className="py-3.5 px-3">Customer Details</th>
                       <th className="py-3.5 px-3">Device & Specs</th>
                       <th className="py-3.5 px-3">Complaint / Issues</th>
                       <th className="py-3.5 px-3 text-right">Cost (₹)</th>
                       <th className="py-3.5 px-3 text-center">Status Pipeline</th>
-                      <th className="py-3.5 px-3">Created</th>
+                      <th className="py-3.5 px-3">Intake Date</th>
                       <th className="py-3.5 pl-3 pr-5 text-right">Quick Actions</th>
                     </tr>
                   </thead>
@@ -980,14 +1060,14 @@ export default function ServiceManagementPage() {
                       return (
                         <tr
                           key={job.id}
-                          className="hover:bg-blue-50/30 transition-colors group"
+                          className="hover:bg-slate-50/70 transition-colors group"
                         >
-                          {/* Job ID & Ref */}
+                          {/* Job ID & Location */}
                           <td className="py-3.5 pl-5 pr-3">
                             <div className="space-y-1">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-mono text-xs font-black text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
-                                  {job.jobSheetNumber || '-'}
+                                <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                                  {job.jobSheetNumber || '—'}
                                 </span>
                                 {selectedLocation === 'all_locations' && (
                                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
@@ -1026,8 +1106,9 @@ export default function ServiceManagementPage() {
                                 <div className="flex items-center gap-1.5 text-slate-500 font-mono text-[11px]">
                                   <span>{job.mobile}</span>
                                   <button
+                                    type="button"
                                     onClick={() => handleWhatsAppUpdate(job)}
-                                    className="text-emerald-600 hover:text-emerald-700 p-0.5 rounded transition-colors"
+                                    className="text-emerald-600 hover:text-emerald-700 p-0.5 rounded transition-colors cursor-pointer"
                                     title="Send WhatsApp update"
                                   >
                                     <MessageSquare className="w-3.5 h-3.5" />
@@ -1035,7 +1116,7 @@ export default function ServiceManagementPage() {
                                   <a
                                     href={`tel:${job.mobile}`}
                                     className="text-blue-600 hover:text-blue-700 p-0.5 rounded transition-colors"
-                                    title="Call"
+                                    title="Call Customer"
                                   >
                                     <Phone className="w-3 h-3" />
                                   </a>
@@ -1052,16 +1133,16 @@ export default function ServiceManagementPage() {
                                 <span>{job.productName}</span>
                               </p>
                               <p className="text-[11px] text-slate-500">
-                                {[job.brand, job.modelName].filter(Boolean).join(' ') || '-'}
+                                {[job.brand, job.modelName].filter(Boolean).join(' ') || '—'}
                               </p>
                               {job.color && (
-                                <span className="text-[10px] text-slate-400">Color: {job.color}</span>
+                                <span className="text-[10px] text-slate-400 block">Color: {job.color}</span>
                               )}
                             </div>
                           </td>
 
                           {/* Reported Issues */}
-                          <td className="py-3.5 px-3 max-w-xs">
+                          <td className="py-3.5 px-3 max-w-xs xl:max-w-md">
                             <div className="space-y-1">
                               {job.issues && job.issues.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
@@ -1090,7 +1171,7 @@ export default function ServiceManagementPage() {
 
                           {/* Cost */}
                           <td className="py-3.5 px-3 text-right">
-                            <p className="font-black text-slate-900 font-mono text-xs tabular-nums">
+                            <p className="font-bold text-slate-900 font-mono text-xs tabular-nums">
                               ₹{Number(job.cost || 0).toLocaleString('en-IN')}
                             </p>
                             {job.advancePaid && job.advancePaid > 0 ? (
@@ -1098,7 +1179,7 @@ export default function ServiceManagementPage() {
                                 Adv: ₹{job.advancePaid}
                               </p>
                             ) : (
-                              <p className="text-[10px] text-slate-400">Nil Advance</p>
+                              <p className="text-[10px] text-slate-400">Nil Adv</p>
                             )}
                           </td>
 
@@ -1106,7 +1187,7 @@ export default function ServiceManagementPage() {
                           <td className="py-3.5 px-3 text-center">
                             <div className="inline-flex flex-col items-center gap-1">
                               <span
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${statusMeta.pillClass}`}
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusMeta.pillClass}`}
                               >
                                 <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dotClass}`} />
                                 {statusMeta.label}
@@ -1117,7 +1198,7 @@ export default function ServiceManagementPage() {
                                 onChange={(e) =>
                                   handleStatusChange(job.id || '', e.target.value as StatusValue)
                                 }
-                                className="border border-slate-200 bg-white text-slate-700 text-[10px] rounded-md px-1.5 py-0.5 outline-none hover:border-blue-400 focus:border-blue-500 cursor-pointer"
+                                className="border border-slate-200 bg-white text-slate-700 text-[10px] font-medium rounded-md px-1.5 py-0.5 outline-none hover:border-blue-400 focus:border-blue-500 cursor-pointer shadow-2xs"
                               >
                                 {STATUS_OPTIONS.map((opt) => (
                                   <option key={opt.value} value={opt.value}>
@@ -1129,46 +1210,49 @@ export default function ServiceManagementPage() {
                           </td>
 
                           {/* Created Date */}
-                          <td className="py-3.5 px-3 text-slate-500 text-[11px]">
+                          <td className="py-3.5 px-3 text-slate-500 text-[11px] font-medium">
                             {formatDate(job.createdAt)}
                           </td>
 
                           {/* Actions */}
                           <td className="py-3.5 pl-3 pr-5 text-right">
-                            <div className="flex items-center justify-end gap-1 opacity-90 group-hover:opacity-100 transition-opacity">
+                            <div className="flex items-center justify-end gap-1">
                               <Link
                                 to={`/view-job/${jobCode}`}
                                 target="_blank"
-                                className="p-1.5 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-600 rounded-lg transition-colors"
+                                className="p-1.5 bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-600 rounded-lg transition-colors cursor-pointer"
                                 title="Public Tracking Page"
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
                               </Link>
 
                               <button
+                                type="button"
                                 onClick={() => {
                                   setSelectedJobForLabel(job);
                                   setIsLabelsModalOpen(true);
                                 }}
-                                className="p-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg transition-colors"
+                                className="p-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg transition-colors cursor-pointer"
                                 title="Print Device Sticker Label (4.8cm × 2.4cm)"
                               >
                                 <QrCode className="w-3.5 h-3.5" />
                               </button>
 
                               <button
+                                type="button"
                                 onClick={() => handlePrintJobSheet(job)}
                                 disabled={printingJobId === job.id}
-                                className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors disabled:opacity-50"
+                                className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
                                 title="Print Job Sheet PDF"
                               >
                                 <Printer className="w-3.5 h-3.5" />
                               </button>
 
                               <button
+                                type="button"
                                 onClick={() => handleDelete(job.id || '')}
                                 disabled={deletingJobId === job.id}
-                                className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg transition-colors disabled:opacity-50"
+                                className="p-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
                                 title="Delete Job"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1193,15 +1277,8 @@ export default function ServiceManagementPage() {
           setIsLabelsModalOpen(false);
           setSelectedJobForLabel(null);
         }}
+        shopName={currentStore?.shopName || 'Digital Zone'}
         job={selectedJobForLabel}
-      />
-
-      {/* QR Scanner Modal for instant lookups */}
-      <QRScannerModal
-        isOpen={isScannerOpen}
-        onClose={() => setIsScannerOpen(false)}
-        onScanSuccess={handleScanLookup}
-        title="Scan Job Sheet or Device QR Sticker"
       />
     </div>
   );
