@@ -145,11 +145,17 @@ const AddPurchase: React.FC = () => {
           if (draft.cashAmount) setCashAmount(draft.cashAmount);
           if (draft.upiAmount) setUpiAmount(draft.upiAmount);
           if (draft.cardAmount) setCardAmount(draft.cardAmount);
-          const restoredGst = draft.isGstPurchase !== undefined ? Boolean(draft.isGstPurchase) : false;
-          if (draft.isGstPurchase !== undefined) setIsGstPurchase(restoredGst);
+          const urlGstParam = searchParams.get('gst');
+          let effectiveGst: boolean;
+          if (urlGstParam !== null) {
+            effectiveGst = urlGstParam === 'true';
+          } else {
+            effectiveGst = draft.isGstPurchase !== undefined ? Boolean(draft.isGstPurchase) : false;
+          }
+          setIsGstPurchase(effectiveGst);
           if (draft.defaultTaxPercent !== undefined) setDefaultTaxPercent(Number(draft.defaultTaxPercent) || 18);
           if (draft.showProductName !== undefined) setShowProductName(Boolean(draft.showProductName));
-          if (restoredGst) {
+          if (effectiveGst) {
             if (draft.showHsnCode !== undefined) {
               setShowHsnCode(Boolean(draft.showHsnCode));
             } else if (draft.items?.some((it: any) => it.hcsCode)) {
@@ -190,6 +196,19 @@ const AddPurchase: React.FC = () => {
       initializeProductCode(!hasRestoredCodes, restoredItemsLength);
     }
   }, [id, isEditMode]);
+
+  // Sync GST state from URL query parameter (?gst=true/false)
+  useEffect(() => {
+    if (isEditMode) return;
+    const gstParam = searchParams.get('gst');
+    if (gstParam !== null) {
+      const isGst = gstParam === 'true';
+      setIsGstPurchase(isGst);
+      if (!isGst) {
+        setShowHsnCode(false);
+      }
+    }
+  }, [searchParams, isEditMode]);
 
   const fetchPurchaseForEdit = async () => {
     if (!id) return;
