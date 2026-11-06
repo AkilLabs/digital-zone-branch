@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, CheckCircle } from 'lucide-react';
+import { X, Plus, CheckCircle, Tag, Smartphone } from 'lucide-react';
 import { updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useStore } from '../context/StoreContext';
 import { upsertLocalProducts } from '../utils/productSyncCache';
@@ -22,54 +22,54 @@ const SuitableModelsModal: React.FC<SuitableModelsModalProps> = ({ product, onCl
         setTags(product.suitableModels || []);
     }, [product.id, product.suitableModels]);
 
-    // Handle input change and detect comma
+    // Keyboard shortcut to close on Escape
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
+    // Add tags helper
+    const addModels = (rawText: string) => {
+        const clean = rawText
+            .split(/[,|\n]+/)
+            .map(m => m.trim().toUpperCase())
+            .filter(m => m.length > 0 && !tags.includes(m));
+
+        if (clean.length > 0) {
+            setTags(prev => [...prev, ...clean]);
+        }
+        setInputValue('');
+    };
+
+    // Handle input change and auto-split commas
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = e.target.value.toUpperCase();
-
-        // Check if comma is entered
-        if (value.includes(',')) {
-            // Split by comma and process each part
-            const newTags = value
-                .split(',')
-                .map(tag => tag.trim())
-                .filter(tag => tag.length > 0 && !tags.includes(tag));
-
-            if (newTags.length > 0) {
-                setTags([...tags, ...newTags]);
-            }
-            setInputValue('');
+        const val = e.target.value.toUpperCase();
+        if (val.includes(',')) {
+            addModels(val);
         } else {
-            setInputValue(value);
+            setInputValue(val);
         }
     };
 
-    // Handle Enter key press
-    const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter' && inputValue.trim()) {
+    // Handle Enter key
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
             e.preventDefault();
-            const trimmedValue = inputValue.trim();
-            if (!tags.includes(trimmedValue)) {
-                setTags([...tags, trimmedValue]);
+            if (inputValue.trim()) {
+                addModels(inputValue);
             }
-            setInputValue('');
         }
     };
 
     // Remove a tag
     const removeTag = (tagToRemove: string) => {
-        setTags(tags.filter(tag => tag !== tagToRemove));
+        setTags(prev => prev.filter(tag => tag !== tagToRemove));
     };
 
-    // Add tag from button
-    const addTag = () => {
-        const trimmedValue = inputValue.trim();
-        if (trimmedValue && !tags.includes(trimmedValue)) {
-            setTags([...tags, trimmedValue]);
-            setInputValue('');
-        }
-    };
-
-    // Save suitable models to Firestore
+    // Save suitable models to Firestore & local cache
     const handleSave = async () => {
         if (!product.id) return;
 
@@ -98,95 +98,123 @@ const SuitableModelsModal: React.FC<SuitableModelsModalProps> = ({ product, onCl
     };
 
     return (
-        <div className="fixed inset-0 bg-transparent backdrop-blur-xl flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-end sm:items-center justify-center z-50 sm:p-4 animate-in fade-in duration-150"
+            onClick={onClose}
+            role="dialog"
+            aria-modal="true"
+        >
+            <div
+                className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] flex flex-col border border-slate-200 overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+            >
                 {/* Header */}
-                <div className="bg-indigo-600 p-5 text-white">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <CheckCircle className="h-6 w-6" />
-                            <div>
-                                <h2 className="text-xl font-bold">Suitable Models</h2>
-                                <p className="text-indigo-100 text-sm mt-0.5">Manage compatible models</p>
-                            </div>
+                <div className="flex items-start justify-between p-5 pb-4 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                            <Smartphone className="w-5 h-5" />
                         </div>
-                        <button
-                            onClick={onClose}
-                            className="hover:bg-white/20 rounded-full p-2 transition-colors"
-                        >
-                            <X className="h-5 w-5" />
-                        </button>
+                        <div>
+                            <h2 className="text-base font-bold text-slate-900">Compatible Models</h2>
+                            <p className="text-xs text-slate-500 mt-0.5">Define phone & device compatibility</p>
+                        </div>
                     </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                        aria-label="Close dialog"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
                 </div>
 
                 {/* Content */}
-                <div className="p-6 overflow-y-auto flex-1">
-                    {/* Product Info */}
-                    <div className="bg-gray-50 rounded-lg p-4 mb-5 border border-gray-200">
-                        <h3 className="font-semibold text-gray-900">{product.name}</h3>
-                        <div className="flex flex-wrap gap-2 mt-2 text-sm text-gray-600">
+                <div className="p-5 overflow-y-auto flex-1 space-y-4">
+                    {/* Compact Product Banner */}
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200/80">
+                        <div className="font-semibold text-slate-900 text-sm truncate">{product.name}</div>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
+                            <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">{product.productCode}</span>
+                            <span>•</span>
                             <span>{product.brand}</span>
-                            {product.model && <span>• {product.model}</span>}
-                            <span>• {product.category}</span>
+                            {product.category && (
+                                <>
+                                    <span>•</span>
+                                    <span>{product.category}</span>
+                                </>
+                            )}
                         </div>
                     </div>
 
-                    {/* Input Section */}
-                    <div className="mb-5">
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            Add Compatible Models
+                    {/* Quick Input Bar */}
+                    <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Add Models
                         </label>
-
                         <div className="flex gap-2">
                             <input
                                 type="text"
                                 value={inputValue}
                                 onChange={handleInputChange}
-                                onKeyPress={handleKeyPress}
-                                placeholder="Type model names..."
-                                className="flex-1 px-4 py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+                                onKeyDown={handleKeyDown}
+                                placeholder="e.g. iPhone 13, iPhone 14 Pro, Vivo Y20..."
+                                className="flex-1 px-3.5 py-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-900 placeholder:text-slate-400"
                                 autoFocus
                             />
                             <button
                                 type="button"
-                                onClick={addTag}
+                                onClick={() => addModels(inputValue)}
                                 disabled={!inputValue.trim()}
-                                className="bg-indigo-600 text-white px-4 py-2.5 rounded-lg hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white rounded-xl text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-xs"
                             >
-                                <Plus className="h-5 w-5" />
-                                <span className="hidden sm:inline">Add</span>
+                                <Plus className="w-4 h-4" />
+                                <span>Add</span>
                             </button>
                         </div>
+                        <p className="text-[11px] text-slate-400 mt-1.5">Tip: Separate multiple models with a comma or press Enter.</p>
                     </div>
 
-                    {/* Tags Display */}
+                    {/* Models Tag Cloud */}
                     <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            Compatible Models ({tags.length})
-                        </label>
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-slate-700">
+                                Assigned Models ({tags.length})
+                            </span>
+                            {tags.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTags([])}
+                                    className="text-[11px] text-slate-400 hover:text-red-600 font-medium transition-colors"
+                                >
+                                    Clear all
+                                </button>
+                            )}
+                        </div>
 
                         {tags.length === 0 ? (
-                            <div className="text-center py-8 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-                                <CheckCircle className="h-12 w-12 text-gray-400 mx-auto mb-2" />
-                                <p className="text-gray-500 text-sm">No models added yet</p>
+                            <div className="text-center py-7 bg-slate-50/70 rounded-xl border border-dashed border-slate-200">
+                                <Tag className="w-7 h-7 text-slate-300 mx-auto mb-1.5" />
+                                <p className="text-slate-600 text-xs font-medium">No compatible models yet</p>
+                                <p className="text-slate-400 text-[11px] mt-0.5">Type above to associate compatible devices</p>
                             </div>
                         ) : (
-                            <div className="flex flex-wrap gap-2 bg-gray-50 rounded-lg p-4 border border-gray-200">
-                                {tags.map((tag, index) => (
-                                    <div
-                                        key={index}
-                                        className="inline-flex items-center gap-2 bg-indigo-600 text-white px-3 py-1.5 rounded-lg shadow-sm hover:bg-indigo-700 transition-all"
+                            <div className="flex flex-wrap gap-2 max-h-56 overflow-y-auto p-3 bg-slate-50/80 rounded-xl border border-slate-200/80">
+                                {tags.map((tag) => (
+                                    <span
+                                        key={tag}
+                                        className="inline-flex items-center gap-1.5 bg-white text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-lg text-xs font-medium shadow-xs"
                                     >
-                                        <span className="font-medium text-sm">{tag}</span>
+                                        <span>{tag}</span>
                                         <button
                                             type="button"
                                             onClick={() => removeTag(tag)}
-                                            className="hover:bg-white/20 rounded-full p-0.5 transition-colors"
-                                            title="Remove"
+                                            className="text-slate-400 hover:text-red-500 rounded p-0.5 transition-colors cursor-pointer"
+                                            title={`Remove ${tag}`}
                                         >
-                                            <X className="h-3.5 w-3.5" />
+                                            <X className="w-3.5 h-3.5" />
                                         </button>
-                                    </div>
+                                    </span>
                                 ))}
                             </div>
                         )}
@@ -194,34 +222,33 @@ const SuitableModelsModal: React.FC<SuitableModelsModalProps> = ({ product, onCl
                 </div>
 
                 {/* Footer */}
-                <div className="border-t border-gray-200 p-5 bg-gray-50">
-                    <div className="flex gap-3 justify-end">
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            className="px-5 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-all font-medium"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleSave}
-                            disabled={isSubmitting}
-                            className="px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                            {isSubmitting ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                                    Saving...
-                                </>
-                            ) : (
-                                <>
-                                    <CheckCircle className="h-5 w-5" />
-                                    Save Models
-                                </>
-                            )}
-                        </button>
-                    </div>
+                <div className="p-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        disabled={isSubmitting}
+                        className="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={isSubmitting}
+                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 shadow-xs"
+                    >
+                        {isSubmitting ? (
+                            <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Saving...</span>
+                            </>
+                        ) : (
+                            <>
+                                <CheckCircle className="w-4 h-4" />
+                                <span>Save Changes</span>
+                            </>
+                        )}
+                    </button>
                 </div>
             </div>
         </div>

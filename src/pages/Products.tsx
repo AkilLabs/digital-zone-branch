@@ -580,16 +580,14 @@ const Products: React.FC = () => {
   };
 
   // Label print handlers
-  // Single product: open the label dialog straight away, defaulting copies to current stock
+  // Single product: open the label dialog straight away, keeping original product intact
   const handlePrintLabel = (product: Product) => {
-    setSelectedProductForLabel({ ...product, quantity: Math.max(1, product.quantity || 1) });
+    setSelectedProductForLabel(product);
   };
 
-  // Ticked products: open the label dialog with 1 copy each (editable in the dialog)
+  // Ticked products: open the label dialog keeping original product data (including actual quantity)
   const handlePrintSelectedLabels = () => {
-    const selected = filteredProducts
-      .filter(product => selectedProductIds.includes(product.id!))
-      .map(product => ({ ...product, quantity: 1 }));
+    const selected = filteredProducts.filter(product => selectedProductIds.includes(product.id!));
     if (selected.length === 0) return;
     setProductsToPrint(selected);
     setIsSelectionMode(false);
@@ -751,11 +749,10 @@ const Products: React.FC = () => {
                 type="button"
                 onClick={() => setShowActualCost(!showActualCost)}
                 title={showActualCost ? 'Showing Actual Cost (₹)' : 'Showing Encoded Secret Code'}
-                className={`px-3 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors ${
-                  showActualCost
+                className={`px-3 py-2 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-colors ${showActualCost
                     ? 'bg-amber-50 text-amber-800 border-amber-300'
                     : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
+                  }`}
               >
                 {showActualCost ? <Unlock className="w-3.5 h-3.5 text-amber-600" /> : <Lock className="w-3.5 h-3.5 text-gray-400" />}
                 <span>{showActualCost ? 'Cost: ₹ Actual' : 'Cost: Code'}</span>
@@ -890,9 +887,8 @@ const Products: React.FC = () => {
           </div>
           <div
             onClick={() => setStockStatusFilter(stockStatusFilter === 'low_stock' ? 'all' : 'low_stock')}
-            className={`bg-white rounded-lg border p-3 shadow-sm cursor-pointer transition-colors ${
-              stockStatusFilter === 'low_stock' ? 'border-orange-500 bg-orange-50/60' : 'border-gray-200 hover:border-orange-300'
-            }`}
+            className={`bg-white rounded-lg border p-3 shadow-sm cursor-pointer transition-colors ${stockStatusFilter === 'low_stock' ? 'border-orange-500 bg-orange-50/60' : 'border-gray-200 hover:border-orange-300'
+              }`}
           >
             <div className="flex items-center justify-between">
               <p className="text-xs text-gray-500">Low Stock (≤5)</p>
@@ -916,17 +912,15 @@ const Products: React.FC = () => {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as any)}
-                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap flex-1 sm:flex-none flex items-center justify-center gap-2 ${
-                  isActive
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors whitespace-nowrap flex-1 sm:flex-none flex items-center justify-center gap-2 ${isActive
                     ? 'bg-blue-100 text-blue-700 shadow-sm font-semibold'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                }`}
+                  }`}
               >
                 <Icon className="w-4 h-4" />
                 <span>{tab.label}</span>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                  isActive ? 'bg-blue-200 text-blue-800' : 'bg-gray-100 text-gray-600'
-                }`}>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${isActive ? 'bg-blue-200 text-blue-800' : 'bg-gray-100 text-gray-600'
+                  }`}>
                   {tab.count}
                 </span>
               </button>
@@ -948,11 +942,10 @@ const Products: React.FC = () => {
               <button
                 key={s.key}
                 onClick={() => setStockStatusFilter(s.key as any)}
-                className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium border transition-all ${
-                  stockStatusFilter === (s.key as any)
+                className={`px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium border transition-all ${stockStatusFilter === (s.key as any)
                     ? 'bg-blue-600 text-white border-blue-600'
                     : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
+                  }`}
               >
                 {s.label}
               </button>
@@ -1155,9 +1148,8 @@ const Products: React.FC = () => {
                   <div
                     key={product.id}
                     onClick={() => (isSelectionMode ? toggleProductSelection(product.id!) : setSelectedProductForDetails(product))}
-                    className={`bg-white rounded-lg shadow-sm border p-4 transition-shadow cursor-pointer ${
-                      isSelected ? 'border-blue-400 bg-blue-50/50 ring-1 ring-blue-400' : 'border-gray-200 hover:shadow-md'
-                    }`}
+                    className={`bg-white rounded-lg shadow-sm border p-4 transition-shadow cursor-pointer ${isSelected ? 'border-blue-400 bg-blue-50/50 ring-1 ring-blue-400' : 'border-gray-200 hover:shadow-md'
+                      }`}
                   >
                     <div className="flex items-start gap-3">
                       {isSelectionMode && (
@@ -1180,13 +1172,12 @@ const Products: React.FC = () => {
                               {product.brand} {product.model ? `• ${product.model}` : ''}
                             </p>
                           </div>
-                          <span className={`shrink-0 px-2 py-0.5 text-xs font-bold rounded-full ${
-                            product.quantity <= 0
+                          <span className={`shrink-0 px-2 py-0.5 text-xs font-bold rounded-full ${product.quantity <= 0
                               ? 'bg-red-100 text-red-700'
                               : product.quantity <= 5
-                              ? 'bg-orange-100 text-orange-700'
-                              : 'bg-blue-100 text-blue-700'
-                          }`}>
+                                ? 'bg-orange-100 text-orange-700'
+                                : 'bg-blue-100 text-blue-700'
+                            }`}>
                             {product.quantity <= 0 ? 'Out of stock' : `${product.quantity} units`}
                           </span>
                         </div>
@@ -1260,6 +1251,17 @@ const Products: React.FC = () => {
                               <>
                                 <button
                                   type="button"
+                                  onClick={() => {
+                                    setProductForSuitableModels(product);
+                                    setShowSuitableModelsModal(true);
+                                  }}
+                                  className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                  title="Suitable Models"
+                                >
+                                  <Smartphone className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => handleEdit(product)}
                                   className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
                                   title="Edit"
@@ -1323,9 +1325,8 @@ const Products: React.FC = () => {
                         <tr
                           key={product.id}
                           onClick={() => (isSelectionMode ? toggleProductSelection(product.id!) : setSelectedProductForDetails(product))}
-                          className={`transition-colors cursor-pointer ${
-                            isSelected ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-gray-50'
-                          }`}
+                          className={`transition-colors cursor-pointer ${isSelected ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-gray-50'
+                            }`}
                         >
                           {/* Selection Checkbox */}
                           {isSelectionMode && (
@@ -1422,13 +1423,12 @@ const Products: React.FC = () => {
 
                           {/* Stock */}
                           <td className="px-4 py-3.5 whitespace-nowrap">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                              product.quantity <= 0
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${product.quantity <= 0
                                 ? 'bg-red-100 text-red-700 border border-red-300'
                                 : product.quantity <= 5
-                                ? 'bg-orange-100 text-orange-700 border border-orange-300'
-                                : 'bg-blue-100 text-blue-700 border border-blue-300'
-                            }`}>
+                                  ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                                  : 'bg-blue-100 text-blue-700 border border-blue-300'
+                              }`}>
                               {product.quantity <= 0 ? 'Out of stock' : `${product.quantity} units`}
                             </span>
                           </td>
@@ -1470,7 +1470,7 @@ const Products: React.FC = () => {
                                     title="Suitable Models"
                                     className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                                   >
-                                    <CheckCircle className="h-4 w-4" />
+                                    <Smartphone className="h-4 w-4" />
                                   </button>
                                   <button
                                     type="button"
@@ -1605,9 +1605,8 @@ const Products: React.FC = () => {
                     ₹{Math.round(selectedProductForDetails.mrp)}
                   </div>
                 </div>
-                <div className={`border rounded-lg p-3 ${
-                  selectedProductForDetails.quantity <= 5 ? 'bg-orange-50 border-orange-200' : 'bg-blue-50 border-blue-200'
-                }`}>
+                <div className={`border rounded-lg p-3 ${selectedProductForDetails.quantity <= 5 ? 'bg-orange-50 border-orange-200' : 'bg-blue-50 border-blue-200'
+                  }`}>
                   <div className="text-xs text-gray-500 mb-1">Stock</div>
                   <div className={`font-bold text-base ${selectedProductForDetails.quantity <= 5 ? 'text-orange-700' : 'text-blue-700'}`}>
                     {selectedProductForDetails.quantity} units
@@ -1719,6 +1718,19 @@ const Products: React.FC = () => {
                     onClick={() => {
                       const p = selectedProductForDetails;
                       setSelectedProductForDetails(null);
+                      setProductForSuitableModels(p);
+                      setShowSuitableModelsModal(true);
+                    }}
+                    className="flex-1 bg-indigo-50 text-indigo-700 py-2 px-3 rounded-lg hover:bg-indigo-100 font-semibold text-xs border border-indigo-200 flex items-center justify-center gap-1.5"
+                  >
+                    <Smartphone className="h-3.5 w-3.5" />
+                    Models
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = selectedProductForDetails;
+                      setSelectedProductForDetails(null);
                       handleEdit(p);
                     }}
                     className="flex-1 bg-blue-50 text-blue-700 py-2 px-3 rounded-lg hover:bg-blue-100 font-semibold text-xs border border-blue-200 flex items-center justify-center gap-1.5"
@@ -1748,157 +1760,194 @@ const Products: React.FC = () => {
 
       {/* EDIT PRODUCT MODAL */}
       {showEditModal && productToEdit && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-5 py-4 flex items-center justify-between z-10">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
-                  <Edit className="h-5 w-5" />
+        <div
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-end sm:items-center justify-center z-50 sm:p-4 animate-in fade-in duration-150"
+          onClick={() => setShowEditModal(false)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl max-w-xl w-full max-h-[92vh] flex flex-col border border-slate-200 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between p-5 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                  <Edit className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-gray-900">Edit Product</h3>
-                  <p className="text-xs text-gray-500">Update catalog pricing and GST details</p>
+                  <h3 className="text-base font-bold text-slate-900">Edit Product</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Code: <span className="font-mono font-medium text-slate-700">{productToEdit.productCode}</span>
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowEditModal(false)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                aria-label="Close dialog"
               >
-                <X className="h-5 w-5" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="font-semibold text-gray-700 block mb-1">Product Name *</label>
+            {/* Scrollable Form Body */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-4 text-xs">
+              {/* Product Basic Info Section */}
+              <div className="space-y-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Product Name *</label>
                   <input
                     type="text"
                     value={editFormData.name}
                     onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none font-semibold text-gray-900 text-sm"
+                    placeholder="e.g. Samsung 25W Fast Charger"
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium text-slate-900 text-sm placeholder:text-slate-400"
                     required
                   />
                 </div>
 
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Brand *</label>
-                  <input
-                    type="text"
-                    value={editFormData.brand}
-                    onChange={(e) => setEditFormData({ ...editFormData, brand: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-gray-900"
-                    required
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Brand *</label>
+                    <input
+                      type="text"
+                      value={editFormData.brand}
+                      onChange={(e) => setEditFormData({ ...editFormData, brand: e.target.value })}
+                      placeholder="e.g. Samsung"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 font-medium"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Model (Optional)</label>
+                    <input
+                      type="text"
+                      value={editFormData.model}
+                      onChange={(e) => setEditFormData({ ...editFormData, model: e.target.value })}
+                      placeholder="e.g. EP-TA800"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Category *</label>
+                    <input
+                      type="text"
+                      value={editFormData.category}
+                      onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
+                      placeholder="e.g. Charger"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 font-medium"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Supplier (Optional)</label>
+                    <input
+                      type="text"
+                      value={editFormData.supplier}
+                      onChange={(e) => setEditFormData({ ...editFormData, supplier: e.target.value })}
+                      placeholder="Supplier name"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 font-medium"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Pricing & Stock Card */}
+              <div className="bg-slate-50/80 rounded-xl p-3.5 border border-slate-200/80 space-y-3">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Pricing & Inventory
+                </div>
+
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Cost Price (₹) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editFormData.cost}
+                      onChange={(e) => setEditFormData({ ...editFormData, cost: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono font-semibold text-slate-900 tabular-nums"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Selling (MRP ₹) *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editFormData.mrp}
+                      onChange={(e) => setEditFormData({ ...editFormData, mrp: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono font-bold text-green-700 tabular-nums"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Stock Units *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editFormData.quantity}
+                      onChange={(e) => setEditFormData({ ...editFormData, quantity: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono font-semibold text-slate-900 tabular-nums"
+                      required
+                    />
+                  </div>
                 </div>
 
                 <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Model</label>
-                  <input
-                    type="text"
-                    value={editFormData.model}
-                    onChange={(e) => setEditFormData({ ...editFormData, model: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-gray-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Category *</label>
-                  <input
-                    type="text"
-                    value={editFormData.category}
-                    onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-gray-900"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Supplier</label>
-                  <input
-                    type="text"
-                    value={editFormData.supplier}
-                    onChange={(e) => setEditFormData({ ...editFormData, supplier: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-gray-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Cost Price (₹) *</label>
+                  <label className="font-semibold text-slate-500 block mb-1">MOP (Optional ₹)</label>
                   <input
                     type="number"
                     step="0.01"
-                    value={editFormData.cost}
-                    onChange={(e) => setEditFormData({ ...editFormData, cost: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none font-bold text-gray-900"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Selling Price (MRP ₹) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={editFormData.mrp}
-                    onChange={(e) => setEditFormData({ ...editFormData, mrp: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none font-bold text-gray-900"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">Stock Quantity *</label>
-                  <input
-                    type="number"
-                    value={editFormData.quantity}
-                    onChange={(e) => setEditFormData({ ...editFormData, quantity: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none font-bold text-gray-900"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-gray-700 block mb-1">MOP (Optional ₹)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                    min="0"
+                    placeholder="Market Operating Price"
                     value={editFormData.mop}
                     onChange={(e) => setEditFormData({ ...editFormData, mop: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-gray-900"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-slate-700"
                   />
                 </div>
               </div>
 
               {/* GST Section */}
-              <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200 space-y-2">
+              <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-200/80 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-emerald-950 flex items-center gap-1.5">
+                  <span className="font-bold text-emerald-950 flex items-center gap-1.5 text-xs">
                     <Receipt className="w-4 h-4 text-emerald-700" />
-                    GST Invoicing Configuration
+                    GST Tax Details
                   </span>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
+                  <label className="inline-flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={editFormData.gstEnabled}
                       onChange={(e) => setEditFormData({ ...editFormData, gstEnabled: e.target.checked })}
-                      className="w-4 h-4 text-emerald-600 rounded"
+                      className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
                     />
                     <span className="text-xs font-semibold text-emerald-900">
-                      {editFormData.gstEnabled ? 'Enabled' : 'Disabled'}
+                      {editFormData.gstEnabled ? 'GST Enabled' : 'Non-GST'}
                     </span>
                   </label>
                 </div>
 
                 {editFormData.gstEnabled && (
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-emerald-200">
+                  <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-emerald-200/70">
                     <div>
                       <label className="font-semibold text-emerald-900 block mb-1">Tax Slab</label>
                       <select
                         value={editFormData.taxPercent}
                         onChange={(e) => setEditFormData({ ...editFormData, taxPercent: e.target.value })}
-                        className="w-full px-2.5 py-1.5 border border-emerald-300 rounded bg-white text-gray-900 font-semibold"
+                        className="w-full px-3 py-2 border border-emerald-300 rounded-xl bg-white text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       >
                         <option value="0">0% (Exempt)</option>
                         <option value="5">5% GST</option>
@@ -1914,7 +1963,7 @@ const Products: React.FC = () => {
                         value={editFormData.hcsCode}
                         onChange={(e) => setEditFormData({ ...editFormData, hcsCode: e.target.value })}
                         placeholder="e.g. 8517"
-                        className="w-full px-2.5 py-1.5 border border-emerald-300 rounded bg-white font-mono text-gray-900"
+                        className="w-full px-3 py-2 border border-emerald-300 rounded-xl bg-white font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>
                   </div>
@@ -1922,12 +1971,13 @@ const Products: React.FC = () => {
               </div>
             </div>
 
-            <div className="px-5 py-3.5 border-t border-gray-200 bg-gray-50 flex items-center gap-2">
+            {/* Sticky Action Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50/60 flex items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={() => setShowEditModal(false)}
                 disabled={editLoading}
-                className="flex-1 py-2 rounded-lg border border-gray-300 bg-white text-xs font-semibold text-gray-700 hover:bg-gray-100"
+                className="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
               >
                 Cancel
               </button>
@@ -1935,9 +1985,19 @@ const Products: React.FC = () => {
                 type="button"
                 onClick={saveEdit}
                 disabled={editLoading || !editFormData.name.trim()}
-                className="flex-1 py-2 rounded-lg bg-blue-600 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50 shadow-sm"
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 shadow-xs"
               >
-                {editLoading ? 'Saving...' : 'Save Changes'}
+                {editLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Save Changes</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

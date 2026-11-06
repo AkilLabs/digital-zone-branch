@@ -161,14 +161,16 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
   const qrReady = items.every(p => qrCodeDataUrls[String(p.productCode || '')]);
   const previewProduct = items[previewIndex] || items[0];
 
+  const stock = (p: Product) => Math.max(0, Number(p.quantity ?? (p as any).stock ?? 0));
+
   const setCopyAt = (index: number, value: number) =>
     setCopies(prev => prev.map((n, i) => (i === index ? clampCopies(value) : n)));
 
   const setAll = (mode: 'one' | 'stock') =>
-    setCopies(items.map(p => (mode === 'one' ? 1 : clampCopies(Math.max(1, p.quantity || 0)))));
+    setCopies(items.map(p => (mode === 'one' ? 1 : Math.max(1, stock(p)))));
 
-  const allOne = copies.every(n => n === 1);
-  const allStock = copies.every((n, i) => n === clampCopies(Math.max(1, items[i].quantity || 0)));
+  const allOne = copies.length > 0 && copies.every(n => n === 1);
+  const allStock = copies.length > 0 && copies.every((n, i) => n === Math.max(1, stock(items[i])));
 
   const handlePrint = () => {
     if (totalLabels === 0 || !qrReady) return;
@@ -360,8 +362,6 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
     );
   };
 
-  const stock = (p: Product) => Math.max(0, p.quantity || 0);
-
   return (
     <div
       className="fixed inset-0 bg-slate-900/40 flex items-end sm:items-center justify-center z-[60] sm:p-4"
@@ -433,7 +433,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
                     {n}
                   </button>
                 ))}
-                {stock(items[0]) > 0 && (
+                {stock(items[0]) > 0 ? (
                   <button
                     type="button"
                     onClick={() => setCopyAt(0, stock(items[0]))}
@@ -444,6 +444,18 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
                     }`}
                   >
                     Same as stock ({stock(items[0])})
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setCopyAt(0, 1)}
+                    className={`h-9 px-4 rounded-lg text-sm font-medium border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      copies[0] === 1
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Default (1)
                   </button>
                 )}
               </div>
