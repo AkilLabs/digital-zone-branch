@@ -33,7 +33,12 @@ import {
   TrendingUp,
   Percent,
   Edit2,
-  X
+  X,
+  ShieldCheck,
+  Award,
+  Calendar,
+  Copy,
+  Check
 } from 'lucide-react';
 import {
   DEFAULT_SECRET_CODE_MAP,
@@ -757,6 +762,28 @@ const Settings: React.FC = () => {
     );
   }, [users, userSearchText]);
 
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  const targetStats = useMemo(() => {
+    const totalAssignments = employeeTargets.length;
+    const monthlyTotal = employeeTargets
+      .filter(t => t.period === 'monthly')
+      .reduce((sum, t) => sum + Number(t.targetAmount || 0), 0);
+    const dailyCount = employeeTargets.filter(t => t.period === 'daily').length;
+    return {
+      totalAssignments,
+      monthlyTotal,
+      dailyCount,
+    };
+  }, [employeeTargets]);
+
+  const handleCopyCipher = (text: string) => {
+    if (!text || text === '—') return;
+    navigator.clipboard?.writeText(text);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 1800);
+  };
+
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
       case 'owner': return 'bg-amber-100 text-amber-800 border-amber-200';
@@ -772,57 +799,64 @@ const Settings: React.FC = () => {
     <div className="min-h-screen bg-slate-50">
       <Navbar />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 pb-32 md:pb-24">
+      <main className="w-full max-w-full px-4 sm:px-6 lg:px-8 xl:px-10 py-6 sm:py-8 pb-32 md:pb-24">
         {/* Header */}
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Settings</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Manage project preferences, business profile, and user access in one place.
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200 mb-2">
+              <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+              <span>Head Office Configuration</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Settings & Controls</h1>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-3xl leading-relaxed">
+              Configure security ciphers, inventory stock aging, employee sales quotas, and store profiles.
             </p>
           </div>
           <LocationSwitcher />
         </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-slate-200 mb-6 gap-2 sm:gap-4 overflow-x-auto pb-px">
+        {/* Tab Navigation - Modern Segmented Control */}
+        <div className="bg-slate-200/70 p-1.5 rounded-2xl inline-flex items-center gap-1.5 w-full sm:w-auto mb-8 border border-slate-200/90 shadow-2xs overflow-x-auto">
           <button
             onClick={() => switchTab('project')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2.5 font-medium text-sm transition-all border-b-2 whitespace-nowrap",
+              "flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap",
               activeTab === 'project'
-                ? "border-blue-600 text-blue-600 font-semibold"
-                : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+                ? "bg-white text-slate-900 shadow-xs border border-slate-200/80"
+                : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
             )}
           >
-            <Sliders className="w-4 h-4" />
+            <Sliders className="w-4 h-4 text-blue-600" />
             <span>Project Settings</span>
           </button>
 
           <button
             onClick={() => switchTab('shop')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2.5 font-medium text-sm transition-all border-b-2 whitespace-nowrap",
+              "flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap",
               activeTab === 'shop'
-                ? "border-blue-600 text-blue-600 font-semibold"
-                : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+                ? "bg-white text-slate-900 shadow-xs border border-slate-200/80"
+                : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
             )}
           >
-            <Store className="w-4 h-4" />
+            <Store className="w-4 h-4 text-emerald-600" />
             <span>Shop Profile</span>
           </button>
 
           <button
             onClick={() => switchTab('users')}
             className={cn(
-              "flex items-center gap-2 px-4 py-2.5 font-medium text-sm transition-all border-b-2 whitespace-nowrap",
+              "flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap",
               activeTab === 'users'
-                ? "border-blue-600 text-blue-600 font-semibold"
-                : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+                ? "bg-white text-slate-900 shadow-xs border border-slate-200/80"
+                : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
             )}
           >
-            <Users className="w-4 h-4" />
+            <Users className="w-4 h-4 text-purple-600" />
             <span>Users & Access</span>
+            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 font-bold border border-slate-200">
+              {users.length}
+            </span>
           </button>
         </div>
 
@@ -945,7 +979,7 @@ const Settings: React.FC = () => {
               <div className="p-5 sm:p-6 space-y-5 bg-slate-50/40">
                 {/* Quick 10-letter Keyword field + Reset */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex-1 max-w-md">
+                  <div className="flex-1 max-w-lg">
                     <label className="text-xs font-bold text-slate-700 block mb-1">
                       Quick 10-Letter Keyword <span className="font-normal text-slate-400">(Auto-fills Digits 1-9 & 0)</span>
                     </label>
@@ -1031,37 +1065,52 @@ const Settings: React.FC = () => {
                 </div>
 
                 {/* Interactive Live Tester Sandbox */}
-                <div className="p-4 bg-white rounded-2xl border border-slate-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                      Live Test Simulator
+                <div className="p-4 sm:p-5 bg-white rounded-2xl border border-slate-200/90 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                      Live Cipher Simulator
                     </span>
+                    <p className="text-xs text-slate-500 mb-2">
+                      Test any wholesale purchase cost to verify the encoded staff cipher before printing barcodes.
+                    </p>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-500 font-medium">Cost Price: ₹</span>
+                      <span className="text-xs text-slate-600 font-bold">Wholesale Cost: ₹</span>
                       <input
                         type="number"
                         value={testCostInput}
                         onChange={(e) => setTestCostInput(e.target.value)}
-                        className="w-24 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:border-purple-500 outline-none"
-                        placeholder="1499"
+                        className="w-28 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-mono font-bold text-slate-900 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-100 outline-none transition"
+                        placeholder="e.g. 1499"
                       />
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200/80">
+                  <div className="flex items-center gap-3 sm:gap-4 bg-slate-50/90 px-4 py-2.5 rounded-xl border border-slate-200">
                     <div>
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Secret Encoded Output</span>
-                      <span className="font-mono text-sm font-black text-purple-700 tracking-wider">
-                        {secretCodeEnabled
-                          ? (testCostInput ? testCostInput.split('').map(d => secretMapping[d] || d).join('') : '—')
-                          : `${testCostInput || '0'} (Plain Cost)`}
-                      </span>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Encoded Barcode Cipher</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="font-mono text-base font-black text-purple-700 tracking-widest">
+                          {secretCodeEnabled
+                            ? (testCostInput ? testCostInput.split('').map(d => secretMapping[d] || d).join('') : '—')
+                            : `${testCostInput || '0'} (Plain Cost)`}
+                        </span>
+                        {secretCodeEnabled && testCostInput && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyCipher(testCostInput.split('').map(d => secretMapping[d] || d).join(''))}
+                            className="p-1 text-slate-400 hover:text-purple-600 hover:bg-purple-50 rounded transition cursor-pointer"
+                            title="Copy Cipher Output"
+                          >
+                            {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="h-6 w-px bg-slate-200" />
+                    <div className="h-7 w-px bg-slate-200" />
                     <div>
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Status</span>
-                      <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Cipher Engine</span>
+                      <span className="text-xs font-bold text-emerald-600 flex items-center gap-1 mt-0.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Synchronized
                       </span>
                     </div>
                   </div>
@@ -1130,29 +1179,29 @@ const Settings: React.FC = () => {
               {/* Detailed Configuration Body */}
               {stockAgingSettings.enabled && (
                 <div className="p-5 sm:p-6 bg-slate-50/50 space-y-5 border-t border-slate-100">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* Aging Days Threshold */}
-                    <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-3.5">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                           <Clock className="w-3.5 h-3.5 text-amber-600" />
                           <span>Aging Threshold (Days)</span>
                         </label>
-                        <span className="font-mono text-xs font-extrabold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        <span className="font-mono text-xs font-black text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
                           {agingDaysInput} Days
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500">
-                        Products in warehouse inventory older than this threshold will be flagged as Aging Stock.
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Products in warehouse inventory older than this threshold will be flagged as Aging Stock with clearance tags.
                       </p>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 pt-1">
                         <input
                           type="number"
                           min={1}
                           max={365}
                           value={agingDaysInput}
                           onChange={(e) => setAgingDaysInput(Math.max(1, parseInt(e.target.value) || 1))}
-                          className="w-24 px-3 py-1.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 bg-slate-50 focus:bg-white focus:border-amber-500 outline-none"
+                          className="w-24 px-3 py-1.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 bg-slate-50 focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none transition"
                         />
                         <div className="flex items-center gap-1.5 flex-wrap">
                           {[30, 45, 60, 90, 120].map(days => (
@@ -1161,7 +1210,7 @@ const Settings: React.FC = () => {
                               type="button"
                               onClick={() => setAgingDaysInput(days)}
                               className={cn(
-                                "px-2.5 py-1 rounded-lg text-xs font-semibold border transition cursor-pointer",
+                                "px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer",
                                 agingDaysInput === days
                                   ? "bg-amber-100 text-amber-900 border-amber-300 shadow-2xs"
                                   : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
@@ -1175,7 +1224,7 @@ const Settings: React.FC = () => {
                     </div>
 
                     {/* Sales Incentive Settings */}
-                    <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
+                    <div className="bg-white p-5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-3.5">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                           <Percent className="w-3.5 h-3.5 text-emerald-600" />
@@ -1185,7 +1234,7 @@ const Settings: React.FC = () => {
                           type="button"
                           onClick={handleToggleAgingIncentive}
                           className={cn(
-                            "px-2 py-0.5 rounded text-[11px] font-bold border transition cursor-pointer",
+                            "px-2.5 py-1 rounded-lg text-[11px] font-bold border transition cursor-pointer",
                             stockAgingSettings.enableIncentive
                               ? "bg-emerald-100 text-emerald-800 border-emerald-300"
                               : "bg-slate-100 text-slate-500 border-slate-200"
@@ -1194,7 +1243,7 @@ const Settings: React.FC = () => {
                           {stockAgingSettings.enableIncentive ? 'Incentive Enabled' : 'Incentive Disabled'}
                         </button>
                       </div>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-500 leading-relaxed">
                         Commission percentage granted to the salesperson whenever an aged stock item is billed.
                       </p>
 
@@ -1210,7 +1259,7 @@ const Settings: React.FC = () => {
                               disabled={!stockAgingSettings.enableIncentive}
                               value={agingIncentivePercentInput}
                               onChange={(e) => setAgingIncentivePercentInput(Math.max(0, parseFloat(e.target.value) || 0))}
-                              className="w-full pl-3 pr-7 py-1.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 bg-slate-50 focus:bg-white focus:border-amber-500 outline-none disabled:opacity-50"
+                              className="w-full pl-3 pr-7 py-2 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 bg-slate-50 focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none disabled:opacity-50 transition"
                             />
                             <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">%</span>
                           </div>
@@ -1222,7 +1271,7 @@ const Settings: React.FC = () => {
                             disabled={!stockAgingSettings.enableIncentive}
                             value={agingIncentiveBasisInput}
                             onChange={(e) => setAgingIncentiveBasisInput(e.target.value as any)}
-                            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:border-amber-500 outline-none disabled:opacity-50 cursor-pointer"
+                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:border-amber-500 focus:ring-2 focus:ring-amber-100 outline-none disabled:opacity-50 cursor-pointer transition"
                           >
                             <option value="sales_amount">Selling Price (Revenue)</option>
                             <option value="profit">Gross Profit</option>
@@ -1233,24 +1282,27 @@ const Settings: React.FC = () => {
                   </div>
 
                   {/* Simulator & Action */}
-                  <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2.5 text-amber-900">
-                      <TrendingUp className="w-4 h-4 text-amber-700 shrink-0" />
+                  <div className="p-4 sm:p-5 bg-amber-50/80 rounded-2xl border border-amber-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
+                    <div className="flex items-center gap-3 text-amber-900">
+                      <div className="p-2 rounded-xl bg-amber-100 text-amber-700 shrink-0">
+                        <TrendingUp className="w-5 h-5" />
+                      </div>
                       <div>
-                        <strong className="font-bold">Live Incentive Example:</strong> A ₹1,000 product with ₹300 profit will award{' '}
-                        <strong className="font-bold underline text-emerald-800">
+                        <strong className="font-bold text-sm block text-amber-950">Live Incentive Simulator:</strong>
+                        <span>A ₹1,000 product with ₹300 profit awards </span>
+                        <strong className="font-extrabold underline text-emerald-800 text-sm">
                           ₹{agingIncentiveBasisInput === 'profit'
                             ? ((300 * agingIncentivePercentInput) / 100).toFixed(2)
                             : ((1000 * agingIncentivePercentInput) / 100).toFixed(2)}
                         </strong>{' '}
-                        incentive to the employee when billed.
+                        <span>commission to the biller on checkout.</span>
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={handleSaveStockAgingSettings}
                       disabled={savingAgingSettings}
-                      className="px-5 py-2 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer shrink-0 disabled:opacity-50"
+                      className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white rounded-xl text-xs font-bold transition shadow-xs cursor-pointer shrink-0 disabled:opacity-50"
                     >
                       {savingAgingSettings ? 'Saving...' : 'Save Aging Settings'}
                     </button>
@@ -1279,82 +1331,164 @@ const Settings: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleOpenTargetModal()}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer shrink-0"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-98 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer shrink-0"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-4 h-4" />
                   <span>Assign Employee Target</span>
                 </button>
               </div>
 
-              {/* Targets List Table */}
+              {/* Targets Summary Ribbon */}
+              <div className="p-5 sm:p-6 pb-0">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3.5 rounded-xl bg-indigo-50/60 border border-indigo-100 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider block">Assigned Staff</span>
+                      <span className="text-xl font-black text-indigo-950 font-mono">{targetStats.totalAssignments} Targets</span>
+                    </div>
+                    <Award className="w-6 h-6 text-indigo-400" />
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-100 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Monthly Target Pool</span>
+                      <span className="text-xl font-black text-blue-950 font-mono">₹{targetStats.monthlyTotal.toLocaleString('en-IN')}</span>
+                    </div>
+                    <TrendingUp className="w-6 h-6 text-blue-400" />
+                  </div>
+                  <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-100 flex items-center justify-between">
+                    <div>
+                      <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Daily Quotas</span>
+                      <span className="text-xl font-black text-emerald-950 font-mono">{targetStats.dailyCount} Active</span>
+                    </div>
+                    <Calendar className="w-6 h-6 text-emerald-400" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Targets List */}
               <div className="p-5 sm:p-6">
                 {loadingTargets ? (
-                  <div className="py-8 text-center text-xs text-slate-400">Loading targets...</div>
+                  <div className="py-12 text-center text-xs text-slate-400">Loading targets...</div>
                 ) : employeeTargets.length === 0 ? (
-                  <div className="py-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-xs text-slate-500">
-                    <Target className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                    <p className="font-semibold text-slate-700">No Employee Targets Configured Yet</p>
-                    <p className="text-slate-400 mt-0.5">Click "Assign Employee Target" above to define daily or monthly sales and profit goals.</p>
+                  <div className="py-10 text-center bg-slate-50/80 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500">
+                    <Target className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                    <p className="font-bold text-slate-700 text-sm">No Employee Targets Configured Yet</p>
+                    <p className="text-slate-400 mt-1 max-w-md mx-auto">
+                      Click "Assign Employee Target" above to define daily or monthly sales revenue and gross profit goals for your store team.
+                    </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[10px]">
-                          <th className="pb-2">Employee</th>
-                          <th className="pb-2">Period / Phase</th>
-                          <th className="pb-2">Target Metric</th>
-                          <th className="pb-2 text-right">Target Amount</th>
-                          <th className="pb-2 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {employeeTargets.map(t => (
-                          <tr key={t.employeeId} className="hover:bg-slate-50/70 transition-colors">
-                            <td className="py-3 font-semibold text-slate-900">
-                              {t.employeeName}
-                            </td>
-                            <td className="py-3">
-                              <span className={cn(
-                                "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-                                t.period === 'monthly' ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              )}>
-                                {t.period}
-                              </span>
-                            </td>
-                            <td className="py-3">
-                              <span className="font-medium text-slate-700">
-                                {t.metric === 'profit_amount' ? 'Gross Profit (₹)' : 'Sales Revenue (₹)'}
-                              </span>
-                            </td>
-                            <td className="py-3 text-right font-mono font-bold text-slate-900 text-sm">
-                              ₹{Number(t.targetAmount || 0).toLocaleString('en-IN')}
-                            </td>
-                            <td className="py-3 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenTargetModal({ id: t.employeeId, name: t.employeeName })}
-                                  className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                                  title="Edit Target"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteEmployeeTarget(t.employeeId, t.employeeName)}
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                                  title="Delete Target"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </td>
+                  <>
+                    {/* Desktop Table View */}
+                    <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full text-xs text-left">
+                        <thead>
+                          <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
+                            <th className="py-3 px-4">Employee</th>
+                            <th className="py-3 px-4">Period / Phase</th>
+                            <th className="py-3 px-4">Target Metric</th>
+                            <th className="py-3 px-4 text-right">Target Amount</th>
+                            <th className="py-3 px-4 text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {employeeTargets.map(t => (
+                            <tr key={t.employeeId} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="py-3 px-4 font-semibold text-slate-900">
+                                <div className="flex items-center gap-2.5">
+                                  <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase">
+                                    {t.employeeName ? t.employeeName.charAt(0) : 'S'}
+                                  </div>
+                                  <span>{t.employeeName}</span>
+                                </div>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className={cn(
+                                  "px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase",
+                                  t.period === 'monthly' ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                )}>
+                                  {t.period}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4">
+                                <span className="font-medium text-slate-700">
+                                  {t.metric === 'profit_amount' ? 'Gross Profit (₹)' : 'Sales Revenue (₹)'}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-right font-mono font-bold text-slate-900 text-sm">
+                                ₹{Number(t.targetAmount || 0).toLocaleString('en-IN')}
+                              </td>
+                              <td className="py-3 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenTargetModal({ id: t.employeeId, name: t.employeeName })}
+                                    className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Edit Target"
+                                  >
+                                    <Edit2 className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteEmployeeTarget(t.employeeId, t.employeeName)}
+                                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Delete Target"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile Cards View */}
+                    <div className="grid grid-cols-1 gap-3 md:hidden">
+                      {employeeTargets.map(t => (
+                        <div key={t.employeeId} className="p-4 rounded-xl border border-slate-200 bg-white shadow-2xs space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs uppercase">
+                                {t.employeeName ? t.employeeName.charAt(0) : 'S'}
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-900 text-sm block">{t.employeeName}</span>
+                                <span className="text-[11px] text-slate-500 capitalize">{t.period} target</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenTargetModal({ id: t.employeeId, name: t.employeeName })}
+                                className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer"
+                                title="Edit Target"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteEmployeeTarget(t.employeeId, t.employeeName)}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                                title="Delete Target"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                            <span className="text-slate-500">
+                              {t.metric === 'profit_amount' ? 'Gross Profit' : 'Sales Revenue'}
+                            </span>
+                            <span className="font-mono font-black text-slate-900 text-sm">
+                              ₹{Number(t.targetAmount || 0).toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -1472,7 +1606,7 @@ const Settings: React.FC = () => {
                 </div>
 
                 {/* Form Fields */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {/* Shop Name */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -1639,7 +1773,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   {/* Full Address */}
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-2 lg:col-span-3">
                     <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                       Full Address <span className="text-red-500">*</span>
                     </label>
@@ -1659,7 +1793,7 @@ const Settings: React.FC = () => {
                   </div>
 
                   {/* Description */}
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-2 lg:col-span-3">
                     <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                       About Shop / Invoice Footer Note
                     </label>
