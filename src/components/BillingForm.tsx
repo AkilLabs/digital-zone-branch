@@ -4,6 +4,7 @@ import type { BillingItem, PaymentMode, Product } from '../types';
 import jsQR from "jsqr";
 import logo from '../assets/logo.png';
 import { useAvailableProducts } from '../hooks/useFirestoreCache';
+import { encodePrice } from '../utils/secretCode';
 
 interface BillingFormProps {
   onSubmit: (item: Omit<BillingItem, 'id' | 'createdAt' | 'createdBy' | 'updatedAt'>) => void;
@@ -52,28 +53,8 @@ const BillingForm: React.FC<BillingFormProps> = ({ onSubmit, initialData, isEdit
   const [customerMobile, setCustomerMobile] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   // Secret code digit mapping
-  const digitToSecret: Record<string, string> = {
-    '1': 'K',
-    '2': 'A',
-    '3': 'M',
-    '4': 'S',
-    '5': 'R',
-    '6': 'N',
-    '7': 'V',
-    '8': 'H',
-    '9': 'T',
-    '0': 'X',
-  };
-
   const encodeSecret = (value: number | string | undefined | null) => {
-    if (value === undefined || value === null) return '';
-    // Convert to number then round to nearest rupee (no paisa)
-    const asNum = typeof value === 'number' ? value : parseFloat(String(value).replace(/[₹,\s]/g, ''));
-    if (Number.isNaN(asNum)) return '';
-    const rounded = Math.round(asNum);
-    const sign = rounded < 0 ? '-' : '';
-    const str = String(Math.abs(rounded));
-    return sign + str.split('').map(ch => (/[0-9]/.test(ch) ? digitToSecret[ch] ?? ch : ch)).join('');
+    return encodePrice(value);
   };
   const gstRate = 18; // Fixed 18% GST
   const [gstAmount, setGstAmount] = useState(0);

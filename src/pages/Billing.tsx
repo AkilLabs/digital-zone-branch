@@ -19,6 +19,7 @@ import { isEmployeeOfBranch } from '../utils/firestore';
 import { generateUPIQRCode } from '../utils/qrcode';
 import { openRazorpayCheckout } from '../utils/razorpay';
 import { resolveShopDetails } from '../utils/shopDetails';
+import { encodePrice } from '../utils/secretCode';
 import type { BillingItem, ShopDetails } from '../types';
 import Lottie from 'lottie-react';
 import OrderProcessingAnim from '../assets/Orderprocessing.json';
@@ -136,28 +137,8 @@ function Billing() {
 
 
   // Secret code digit mapping
-  const digitToSecret: Record<string, string> = {
-    '1': 'K',
-    '2': 'A',
-    '3': 'M',
-    '4': 'S',
-    '5': 'R',
-    '6': 'N',
-    '7': 'V',
-    '8': 'H',
-    '9': 'T',
-    '0': 'X',
-  };
-
   const encodeSecret = (value: number | string | undefined | null) => {
-    if (value === undefined || value === null || value === '') return '';
-    // Convert to number then round to nearest rupee (no paisa)
-    const asNum = typeof value === 'number' ? value : parseFloat(String(value).replace(/[₹,\s]/g, ''));
-    if (Number.isNaN(asNum)) return '';
-    const rounded = Math.round(asNum);
-    const sign = rounded < 0 ? '-' : '';
-    const str = String(Math.abs(rounded));
-    return sign + str.split('').map(ch => (/[0-9]/.test(ch) ? digitToSecret[ch] ?? ch : ch)).join('');
+    return encodePrice(value);
   };
 
   const [orderItems, setOrderItems] = useState<Product[]>([]);
