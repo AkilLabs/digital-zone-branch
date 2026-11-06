@@ -145,13 +145,18 @@ const AddPurchase: React.FC = () => {
           if (draft.cashAmount) setCashAmount(draft.cashAmount);
           if (draft.upiAmount) setUpiAmount(draft.upiAmount);
           if (draft.cardAmount) setCardAmount(draft.cardAmount);
-          if (draft.isGstPurchase !== undefined) setIsGstPurchase(Boolean(draft.isGstPurchase));
+          const restoredGst = draft.isGstPurchase !== undefined ? Boolean(draft.isGstPurchase) : false;
+          if (draft.isGstPurchase !== undefined) setIsGstPurchase(restoredGst);
           if (draft.defaultTaxPercent !== undefined) setDefaultTaxPercent(Number(draft.defaultTaxPercent) || 18);
           if (draft.showProductName !== undefined) setShowProductName(Boolean(draft.showProductName));
-          if (draft.showHsnCode !== undefined) {
-            setShowHsnCode(Boolean(draft.showHsnCode));
-          } else if (draft.items?.some((it: any) => it.hcsCode)) {
-            setShowHsnCode(true);
+          if (restoredGst) {
+            if (draft.showHsnCode !== undefined) {
+              setShowHsnCode(Boolean(draft.showHsnCode));
+            } else if (draft.items?.some((it: any) => it.hcsCode)) {
+              setShowHsnCode(true);
+            }
+          } else {
+            setShowHsnCode(false);
           }
 
           if (draft.items && draft.items.length > 0) {
@@ -218,8 +223,10 @@ const AddPurchase: React.FC = () => {
           setItemProductCodes(data.items.map((i: any) => i.productCode || ''));
           setItemIsExistingProduct(data.items.map(() => true));
           setItemExistingStock(data.items.map(() => 0));
-          if (data.items.some((i: any) => i.hcsCode)) {
+          if (data.gstEnabled && data.items.some((i: any) => i.hcsCode)) {
             setShowHsnCode(true);
+          } else {
+            setShowHsnCode(false);
           }
         }
       }
@@ -437,6 +444,9 @@ const AddPurchase: React.FC = () => {
 
   const toggleGstPurchase = (enable: boolean) => {
     setIsGstPurchase(enable);
+    if (!enable) {
+      setShowHsnCode(false);
+    }
     setItems(prevItems => prevItems.map(item => {
       const cost = Number(item.costPerUnit) || 0;
       const qty = Number(item.quantity) || 0;
@@ -533,7 +543,7 @@ const AddPurchase: React.FC = () => {
   // Dynamic Editable Table Columns for keyboard navigation
   const getEditableColumnFields = () => {
     const cols = ['brand', 'model', 'category', 'quantity', 'costPerUnit'];
-    if (showHsnCode) {
+    if (isGstPurchase && showHsnCode) {
       cols.push('hcsCode');
     }
     cols.push('mop', 'mrp');
@@ -1750,65 +1760,59 @@ const AddPurchase: React.FC = () => {
                           <span>Product Name</span>
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={() => setShowHsnCode(!showHsnCode)}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${showHsnCode
-                            ? 'bg-blue-50 text-blue-700 border-blue-200'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                            }`}
-                          title="Toggle HSN Code column visibility"
-                        >
-                          {showHsnCode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          <span>HSN Code</span>
-                        </button>
+                        {/* HSN Code and GST controls - ONLY shown when GST is selected in Step 1 */}
+                        {isGstPurchase && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setShowHsnCode(!showHsnCode)}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${showHsnCode
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 shadow-2xs'
+                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                }`}
+                              title="Toggle HSN Code column visibility"
+                            >
+                              {showHsnCode ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                              <span>HSN Code</span>
+                            </button>
 
-                        {/* Common GST Toggle Button near Product Name & HSN */}
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => toggleGstPurchase(!isGstPurchase)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer shadow-2xs ${isGstPurchase
-                              ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
-                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                              }`}
-                            title="Toggle GST mode for all items (18% default)"
-                          >
-                            <Receipt className={`w-3.5 h-3.5 ${isGstPurchase ? 'text-white' : 'text-emerald-600'}`} />
-                            <span>{isGstPurchase ? `GST Active (${defaultTaxPercent}%)` : `Enable GST (${defaultTaxPercent}%)`}</span>
-                          </button>
+                            <div className="inline-flex items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white shadow-2xs">
+                                <Receipt className="w-3.5 h-3.5 text-white" />
+                                <span>GST Active ({defaultTaxPercent}%)</span>
+                              </span>
 
-                          {isGstPurchase && (
-                            <div className="inline-flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 text-xs">
-                              <span className="text-emerald-800 font-semibold text-[11px]">Tax:</span>
-                              <select
-                                value={defaultTaxPercent}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value);
-                                  setDefaultTaxPercent(val);
-                                  setItems(prev => prev.map(it => {
-                                    const cost = Number(it.costPerUnit) || 0;
-                                    const qty = Number(it.quantity) || 0;
-                                    const tax = val;
-                                    const costWithGst = cost + (cost * tax / 100);
-                                    return {
-                                      ...it,
-                                      taxPercent: tax,
-                                      totalCost: qty * costWithGst
-                                    };
-                                  }));
-                                }}
-                                className="bg-white border border-emerald-300 text-emerald-900 rounded font-bold px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-emerald-500 cursor-pointer"
-                              >
-                                <option value={0}>0%</option>
-                                <option value={5}>5%</option>
-                                <option value={12}>12%</option>
-                                <option value={18}>18%</option>
-                                <option value={28}>28%</option>
-                              </select>
+                              <div className="inline-flex items-center gap-1 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 text-xs">
+                                <span className="text-emerald-800 font-semibold text-[11px]">Tax:</span>
+                                <select
+                                  value={defaultTaxPercent}
+                                  onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    setDefaultTaxPercent(val);
+                                    setItems(prev => prev.map(it => {
+                                      const cost = Number(it.costPerUnit) || 0;
+                                      const qty = Number(it.quantity) || 0;
+                                      const tax = val;
+                                      const costWithGst = cost + (cost * tax / 100);
+                                      return {
+                                        ...it,
+                                        taxPercent: tax,
+                                        totalCost: qty * costWithGst
+                                      };
+                                    }));
+                                  }}
+                                  className="bg-white border border-emerald-300 text-emerald-900 rounded font-bold px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                                >
+                                  <option value={0}>0%</option>
+                                  <option value={5}>5%</option>
+                                  <option value={12}>12%</option>
+                                  <option value={18}>18%</option>
+                                  <option value={28}>28%</option>
+                                </select>
+                              </div>
                             </div>
-                          )}
-                        </div>
+                          </>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2">
@@ -1961,9 +1965,9 @@ const AddPurchase: React.FC = () => {
                                 </div>
                               </div>
 
-                              {showHsnCode && (
+                              {isGstPurchase && showHsnCode && (
                                 <div>
-                                  <label className="text-[11px] font-semibold text-slate-700 block mb-1">HSN Code (Optional)</label>
+                                  <label className="text-[11px] font-semibold text-emerald-800 block mb-1">HSN Code (Optional)</label>
                                   <input
                                     type="text"
                                     value={item.hcsCode || ''}
@@ -2033,8 +2037,8 @@ const AddPurchase: React.FC = () => {
                               <th className="px-2 py-2.5 w-16 text-center text-slate-400">Stock</th>
                               <th className="px-3 py-2.5 w-20 text-center font-semibold text-slate-900 bg-slate-100/70">Qty *</th>
                               <th className="px-3 py-2.5 min-w-[130px] w-32 text-right">Cost *</th>
-                              {showHsnCode && (
-                                <th className="px-2 py-2.5 min-w-[110px] bg-slate-50/90 text-slate-700">
+                              {isGstPurchase && showHsnCode && (
+                                <th className="px-2 py-2.5 min-w-[110px] bg-emerald-50/40 text-emerald-900">
                                   <div className="flex items-center justify-between gap-1">
                                     <span>HSN (Optional)</span>
                                     {items.length > 1 && (
@@ -2186,8 +2190,8 @@ const AddPurchase: React.FC = () => {
                                     />
                                   </td>
 
-                                  {/* HSN (When showHsnCode is enabled) */}
-                                  {showHsnCode && (
+                                  {/* HSN (When GST is active and showHsnCode is enabled) */}
+                                  {isGstPurchase && showHsnCode && (
                                     <td className="px-2 py-1.5 min-w-[110px]">
                                       <input
                                         id={`cell-${rowIndex}-hcsCode`}
