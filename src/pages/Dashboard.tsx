@@ -4,12 +4,65 @@ import { useStore } from '../context/StoreContext';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import CustomLoader from '../components/CustomLoader';
-import RevenueChart from '../components/RevenueChart';
-import PaymentMethodsChart from '../components/PaymentMethodsChart';
-import TopProductsChart from '../components/TopProductsChart';
 import { useBillingItems, useProducts, useCreditSales } from '../hooks/useFirestoreCache';
 import { isExpenseItem } from '../types';
 import { getItemFinancials } from './OverallSales';
+import { getProductAgeInDays, isProductAging, getCachedStockAgingSettings } from '../utils/stockAging';
+import {
+  TrendingUp,
+  ShoppingBag,
+  Package,
+  Users,
+  CreditCard,
+  AlertTriangle,
+  Hourglass,
+  ArrowUpRight,
+  Plus,
+  Wrench,
+  FileText,
+  RefreshCw,
+  Building2,
+  ArrowRight,
+  CheckCircle2,
+  DollarSign,
+  Receipt,
+  Truck,
+} from 'lucide-react';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from 'recharts';
+
+const PAYMENT_COLORS: Record<string, string> = {
+  cash: '#10B981',
+  upi: '#3B82F6',
+  card: '#8B5CF6',
+  finance: '#F59E0B',
+  split: '#EC4899',
+  credit: '#EF4444',
+  other: '#64748B',
+};
+
+const PAYMENT_LABELS: Record<string, string> = {
+  cash: 'Cash',
+  upi: 'UPI',
+  card: 'Card',
+  finance: 'Finance / EMI',
+  split: 'Split',
+  credit: 'Credit',
+  other: 'Other',
+};
+
 const Dashboard: React.FC = () => {
   const { currentUser } = useAuth();
   const { currentStore } = useStore();
@@ -17,7 +70,6 @@ const Dashboard: React.FC = () => {
 
   // State for date filter
   const [dateFilter, setDateFilter] = useState<'today' | 'last7days' | 'last30days'>('today');
-  const [activeAlertTab, setActiveAlertTab] = useState<'lowStock' | 'pending' | 'smart'>('lowStock');
 
   // Calculate date range based on filter
   const getDateRange = (filter: 'today' | 'last7days' | 'last30days') => {
@@ -25,7 +77,6 @@ const Dashboard: React.FC = () => {
     endDate.setHours(23, 59, 59, 999);
 
     const startDate = new Date();
-
     if (filter === 'today') {
       startDate.setHours(0, 0, 0, 0);
     } else if (filter === 'last7days') {
@@ -41,886 +92,931 @@ const Dashboard: React.FC = () => {
 
   const { startDate, endDate } = getDateRange(dateFilter);
 
-  // Use React Query for data fetching with caching
-  const { data: billingData, isLoading: loadingBilling } = useBillingItems(startDate, endDate, 200);
+  // Fetch billing items via cached hook
+  const {
+    data: billingData,
+    isLoading: loadingBilling,
+    refetch: refetchBilling,
+  } = useBillingItems(startDate, endDate, 300);
   const billingItems = billingData?.items || [];
 
-  // Fetch products for low stock alerts
-  const { data: products, isLoading: loadingProducts } = useProducts(500);
+  // Fetch products for live inventory & low stock
+  const {
+    data: products,
+    isLoading: loadingProducts,
+    refetch: refetchProducts,
+  } = useProducts(500);
 
-  // Fetch credit sales for pending collections
-  const { data: creditSalesData, isLoading: loadingCredits } = useCreditSales(undefined, undefined, 100);
+  // Fetch credit sales for outstanding balances
+  const {
+    data: creditSalesData,
+    isLoading: loadingCredits,
+    refetch: refetchCredits,
+  } = useCreditSales(undefined, undefined, 100);
   const creditSales = creditSalesData?.items || [];
 
   const loading = loadingBilling || loadingProducts || loadingCredits;
 
-  // Calculate stats
-  // Logic updated to match OverallSales.tsx
-  const salesEntries = useMemo(() =>
-    billingItems.filter(item => !isExpenseItem(item)),
+  const handleRefreshAll = () => {
+    refetchBilling();
+    refetchProducts();
+    refetchCredits();
+  };
+
+  // ── Financial Calculations ──
+  const salesEntries = useMemo(
+    () => billingItems.filter((item) => !isExpenseItem(item)),
     [billingItems]
   );
 
-  const recentSales = useMemo(() =>
-    salesEntries.filter(item => item.sellingPrice > 0).slice(0, 5),
-    [salesEntries]
-  );
-
-  const topCustomers = useMemo(() => {
-    const customerMap = new Map<string, { name: string; total: number; orders: number }>();
-    salesEntries.forEach(item => {
-      if (item.sellingPrice > 0 && item.customerName) {
-        const existing = customerMap.get(item.customerName) || { name: item.customerName, total: 0, orders: 0 };
-        existing.total += getItemFinancials(item).netTotal;
-        existing.orders += 1;
-        customerMap.set(item.customerName, existing);
-      }
-    });
-    return Array.from(customerMap.values())
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-  }, [salesEntries]);
-
-  const expenseEntries = useMemo(() =>
-    billingItems.filter(isExpenseItem),
+  const expenseEntries = useMemo(
+    () => billingItems.filter(isExpenseItem),
     [billingItems]
   );
 
-  const totalSales = useMemo(() =>
-    salesEntries
-      .reduce((sum, item) => sum + getItemFinancials(item).netTotal, 0),
+  const totalSales = useMemo(
+    () => salesEntries.reduce((sum, item) => sum + getItemFinancials(item).netTotal, 0),
     [salesEntries]
   );
 
-  const soldItems = useMemo(() =>
-    salesEntries
-      .reduce((sum, item) => sum + (item.quantity || 0), 0),
+  const totalUnitsSold = useMemo(
+    () => salesEntries.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
     [salesEntries]
   );
 
-  // This is now "Total Expenses" instead of "Total Purchase Cost of Sold Items"
-  const totalPurchase = useMemo(() =>
-    expenseEntries
-      .reduce((sum, item) => sum + Math.abs((item.cost || item.profit || 0) * (item.quantity || 1)), 0),
+  const totalExpenses = useMemo(
+    () =>
+      expenseEntries.reduce(
+        (sum, item) => sum + Math.abs((item.cost || item.profit || 0) * (item.quantity || 1)),
+        0
+      ),
     [expenseEntries]
   );
 
-  const totalProfit = useMemo(() => {
-    const grossProfit = salesEntries.reduce((sum, item) => sum + getItemFinancials(item).totalProfit, 0);
-    const expenses = expenseEntries.reduce((sum, item) => sum + Math.abs((item.cost || item.profit || 0) * (item.quantity || 1)), 0);
-    return grossProfit - expenses;
-  }, [salesEntries, expenseEntries]);
+  const grossProfit = useMemo(
+    () => salesEntries.reduce((sum, item) => sum + getItemFinancials(item).totalProfit, 0),
+    [salesEntries]
+  );
 
+  const netProfit = useMemo(() => grossProfit - totalExpenses, [grossProfit, totalExpenses]);
 
+  const profitMargin = useMemo(
+    () => (totalSales > 0 ? (netProfit / totalSales) * 100 : 0),
+    [netProfit, totalSales]
+  );
 
-  // Group sales by product
-  const topSellingProducts = useMemo(() => {
+  const averageOrderValue = useMemo(() => {
+    const validSales = salesEntries.filter((item) => item.sellingPrice > 0);
+    return validSales.length > 0 ? totalSales / validSales.length : 0;
+  }, [salesEntries, totalSales]);
+
+  // Inventory value & count
+  const inventoryStats = useMemo(() => {
+    if (!products) return { costValue: 0, retailValue: 0, units: 0, count: 0 };
+    const inStock = products.filter((p: any) => (Number(p.quantity) || 0) > 0 && p.isAvailable !== false);
+    const costValue = inStock.reduce((s: number, p: any) => s + (Number(p.cost) || 0) * (Number(p.quantity) || 0), 0);
+    const retailValue = inStock.reduce((s: number, p: any) => s + (Number(p.mrp || p.sellingPrice) || 0) * (Number(p.quantity) || 0), 0);
+    const units = inStock.reduce((s: number, p: any) => s + (Number(p.quantity) || 0), 0);
+    return { costValue, retailValue, units, count: inStock.length };
+  }, [products]);
+
+  // Pending credit balance
+  const pendingCredits = useMemo(() => {
+    return creditSales.filter(
+      (item: any) => !item.isPaid || (item.remainingAmount && item.remainingAmount > 0)
+    );
+  }, [creditSales]);
+
+  const totalPendingAmount = useMemo(() => {
+    return pendingCredits.reduce((sum: number, item: any) => {
+      const remaining = item.remainingAmount || item.sellingPrice * item.quantity;
+      return sum + remaining;
+    }, 0);
+  }, [pendingCredits]);
+
+  // Low stock products (< 5)
+  const lowStockProducts = useMemo(() => {
+    if (!products) return [];
+    return products
+      .filter((p: any) => (Number(p.quantity) || 0) > 0 && (Number(p.quantity) || 0) < 5 && p.isAvailable !== false)
+      .slice(0, 6);
+  }, [products]);
+
+  // Aging stock products
+  const agingSettings = useMemo(() => getCachedStockAgingSettings(), []);
+  const agingProducts = useMemo(() => {
+    if (!products || !agingSettings.enabled) return [];
+    return products
+      .filter((p: any) => (Number(p.quantity) || 0) > 0 && isProductAging(p, agingSettings.agingDays))
+      .slice(0, 6);
+  }, [products, agingSettings]);
+
+  // ── Chart 1: Revenue & Profit Trend Over Period ──
+  const trendChartData = useMemo(() => {
+    const days = dateFilter === 'today' ? 1 : dateFilter === 'last7days' ? 7 : 30;
+    const result = [];
+    const now = new Date();
+
+    if (dateFilter === 'today') {
+      // Group by 4-hour buckets for today
+      for (let h = 8; h <= 22; h += 2) {
+        const hourLabel = `${h}:00`;
+        const nextHour = h + 2;
+        const matching = salesEntries.filter((item) => {
+          if (!item.createdAt) return false;
+          const raw = item.createdAt as any;
+          const d = raw instanceof Date ? raw : (raw?.toDate ? raw.toDate() : new Date(raw));
+          const itemHour = d.getHours();
+          return itemHour >= h && itemHour < nextHour;
+        });
+        const rev = matching.reduce((s, it) => s + getItemFinancials(it).netTotal, 0);
+        const prof = matching.reduce((s, it) => s + getItemFinancials(it).totalProfit, 0);
+        result.push({ label: hourLabel, revenue: Math.round(rev), profit: Math.round(prof) });
+      }
+    } else {
+      // Group by day
+      for (let i = days - 1; i >= 0; i--) {
+        const target = new Date(now);
+        target.setDate(now.getDate() - i);
+        const targetStr = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(
+          target.getDate()
+        ).padStart(2, '0')}`;
+        const dayLabel = target.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: days > 7 ? 'numeric' : 'short',
+        });
+
+        const matching = salesEntries.filter((item) => {
+          if (!item.createdAt) return false;
+          const raw = item.createdAt as any;
+          const d = raw instanceof Date ? raw : (raw?.toDate ? raw.toDate() : new Date(raw));
+          const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+            d.getDate()
+          ).padStart(2, '0')}`;
+          return dStr === targetStr;
+        });
+
+        const rev = matching.reduce((s, it) => s + getItemFinancials(it).netTotal, 0);
+        const prof = matching.reduce((s, it) => s + getItemFinancials(it).totalProfit, 0);
+        result.push({ label: dayLabel, revenue: Math.round(rev), profit: Math.round(prof) });
+      }
+    }
+    return result;
+  }, [salesEntries, dateFilter]);
+
+  // ── Chart 2: Payment Methods Share ──
+  const paymentChartData = useMemo(() => {
+    const modeTotals: Record<string, number> = {
+      cash: 0,
+      upi: 0,
+      card: 0,
+      finance: 0,
+      split: 0,
+      credit: 0,
+    };
+
+    salesEntries.forEach((item) => {
+      const mode = (item.paymentMode || 'cash').toLowerCase();
+      const val = getItemFinancials(item).netTotal;
+      if (mode in modeTotals) {
+        modeTotals[mode] += val;
+      } else {
+        modeTotals.cash += val;
+      }
+    });
+
+    const total = Object.values(modeTotals).reduce((a, b) => a + b, 0);
+
+    return Object.entries(modeTotals)
+      .filter(([_, value]) => value > 0)
+      .map(([mode, value]) => ({
+        name: PAYMENT_LABELS[mode] || mode,
+        key: mode,
+        value: Math.round(value),
+        percent: total > 0 ? Math.round((value / total) * 100) : 0,
+        color: PAYMENT_COLORS[mode] || '#64748B',
+      }));
+  }, [salesEntries]);
+
+  // ── Chart 3: Top Selling Products by Revenue ──
+  const topProductsChartData = useMemo(() => {
     const productMap = new Map<string, { title: string; quantity: number; sales: number }>();
-
-    billingItems
-      .filter(item => item.sellingPrice > 0)
-      .forEach(item => {
+    salesEntries
+      .filter((item) => item.sellingPrice > 0 && item.title)
+      .forEach((item) => {
         const fin = getItemFinancials(item);
         const existing = productMap.get(item.title) || { title: item.title, quantity: 0, sales: 0 };
-        existing.quantity += item.quantity;
+        existing.quantity += Number(item.quantity) || 1;
         existing.sales += fin.netTotal;
         productMap.set(item.title, existing);
       });
 
     return Array.from(productMap.values())
       .sort((a, b) => b.sales - a.sales)
-      .slice(0, 6);
-  }, [billingItems]);
+      .slice(0, 5)
+      .map((p) => ({
+        name: p.title.length > 18 ? p.title.substring(0, 16) + '...' : p.title,
+        sales: Math.round(p.sales),
+        units: p.quantity,
+      }));
+  }, [salesEntries]);
 
-  const uniqueCustomers = useMemo(() => {
-    const customers = new Set(
-      billingItems
-        .filter(item => item.customerName)
-        .map(item => item.customerName)
-    );
-    return customers.size;
-  }, [billingItems]);
+  // ── Chart 4: Sales Velocity (Hourly / Daily distribution) ──
+  const velocityData = useMemo(() => {
+    const slots = [
+      { slot: 'Morning (9-12)', count: 0, amount: 0 },
+      { slot: 'Noon (12-3)', count: 0, amount: 0 },
+      { slot: 'Evening (3-7)', count: 0, amount: 0 },
+      { slot: 'Night (7-10)', count: 0, amount: 0 },
+    ];
 
-  // Calculate low stock products (quantity < 5)
-  const lowStockProducts = useMemo(() => {
-    if (!products) return [];
-    return products.filter((p: any) => p.quantity > 0 && p.quantity < 5 && p.isAvailable !== false);
-  }, [products]);
+    salesEntries.forEach((it) => {
+      if (!it.createdAt) return;
+      const raw = it.createdAt as any;
+      const d = raw instanceof Date ? raw : (raw?.toDate ? raw.toDate() : new Date(raw));
+      const h = d.getHours();
+      const amt = getItemFinancials(it).netTotal;
+      if (h >= 9 && h < 12) {
+        slots[0].count++;
+        slots[0].amount += amt;
+      } else if (h >= 12 && h < 15) {
+        slots[1].count++;
+        slots[1].amount += amt;
+      } else if (h >= 15 && h < 19) {
+        slots[2].count++;
+        slots[2].amount += amt;
+      } else if (h >= 19 && h <= 23) {
+        slots[3].count++;
+        slots[3].amount += amt;
+      }
+    });
 
-  // Calculate pending credit sales
-  const pendingCredits = useMemo(() => {
-    return creditSales.filter((item: any) => !item.isPaid || (item.remainingAmount && item.remainingAmount > 0));
-  }, [creditSales]);
+    return slots.map((s) => ({
+      slot: s.slot,
+      bills: s.count,
+      amount: Math.round(s.amount),
+    }));
+  }, [salesEntries]);
 
-  // Calculate total pending amount
-  const totalPendingAmount = useMemo(() => {
-    return pendingCredits.reduce((sum: number, item: any) => {
-      const remaining = item.remainingAmount || (item.sellingPrice * item.quantity);
-      return sum + remaining;
-    }, 0);
-  }, [pendingCredits]);
-
-  // Generate smart suggestions
-  const smartSuggestions = useMemo(() => {
-    const suggestions: string[] = [];
-
-    if (lowStockProducts.length > 0) {
-      suggestions.push(`${lowStockProducts.length} product${lowStockProducts.length > 1 ? 's' : ''} running low on stock`);
-    }
-
-    if (totalPendingAmount > 0) {
-      suggestions.push(`₹${totalPendingAmount.toLocaleString('en-IN')} pending collection from ${pendingCredits.length} customer${pendingCredits.length > 1 ? 's' : ''}`);
-    }
-
-    if (topSellingProducts.length > 0 && topSellingProducts[0]) {
-      suggestions.push(`Best seller: ${topSellingProducts[0].title} - ${topSellingProducts[0].quantity} units`);
-    }
-
-    const profitMargin = totalSales > 0 ? (totalProfit / totalSales) * 100 : 0;
-    if (profitMargin > 0) {
-      suggestions.push(`Average profit margin: ${profitMargin.toFixed(1)}%`);
-    }
-
-    return suggestions;
-  }, [lowStockProducts, pendingCredits, totalPendingAmount, topSellingProducts, totalProfit, totalSales]);
+  // ── Recent Invoices Live Feed ──
+  const recentBills = useMemo(() => {
+    return salesEntries
+      .filter((item) => item.sellingPrice > 0)
+      .slice(0, 5);
+  }, [salesEntries]);
 
   if (loading) {
     return (
-      <>
+      <div className="min-h-screen bg-slate-50">
         <Navbar />
-        <CustomLoader message="Loading dashboard..." />
-      </>
+        <CustomLoader message="Loading store dashboard..." />
+      </div>
     );
   }
 
+  const isOwner = currentUser?.role === 'owner' || currentUser?.role === 'admin';
+
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-slate-50 text-slate-800">
       <Navbar />
 
-      <main className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-6 py-4 md:py-6 pb-24 md:pb-6">
-        {/* Welcome Section */}
-        <div className="mb-4 md:mb-6 bg-white rounded-xl shadow-sm p-4 md:p-6 border border-blue-100">
-          <div className="flex flex-col gap-3">
-            {/* Header Row: Greeting & Time */}
-            <div className="flex items-start justify-between">
-              <div>
-                <h1 className="text-xl md:text-3xl font-bold text-gray-800 leading-tight">
-                  Hi, {currentUser?.displayName?.split(' ')[0] || 'Admin'}
-                </h1>
-                <p className="text-sm md:text-base text-gray-600 mt-1">
-                  <span className="font-bold text-blue-600">{billingItems.length}</span> orders {dateFilter === 'today' ? 'today' : dateFilter === 'last7days' ? 'this week' : 'this month'}
-                </p>
+      <main className="max-w-[1600px] mx-auto px-3 sm:px-4 md:px-6 py-4 md:py-6 pb-24 md:pb-8 space-y-5">
+        {/* Top Executive Header & Context Bar */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 sm:p-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200/80">
+                  <Building2 className="w-3.5 h-3.5" />
+                  {currentStore?.name || 'Main Branch'}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-xs text-slate-500 font-medium">Store Operations</span>
               </div>
-              <div className="text-right">
-                <p className="text-xs md:text-sm font-semibold text-gray-500 bg-gray-50 px-2 py-1 rounded-md border border-gray-100">
-                  {new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                </p>
-                <p className="text-[10px] md:text-xs text-gray-400 mt-1">
-                  {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </p>
-              </div>
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 mt-1">
+                Store Performance Dashboard
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Active user: <span className="font-semibold text-slate-700">{currentUser?.displayName || 'Store Staff'}</span> • Real-time branch sales & inventory tracking
+              </p>
             </div>
 
-            {/* Date Filter Buttons - Desktop Style */}
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => setDateFilter('today')}
-                className={`px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition-all duration-200 border ${dateFilter === 'today'
-                  ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Date Filter Pills */}
+              <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setDateFilter('today')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    dateFilter === 'today'
+                      ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
-              >
-                Today
-              </button>
-              <button
-                onClick={() => setDateFilter('last7days')}
-                className={`px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition-all duration-200 border ${dateFilter === 'last7days'
-                  ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDateFilter('last7days')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    dateFilter === 'last7days'
+                      ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
-              >
-                Last 7 Days
-              </button>
-              <button
-                onClick={() => setDateFilter('last30days')}
-                className={`px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition-all duration-200 border ${dateFilter === 'last30days'
-                  ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                >
+                  7 Days
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDateFilter('last30days')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    dateFilter === 'last30days'
+                      ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
+                >
+                  30 Days
+                </button>
+              </div>
+
+              {/* Refresh Button */}
+              <button
+                type="button"
+                onClick={handleRefreshAll}
+                className="p-2 bg-slate-100 hover:bg-slate-200/80 active:scale-95 text-slate-700 rounded-xl transition cursor-pointer border border-slate-200"
+                title="Refresh Live Data"
               >
-                Last 30 Days
+                <RefreshCw className="w-4 h-4" />
               </button>
+
+              {/* Link to HQ Hub for Owner/Admin */}
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/hub-dashboard')}
+                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+                >
+                  <Building2 className="w-3.5 h-3.5 text-blue-400" />
+                  <span>HQ Control</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Key Stats Cards - Mobile Optimized */}
-        <h2 className="text-base md:text-lg font-bold text-gray-800 mb-3 px-1">Overview</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
-          <div className="bg-gradient-to-br from-blue-50 to-white p-2 md:p-5 rounded-xl shadow-sm border border-blue-100">
-            <div className="flex items-center justify-between mb-1 md:mb-2">
-              <p className="text-[10px] md:text-sm text-gray-600 font-medium">Total Sales</p>
-              <div className="w-6 h-6 md:w-10 md:h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                <svg className="w-3 h-3 md:w-5 md:h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-            <h3 className="text-base md:text-2xl font-bold text-blue-600 truncate">₹{totalSales.toLocaleString('en-IN')}</h3>
-            <p className="text-[9px] md:text-xs text-gray-500 mt-1 truncate">+{billingItems.filter(i => i.sellingPrice > 0).length} transactions</p>
+        {/* Quick Action Grid (8 Clean Action Buttons) */}
+        <div>
+          <div className="flex items-center justify-between mb-2 px-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Quick Actions
+            </span>
           </div>
-
-          <div className="bg-gradient-to-br from-purple-50 to-white p-2 md:p-5 rounded-xl shadow-sm border border-purple-100">
-            <div className="flex items-center justify-between mb-1 md:mb-2">
-              <p className="text-[10px] md:text-sm text-gray-600 font-medium">Items Sold</p>
-              <div className="w-6 h-6 md:w-10 md:h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                <svg className="w-3 h-3 md:w-5 md:h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </div>
-            </div>
-            <h3 className="text-base md:text-2xl font-bold text-purple-600 truncate">{soldItems}</h3>
-            <p className="text-[9px] md:text-xs text-gray-500 mt-1 truncate">Products sold</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-red-50 to-white p-2 md:p-5 rounded-xl shadow-sm border border-red-100">
-            <div className="flex items-center justify-between mb-1 md:mb-2">
-              <p className="text-[10px] md:text-sm text-gray-600 font-medium">Expense</p>
-              <div className="w-6 h-6 md:w-10 md:h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                <svg className="w-3 h-3 md:w-5 md:h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-            </div>
-            <h3 className="text-base md:text-2xl font-bold text-red-600 truncate">₹{totalPurchase.toLocaleString('en-IN')}</h3>
-            <p className="text-[9px] md:text-xs text-gray-500 mt-1 truncate">Total investment</p>
-          </div>
-
-          <div className="bg-gradient-to-br from-green-50 to-white p-2 md:p-5 rounded-xl shadow-sm border border-green-100">
-            <div className="flex items-center justify-between mb-1 md:mb-2">
-              <p className="text-[10px] md:text-sm text-gray-600 font-medium">Total Profit</p>
-              <div className="w-6 h-6 md:w-10 md:h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                <svg className="w-3 h-3 md:w-5 md:h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                </svg>
-              </div>
-            </div>
-            <h3 className="text-base md:text-2xl font-bold text-green-600 truncate">₹{totalProfit.toLocaleString('en-IN')}</h3>
-            <p className="text-[9px] md:text-xs text-gray-500 mt-1 truncate">Net earnings</p>
-          </div>
-        </div>
-
-        {/* Quick Actions - Mandatory Branch Navigation Shortcuts */}
-        <div className="mb-4 md:mb-6">
-          <h2 className="text-base md:text-lg font-bold text-gray-800 mb-3 px-1">Quick Actions</h2>
-          <div className="grid grid-cols-4 sm:grid-cols-4 lg:grid-cols-6 gap-2 md:gap-3">
-            <button
-              onClick={() => navigate('/billing')}
-              className="bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-blue-200 hover:border-blue-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-blue-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Billing</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/products')}
-              className="bg-gradient-to-br from-teal-50 to-teal-100 hover:from-teal-100 hover:to-teal-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-teal-200 hover:border-teal-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-teal-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Product</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/stock-received')}
-              className="bg-gradient-to-br from-indigo-50 to-indigo-100 hover:from-indigo-100 hover:to-indigo-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-indigo-200 hover:border-indigo-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-indigo-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Stock Received</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/stock-transfer')}
-              className="bg-gradient-to-br from-violet-50 to-violet-100 hover:from-violet-100 hover:to-violet-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-violet-200 hover:border-violet-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-violet-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Stock Transfer</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/overall-sales')}
-              className="bg-gradient-to-br from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-green-200 hover:border-green-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-green-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Sales Report</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/defect-management')}
-              className="bg-gradient-to-br from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-orange-200 hover:border-orange-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-orange-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Defect & Damage</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/add-expense')}
-              className="bg-gradient-to-br from-red-50 to-red-100 hover:from-red-100 hover:to-red-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-red-200 hover:border-red-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-red-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Add Expense</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/customers')}
-              className="bg-gradient-to-br from-pink-50 to-pink-100 hover:from-pink-100 hover:to-pink-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-pink-200 hover:border-pink-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-pink-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Customer</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/service-management')}
-              className="bg-gradient-to-br from-cyan-50 to-cyan-100 hover:from-cyan-100 hover:to-cyan-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-cyan-200 hover:border-cyan-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-cyan-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Service Mgmt</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/service-management/create')}
-              className="bg-gradient-to-br from-sky-50 to-sky-100 hover:from-sky-100 hover:to-sky-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-sky-200 hover:border-sky-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-sky-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Job Sheet</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/stock-requirement')}
-              className="bg-gradient-to-br from-amber-50 to-amber-100 hover:from-amber-100 hover:to-amber-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-amber-200 hover:border-amber-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-amber-500 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Stock Req.</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => navigate('/employee-management')}
-              className="bg-gradient-to-br from-slate-50 to-slate-100 hover:from-slate-100 hover:to-slate-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-slate-200 hover:border-slate-300 hover:shadow-md cursor-pointer"
-            >
-              <div className="flex flex-col items-center gap-1 md:gap-2">
-                <div className="w-8 h-8 md:w-12 md:h-12 bg-slate-600 rounded-lg flex items-center justify-center">
-                  <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </div>
-                <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Employees</span>
-              </div>
-            </button>
-
-            {currentStore?.purchaseEnabled && (
-              <button
-                onClick={() => navigate('/add-purchase')}
-                className="bg-gradient-to-br from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 p-2 md:p-4 rounded-lg transition-all duration-200 border border-purple-200 hover:border-purple-300 hover:shadow-md cursor-pointer"
-              >
-                <div className="flex flex-col items-center gap-1 md:gap-2">
-                  <div className="w-8 h-8 md:w-12 md:h-12 bg-purple-500 rounded-lg flex items-center justify-center">
-                    <svg className="w-4 h-4 md:w-6 md:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                    </svg>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-2.5">
+            {[
+              { label: 'New Bill (POS)', path: '/billing', icon: Receipt, color: 'text-blue-600', bg: 'hover:border-blue-300' },
+              { label: 'Add Product', path: '/add-product', icon: Plus, color: 'text-emerald-600', bg: 'hover:border-emerald-300' },
+              { label: 'Stock Purchase', path: '/add-purchase', icon: Package, color: 'text-purple-600', bg: 'hover:border-purple-300' },
+              { label: 'Stock Transfer', path: '/stock-transfer', icon: Truck, color: 'text-amber-600', bg: 'hover:border-amber-300' },
+              { label: 'Service Entry', path: '/service-job-entry', icon: Wrench, color: 'text-cyan-600', bg: 'hover:border-cyan-300' },
+              { label: 'Customer Ledger', path: '/customers', icon: Users, color: 'text-pink-600', bg: 'hover:border-pink-300' },
+              { label: 'Overall Sales', path: '/overall-sales', icon: FileText, color: 'text-indigo-600', bg: 'hover:border-indigo-300' },
+              { label: 'Req. Stock', path: '/stock-requirement', icon: Hourglass, color: 'text-rose-600', bg: 'hover:border-rose-300' },
+            ].map((action) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.path}
+                  type="button"
+                  onClick={() => navigate(action.path)}
+                  className={`p-3 bg-white hover:bg-slate-50/80 rounded-xl border border-slate-200/90 transition-all flex flex-col items-center gap-1.5 cursor-pointer active:scale-95 text-center shadow-2xs ${action.bg}`}
+                >
+                  <div className={`p-2 rounded-lg bg-slate-50 border border-slate-100 ${action.color}`}>
+                    <Icon className="w-4 h-4" />
                   </div>
-                  <span className="text-[10px] md:text-sm font-medium text-gray-700 text-center leading-tight">Branch Purchase</span>
-                </div>
+                  <span className="text-xs font-bold text-slate-700 leading-tight">
+                    {action.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 5-Card High-Density KPI Metrics Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* 1. Total Sales */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Gross Revenue
+              </span>
+              <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600">
+                <DollarSign className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-blue-700 tabular-nums">
+              ₹{Math.round(totalSales).toLocaleString('en-IN')}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-1">
+              <span className="font-semibold text-slate-700">{salesEntries.length} orders</span>
+              <span>•</span>
+              <span className="text-emerald-600 font-medium">
+                {dateFilter === 'today' ? 'Today' : dateFilter === 'last7days' ? 'Last 7D' : 'Last 30D'}
+              </span>
+            </div>
+          </div>
+
+          {/* 2. Net Profit */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Net Profit
+              </span>
+              <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-emerald-700 tabular-nums">
+              ₹{Math.round(netProfit).toLocaleString('en-IN')}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-1">
+              <span className="font-semibold text-emerald-600">
+                {profitMargin > 0 ? `${profitMargin.toFixed(1)}% margin` : '0%'}
+              </span>
+              <span>•</span>
+              <span>After ₹{Math.round(totalExpenses)} exp</span>
+            </div>
+          </div>
+
+          {/* 3. Items Sold & AOV */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Units & AOV
+              </span>
+              <div className="p-1.5 rounded-lg bg-purple-50 text-purple-600">
+                <ShoppingBag className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-purple-700 tabular-nums">
+              {totalUnitsSold} <span className="text-xs font-semibold text-slate-500">units</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-1">
+              <span>Avg Basket:</span>
+              <span className="font-bold text-slate-700">₹{Math.round(averageOrderValue)}</span>
+            </div>
+          </div>
+
+          {/* 4. Active Inventory */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Stock Valuation
+              </span>
+              <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600">
+                <Package className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-amber-700 tabular-nums">
+              ₹{Math.round(inventoryStats.costValue).toLocaleString('en-IN')}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-1">
+              <span className="font-bold text-slate-700">{inventoryStats.units} units</span>
+              <span>•</span>
+              <span>{inventoryStats.count} active SKUs</span>
+            </div>
+          </div>
+
+          {/* 5. Pending Credit Balance */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-2xs col-span-2 lg:col-span-1">
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Pending Credits
+              </span>
+              <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600">
+                <CreditCard className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-xl sm:text-2xl font-bold text-rose-700 tabular-nums">
+              ₹{Math.round(totalPendingAmount).toLocaleString('en-IN')}
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-1">
+              <span className="font-semibold text-rose-600">{pendingCredits.length} customers</span>
+              <span>•</span>
+              <button
+                type="button"
+                onClick={() => navigate('/customers')}
+                className="underline hover:text-slate-800 cursor-pointer"
+              >
+                Collect
               </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 4 Compact Graphs in a Perfect 2x2 Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Chart 1: Revenue & Profit Trend (8 Cols) */}
+          <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Revenue & Profit Progression</h3>
+                <p className="text-[11px] text-slate-500">
+                  {dateFilter === 'today' ? 'Hourly sales flow today' : `Daily performance over last ${dateFilter === 'last7days' ? '7 days' : '30 days'}`}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-semibold">
+                <span className="flex items-center gap-1 text-blue-600">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span> Revenue
+                </span>
+                <span className="flex items-center gap-1 text-emerald-600">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span> Profit
+                </span>
+              </div>
+            </div>
+
+            <div className="h-56 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={trendChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563EB" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorProf" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10B981" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                  <XAxis dataKey="label" stroke="#94A3B8" fontSize={11} tickLine={false} />
+                  <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} tickFormatter={(val) => `₹${val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}`} />
+                  <Tooltip
+                    formatter={(value: any, name: any) => [`₹${Number(value).toLocaleString('en-IN')}`, name === 'revenue' ? 'Revenue' : 'Profit']}
+                    contentStyle={{ backgroundColor: '#0F172A', borderRadius: '12px', border: 'none', color: '#fff', fontSize: '12px' }}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#2563EB" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRev)" />
+                  <Area type="monotone" dataKey="profit" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorProf)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Chart 2: Payment Mode Split (4 Cols) */}
+          <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-slate-900">Payment Breakdown</h3>
+                <span className="text-[11px] text-slate-400 font-medium">By Revenue</span>
+              </div>
+
+              {paymentChartData.length > 0 ? (
+                <div className="h-44 w-full relative">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={paymentChartData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={45}
+                        outerRadius={68}
+                        paddingAngle={3}
+                      >
+                        {paymentChartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(val: any) => [`₹${Number(val).toLocaleString('en-IN')}`, 'Amount']}
+                        contentStyle={{ backgroundColor: '#0F172A', borderRadius: '10px', border: 'none', color: '#fff', fontSize: '11px' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">Total</span>
+                    <span className="text-xs font-bold text-slate-900">₹{(totalSales >= 1000 ? `${(totalSales / 1000).toFixed(1)}k` : totalSales.toFixed(0))}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-44 flex items-center justify-center text-xs text-slate-400">
+                  No payment data in this period
+                </div>
+              )}
+            </div>
+
+            {/* Payment Mode Pills */}
+            <div className="grid grid-cols-2 gap-1.5 pt-2 border-t border-slate-100 text-[11px]">
+              {paymentChartData.map((p) => (
+                <div key={p.key} className="flex items-center justify-between p-1.5 rounded-lg bg-slate-50 border border-slate-100">
+                  <span className="flex items-center gap-1.5 truncate text-slate-600">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }}></span>
+                    <span className="truncate">{p.name}</span>
+                  </span>
+                  <span className="font-bold text-slate-800 ml-1">{p.percent}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Chart 3: Top Products Velocity (6 Cols) */}
+          <div className="lg:col-span-6 bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Top Velocity Products</h3>
+                <p className="text-[11px] text-slate-500">Highest revenue contributors in this period</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/products')}
+                className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 cursor-pointer"
+              >
+                Catalog <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {topProductsChartData.length > 0 ? (
+              <div className="h-48 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topProductsChartData} layout="vertical" margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#F1F5F9" />
+                    <XAxis type="number" stroke="#94A3B8" fontSize={10} tickFormatter={(v) => `₹${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+                    <YAxis dataKey="name" type="category" stroke="#64748B" fontSize={11} width={90} tickLine={false} />
+                    <Tooltip
+                      formatter={(val: any, _: any, p: any) => [`₹${Number(val).toLocaleString('en-IN')} (${p?.payload?.units} units sold)`, 'Sales']}
+                      contentStyle={{ backgroundColor: '#0F172A', borderRadius: '10px', border: 'none', color: '#fff', fontSize: '11px' }}
+                    />
+                    <Bar dataKey="sales" fill="#3B82F6" radius={[0, 6, 6, 0]} barSize={14} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-48 flex items-center justify-center text-xs text-slate-400">
+                No product sales recorded in this period
+              </div>
             )}
           </div>
-        </div>
 
-        {/* Alerts & Insights - Actionable Information */}
-        {(lowStockProducts.length > 0 || pendingCredits.length > 0 || smartSuggestions.length > 0) && (
-          <div className="mb-4 md:mb-6">
-            <h2 className="text-base md:text-lg font-bold text-gray-800 mb-3 px-1">Alerts & Insights</h2>
-
-            {/* Mobile Tabs */}
-            <div className="flex p-1 mb-3 bg-gray-100 rounded-lg lg:hidden overflow-x-auto scrollbar-hide">
-              {lowStockProducts.length > 0 && (
-                <button
-                  onClick={() => setActiveAlertTab('lowStock')}
-                  className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium whitespace-nowrap transition-all ${activeAlertTab === 'lowStock'
-                    ? 'bg-white text-amber-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                  Low Stock
-                </button>
-              )}
-              {pendingCredits.length > 0 && (
-                <button
-                  onClick={() => setActiveAlertTab('pending')}
-                  className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium whitespace-nowrap transition-all ${activeAlertTab === 'pending'
-                    ? 'bg-white text-red-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                  Pending
-                </button>
-              )}
-              {smartSuggestions.length > 0 && (
-                <button
-                  onClick={() => setActiveAlertTab('smart')}
-                  className={`flex-1 py-1.5 px-3 rounded-md text-xs font-medium whitespace-nowrap transition-all ${activeAlertTab === 'smart'
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                  Insights
-                </button>
-              )}
+          {/* Chart 4: Time Slot Sales Distribution (6 Cols) */}
+          <div className="lg:col-span-6 bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Peak Store Hours Velocity</h3>
+                <p className="text-[11px] text-slate-500">Distribution of sales volume across business hours</p>
+              </div>
+              <span className="text-[11px] text-slate-400 font-semibold">Store Flow</span>
             </div>
 
-            {/* Content Container - Mobile (Tabbed) & Desktop (Grid) */}
-            <div className="block lg:hidden">
-              {activeAlertTab === 'lowStock' && lowStockProducts.length > 0 && (
-                <div className="bg-gradient-to-br from-amber-50 to-white p-4 rounded-xl shadow-sm border border-amber-200">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-sm font-bold text-amber-900">Low Stock Alert</h3>
-                  </div>
-                  <p className="text-xs text-amber-800 mb-3">{lowStockProducts.length} product{lowStockProducts.length > 1 ? 's' : ''} running low</p>
-                  <div className="space-y-2 mb-3 max-h-48 overflow-y-auto scrollbar-hide">
-                    {lowStockProducts.slice(0, 5).map((product: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs bg-white rounded-lg p-2 border border-amber-100">
-                        <span className="font-medium text-gray-700 truncate flex-1">{product.name}</span>
-                        <span className="text-amber-600 font-bold ml-2">{product.quantity} left</span>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => navigate('/products')}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition-colors"
-                  >
-                    Manage Stock
-                  </button>
-                </div>
-              )}
-
-              {activeAlertTab === 'pending' && pendingCredits.length > 0 && (
-                <div className="bg-gradient-to-br from-red-50 to-white p-4 rounded-xl shadow-sm border border-red-200">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-sm font-bold text-red-900">Pending Collections</h3>
-                  </div>
-                  <p className="text-xs text-red-800 mb-1">₹{totalPendingAmount.toLocaleString('en-IN')} pending</p>
-                  <p className="text-xs text-red-600 mb-3">{pendingCredits.length} customer{pendingCredits.length > 1 ? 's' : ''}</p>
-                  <div className="space-y-2 mb-3 max-h-48 overflow-y-auto scrollbar-hide">
-                    {pendingCredits.slice(0, 5).map((credit: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs bg-white rounded-lg p-2 border border-red-100">
-                        <span className="font-medium text-gray-700 truncate flex-1">
-                          {credit.creditCustomerName || credit.customerName || 'Customer'}
-                        </span>
-                        <span className="text-red-600 font-bold ml-2">
-                          ₹{(credit.remainingAmount || (credit.sellingPrice * credit.quantity)).toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => navigate('/customers')}
-                    className="w-full bg-red-500 hover:bg-red-600 text-white text-xs font-medium py-2 px-4 rounded-lg transition-colors"
-                  >
-                    Collect Payments
-                  </button>
-                </div>
-              )}
-
-              {activeAlertTab === 'smart' && smartSuggestions.length > 0 && (
-                <div className="bg-gradient-to-br from-blue-50 to-white p-4 rounded-xl shadow-sm border border-blue-200">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-sm font-bold text-blue-900">Smart Insights</h3>
-                  </div>
-                  <div className="space-y-2">
-                    {smartSuggestions.map((suggestion, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-xs bg-white rounded-lg p-2 border border-blue-100">
-                        <svg className="w-3 h-3 text-blue-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        <span className="text-gray-700 flex-1">{suggestion}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Desktop Grid Layout (Hidden on Mobile) */}
-            <div className="hidden lg:grid grid-cols-3 gap-4">
-              {/* Low Stock Alert */}
-              {lowStockProducts.length > 0 && (
-                <div className="bg-gradient-to-br from-amber-50 to-white p-5 rounded-xl shadow-sm border border-amber-200 h-full">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-base font-bold text-amber-900">Low Stock Alert</h3>
-                  </div>
-                  <p className="text-xs text-amber-800 mb-3">{lowStockProducts.length} product{lowStockProducts.length > 1 ? 's' : ''} running low</p>
-                  <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
-                    {lowStockProducts.slice(0, 3).map((product: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs bg-white rounded-lg p-2 border border-amber-100">
-                        <span className="font-medium text-gray-700 truncate flex-1">{product.name}</span>
-                        <span className="text-amber-600 font-bold ml-2">{product.quantity} left</span>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => navigate('/products')}
-                    className="w-full bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
-                  >
-                    Manage Stock
-                  </button>
-                </div>
-              )}
-
-              {/* Pending Credits */}
-              {pendingCredits.length > 0 && (
-                <div className="bg-gradient-to-br from-red-50 to-white p-5 rounded-xl shadow-sm border border-red-200 h-full">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-base font-bold text-red-900">Pending Collections</h3>
-                  </div>
-                  <p className="text-xs text-red-800 mb-1">₹{totalPendingAmount.toLocaleString('en-IN')} pending</p>
-                  <p className="text-xs text-red-600 mb-3">{pendingCredits.length} customer{pendingCredits.length > 1 ? 's' : ''}</p>
-                  <div className="space-y-2 mb-3 max-h-32 overflow-y-auto">
-                    {pendingCredits.slice(0, 3).map((credit: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs bg-white rounded-lg p-2 border border-red-100">
-                        <span className="font-medium text-gray-700 truncate flex-1">
-                          {credit.creditCustomerName || credit.customerName || 'Customer'}
-                        </span>
-                        <span className="text-red-600 font-bold ml-2">
-                          ₹{(credit.remainingAmount || (credit.sellingPrice * credit.quantity)).toLocaleString('en-IN')}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => navigate('/customers')}
-                    className="w-full bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
-                  >
-                    Collect Payments
-                  </button>
-                </div>
-              )}
-
-              {/* Smart Suggestions */}
-              {smartSuggestions.length > 0 && (
-                <div className="bg-gradient-to-br from-blue-50 to-white p-5 rounded-xl shadow-sm border border-blue-200 h-full">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                      </svg>
-                    </div>
-                    <h3 className="text-base font-bold text-blue-900">Smart Insights</h3>
-                  </div>
-                  <div className="space-y-2">
-                    {smartSuggestions.map((suggestion, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-xs bg-white rounded-lg p-2 border border-blue-100">
-                        <svg className="w-3 h-3 text-blue-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        <span className="text-gray-700 flex-1">{suggestion}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+            <div className="h-48 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={velocityData} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                  <XAxis dataKey="slot" stroke="#94A3B8" fontSize={10} tickLine={false} />
+                  <YAxis stroke="#94A3B8" fontSize={10} tickLine={false} tickFormatter={(v) => `₹${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} />
+                  <Tooltip
+                    formatter={(val: any, _: any, p: any) => [`₹${Number(val).toLocaleString('en-IN')} (${p?.payload?.bills} bills)`, 'Sales']}
+                    contentStyle={{ backgroundColor: '#0F172A', borderRadius: '10px', border: 'none', color: '#fff', fontSize: '11px' }}
+                  />
+                  <Bar dataKey="amount" fill="#8B5CF6" radius={[6, 6, 0, 0]} barSize={26} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
-        )}
-
-        {/* Sales & Purchase Chart */}
-        <div className="mb-4 md:mb-6">
-          <RevenueChart
-            items={billingItems}
-            days={dateFilter === 'today' ? 1 : dateFilter === 'last7days' ? 7 : 30}
-            type="area"
-          />
         </div>
 
-        {/* Two Column Layout - Charts & Info */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 mb-4 md:mb-6">
-          {/* Payment Methods Chart - 2 columns */}
-          <div className="lg:col-span-2">
-            <PaymentMethodsChart items={billingItems} />
-          </div>
-
-          {/* Overall Information - 1 column */}
-          <div className="bg-white rounded-xl shadow-sm border-2 border-gray-100 p-4 md:p-6">
-            <h3 className="text-lg md:text-xl font-bold text-gray-800 mb-4">Overall Information</h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-3 md:gap-4">
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg border-2 border-blue-100 hover:border-blue-200 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 md:w-10 md:h-10 bg-white border-2 border-blue-300 rounded-lg flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4 md:w-5 md:h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
+        {/* Operational Hub & Smart Alerts (3 Cards in Grid) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Card 1: Low Stock Alerts */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600">
+                    <AlertTriangle className="w-4 h-4" />
                   </div>
-                  <div>
-                    <p className="text-xs md:text-sm text-gray-600">Invoices</p>
-                    <p className="text-lg md:text-xl font-bold text-gray-800">{billingItems.length}</p>
-                  </div>
+                  <h3 className="text-sm font-bold text-slate-900">Low Stock Watch</h3>
                 </div>
+                <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/80">
+                  {lowStockProducts.length} items
+                </span>
               </div>
 
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg border-2 border-purple-100 hover:border-purple-200 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 md:w-10 md:h-10 bg-white border-2 border-purple-300 rounded-lg flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4 md:w-5 md:h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-xs md:text-sm text-gray-600">Customers</p>
-                    <p className="text-lg md:text-xl font-bold text-gray-800">{uniqueCustomers}</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg border-2 border-orange-100 hover:border-orange-200 transition-colors">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 md:w-10 md:h-10 bg-white border-2 border-orange-300 rounded-lg flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4 md:w-5 md:h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-xs md:text-sm text-gray-600">Products</p>
-                    <p className="text-lg md:text-xl font-bold text-gray-800">{soldItems}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Customer Overview */}
-            <div className="mt-6 pt-6 border-t-2 border-gray-100">
-              <h4 className="text-sm font-semibold text-gray-700 mb-3">Customer Overview</h4>
-              <div className="flex items-center justify-center gap-4">
-                <div className="relative w-32 h-32">
-                  <svg className="w-full h-full transform -rotate-90">
-                    <circle cx="64" cy="64" r="56" fill="none" stroke="#E5E7EB" strokeWidth="12" />
-                    <circle
-                      cx="64"
-                      cy="64"
-                      r="56"
-                      fill="none"
-                      stroke="#93C5FD"
-                      strokeWidth="12"
-                      strokeDasharray={`${uniqueCustomers > 0 ? 0.8 * 351.86 : 0} 351.86`}
-                    />
-                  </svg>
-                  <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <p className="text-2xl font-bold text-gray-800">{uniqueCustomers}</p>
-                    <p className="text-xs text-gray-500">Total</p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-blue-300 rounded-full"></div>
-                    <span className="text-xs text-gray-600">Active</span>
-                    <span className="text-xs font-semibold">{Math.floor(uniqueCustomers * 0.8)}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-gray-300 rounded-full"></div>
-                    <span className="text-xs text-gray-600">Inactive</span>
-                    <span className="text-xs font-semibold">{Math.ceil(uniqueCustomers * 0.2)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Top Selling Products - Full Width */}
-        <div className="mb-4 md:mb-6">
-          <div className="bg-white rounded-xl shadow-sm border-2 border-gray-100 p-4 md:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg md:text-xl font-bold text-gray-800">Top Selling Products</h3>
-              <button className="text-sm text-blue-500 hover:text-blue-600 font-medium">View All →</button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {topSellingProducts.map((product, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-white rounded-lg border-2 border-orange-100 hover:border-orange-200 transition-colors">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 bg-white border-2 border-orange-300 rounded-lg flex items-center justify-center text-orange-500 font-bold shrink-0">
-                      {product.title.charAt(0)}
+              {lowStockProducts.length > 0 ? (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {lowStockProducts.map((p: any) => (
+                    <div
+                      key={p.id}
+                      className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <p className="font-semibold text-slate-900 truncate">{p.name || p.title}</p>
+                        <p className="text-[11px] text-slate-500 font-mono">Cost: ₹{p.cost || 0}</p>
+                      </div>
+                      <span className="px-2 py-1 bg-amber-100 text-amber-800 font-bold rounded-lg text-xs whitespace-nowrap">
+                        {p.quantity} left
+                      </span>
                     </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-800 text-sm truncate">{product.title}</p>
-                      <p className="text-xs text-gray-500">Sold: {product.quantity} units</p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 ml-2">
-                    <p className="text-sm font-bold text-blue-500">₹{product.sales.toFixed(0)}</p>
-                  </div>
+                  ))}
                 </div>
-              ))}
-              {topSellingProducts.length === 0 && (
-                <div className="col-span-full">
-                  <p className="text-center text-gray-400 py-8 text-sm">No sales data available</p>
+              ) : (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1 opacity-80" />
+                  All stock items healthy &gt; 5 units
                 </div>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/stock-requirement')}
+              className="w-full mt-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Truck className="w-3.5 h-3.5" />
+              <span>Request Stock Transfer</span>
+            </button>
+          </div>
+
+          {/* Card 2: Aging Stock Watch */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-purple-50 text-purple-600">
+                    <Hourglass className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900">Aging Stock Alert</h3>
+                </div>
+                <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-200/80">
+                  &gt;{agingSettings.agingDays} days
+                </span>
+              </div>
+
+              {agingProducts.length > 0 ? (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {agingProducts.map((p: any) => {
+                    const age = getProductAgeInDays(p);
+                    return (
+                      <div
+                        key={p.id}
+                        className="p-2.5 rounded-xl bg-purple-50/50 border border-purple-100 flex items-center justify-between text-xs"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <p className="font-semibold text-slate-900 truncate">{p.name || p.title}</p>
+                          <p className="text-[11px] text-purple-700 font-semibold">{age} days in stock</p>
+                        </div>
+                        <span className="font-bold text-slate-800 text-xs">
+                          ₹{p.sellingPrice || p.mrp || 0}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1 opacity-80" />
+                  No old stock exceeding threshold
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/products')}
+              className="w-full mt-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>Promote / Discount Aging Stock</span>
+            </button>
+          </div>
+
+          {/* Card 3: Pending Credit Collections */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-rose-50 text-rose-600">
+                    <CreditCard className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900">Pending Collections</h3>
+                </div>
+                <span className="text-[11px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200/80">
+                  ₹{Math.round(totalPendingAmount).toLocaleString('en-IN')}
+                </span>
+              </div>
+
+              {pendingCredits.length > 0 ? (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {pendingCredits.slice(0, 5).map((c: any, idx: number) => {
+                    const due = c.remainingAmount || (Number(c.sellingPrice) || 0) * (Number(c.quantity) || 1);
+                    return (
+                      <div
+                        key={c.id || idx}
+                        className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <p className="font-semibold text-slate-900 truncate">
+                            {c.creditCustomerName || c.customerName || 'Customer'}
+                          </p>
+                          <p className="text-[11px] text-slate-500">{c.customerPhone || 'No phone'}</p>
+                        </div>
+                        <span className="font-bold text-rose-700 text-xs">
+                          ₹{Math.round(due).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1 opacity-80" />
+                  Zero outstanding credit collections!
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/customers')}
+              className="w-full mt-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <span>View Customer Ledger</span>
+            </button>
           </div>
         </div>
 
-        {/* Bottom Row - Stats, Customers */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-          {/* Recent Sales */}
-          <div className="bg-white rounded-xl shadow-sm border-2 border-gray-100 p-4 md:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg md:text-xl font-bold text-gray-800">Recent Sales</h3>
-              <span className="text-xs text-gray-500">Today</span>
+        {/* Live Invoices Feed Table */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-2xs">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Recent Live Invoices</h3>
+              <p className="text-[11px] text-slate-500">Real-time store checkouts</p>
             </div>
-
-            <div className="space-y-3">
-              {recentSales.map((sale, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-white rounded-lg border-2 border-green-100 hover:border-green-200 transition-colors">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-8 h-8 bg-white border-2 border-green-300 rounded-full flex items-center justify-center text-green-500 text-xs font-bold shrink-0">
-                      {sale.title.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-gray-800 text-sm truncate">{sale.title}</p>
-                      <p className="text-xs text-gray-500">Qty: {sale.quantity}</p>
-                    </div>
-                  </div>
-                  <span className="text-sm font-bold text-green-500 shrink-0 ml-2">₹{sale.sellingPrice}</span>
-                </div>
-              ))}
-              {recentSales.length === 0 && (
-                <p className="text-center text-gray-400 py-8 text-sm">No recent sales</p>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/overall-sales')}
+              className="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 cursor-pointer"
+            >
+              All Invoices <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
 
-          {/* Top Customers */}
-          <div className="bg-white rounded-xl shadow-sm border-2 border-gray-100 p-4 md:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg md:text-xl font-bold text-gray-800">Top Customers</h3>
-              <button className="text-sm text-blue-500 hover:text-blue-600 font-medium">View All →</button>
-            </div>
-
-            <div className="space-y-3">
-              {topCustomers.map((customer, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-white rounded-lg border-2 border-blue-100 hover:border-blue-200 transition-colors">
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 bg-white border-2 border-blue-300 rounded-full flex items-center justify-center text-blue-500 font-bold text-sm shrink-0">
-                      {customer.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-semibold text-gray-800 text-sm truncate">{customer.name}</p>
-                      <p className="text-xs text-gray-500">{customer.orders} orders</p>
-                    </div>
-                  </div>
-                  <span className="text-sm font-bold text-blue-500 shrink-0 ml-2">₹{customer.total.toFixed(0)}</span>
-                </div>
-              ))}
-              {topCustomers.length === 0 && (
-                <p className="text-center text-gray-400 py-8 text-sm">No customer data available</p>
-              )}
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="border-b border-slate-100 text-slate-400 uppercase text-[10px] tracking-wider">
+                  <th className="py-2.5 font-bold">Item / SKU</th>
+                  <th className="py-2.5 font-bold">Customer</th>
+                  <th className="py-2.5 font-bold">Payment</th>
+                  <th className="py-2.5 font-bold text-right">Qty</th>
+                  <th className="py-2.5 font-bold text-right">Total (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {recentBills.map((item: any) => {
+                  const fin = getItemFinancials(item);
+                  const mode = (item.paymentMode || 'cash').toLowerCase();
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-2.5 pr-2">
+                        <p className="font-semibold text-slate-900 truncate max-w-[220px]">{item.title}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{item.invoiceNo || item.id?.substring(0, 8)}</p>
+                      </td>
+                      <td className="py-2.5 pr-2">
+                        <span className="font-medium text-slate-700 truncate block max-w-[150px]">
+                          {item.customerName || 'Walk In Customer'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-2">
+                        <span
+                          className="px-2 py-0.5 rounded-full text-[10px] font-bold capitalize"
+                          style={{
+                            backgroundColor: `${PAYMENT_COLORS[mode] || '#64748B'}15`,
+                            color: PAYMENT_COLORS[mode] || '#64748B',
+                          }}
+                        >
+                          {PAYMENT_LABELS[mode] || mode}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-right font-semibold text-slate-700">
+                        {item.quantity || 1}
+                      </td>
+                      <td className="py-2.5 text-right font-bold text-blue-700 tabular-nums">
+                        ₹{Math.round(fin.netTotal).toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {recentBills.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
+                      No transactions recorded in this period.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        </div>
-
-        {/* Top Products Chart */}
-        <div className="mt-4 md:mt-6">
-          <TopProductsChart items={billingItems} />
         </div>
       </main>
     </div>

@@ -6,6 +6,7 @@ import { ToastProvider } from './context/ToastContext';
 import { AttendanceProvider } from '@/context/AttendanceContext';
 import Login from './components/Login';
 import HubDashboard from './pages/HubDashboard';
+import Dashboard from './pages/Dashboard';
 import Settings from './pages/Settings';
 import AddEntry from './pages/AddEntry';
 import AddExpense from './pages/AddExpense';
@@ -72,6 +73,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <HubDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/branch-dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
                   </ProtectedRoute>
                 }
               />
