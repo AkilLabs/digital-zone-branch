@@ -4,7 +4,7 @@ import { useStore } from '../context/StoreContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 import LocationSwitcher from '../components/LocationSwitcher';
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteField, collection, getDocs, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import shopLogo from '../assets/logo.png';
 import { getCurrentPosition } from '../utils/geolocation';
@@ -44,6 +44,8 @@ import {
 import {
   getCachedStockAgingSettings,
   setCachedStockAgingSettings,
+  getCachedEmployeeTargets,
+  setCachedEmployeeTargets,
   type StockAgingSettings,
   type EmployeeTarget
 } from '../utils/stockAging';
@@ -135,7 +137,7 @@ const Settings: React.FC = () => {
   const [agingIncentiveBasisInput, setAgingIncentiveBasisInput] = useState<'sales_amount' | 'profit'>(() => getCachedStockAgingSettings().incentiveBasis);
 
   // HQ Employee Targets States
-  const [employeeTargets, setEmployeeTargets] = useState<EmployeeTarget[]>([]);
+  const [employeeTargets, setEmployeeTargets] = useState<EmployeeTarget[]>(() => getCachedEmployeeTargets());
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [savingTarget, setSavingTarget] = useState(false);
   const [showTargetModal, setShowTargetModal] = useState(false);
@@ -370,12 +372,43 @@ const Settings: React.FC = () => {
   const fetchEmployeeTargets = async () => {
     setLoadingTargets(true);
     try {
-      const snap = await getDocs(collection(db, 'employeeTargets'));
-      const list: EmployeeTarget[] = snap.docs.map(d => ({
-        id: d.id,
-        ...d.data()
-      } as EmployeeTarget));
-      setEmployeeTargets(list);
+      let list: EmployeeTarget[] = [];
+      // 1. Primary read: doc(db, 'settings', 'employeeTargets') - covered by standard /settings/{settingId} security rule
+      try {
+        const sSnap = await getDoc(doc(db, 'settings', 'employeeTargets'));
+        if (sSnap.exists() && sSnap.data()?.targets) {
+          const targetsMap = sSnap.data().targets;
+          list = Object.entries(targetsMap).map(([id, val]: [string, any]) => ({
+            id,
+            ...val
+          } as EmployeeTarget));
+        }
+      } catch (err) {
+        console.warn('Could not read settings/employeeTargets:', err);
+      }
+
+      // 2. Fallback to reading root collection if settings doc not initialized
+      if (list.length === 0) {
+        try {
+          const snap = await getDocs(collection(db, 'employeeTargets'));
+          list = snap.docs.map(d => ({
+            id: d.id,
+            ...d.data()
+          } as EmployeeTarget));
+        } catch (rootErr) {
+          console.warn('Could not read root employeeTargets collection:', rootErr);
+        }
+      }
+
+      if (list.length > 0) {
+        setEmployeeTargets(list);
+        setCachedEmployeeTargets(list);
+      } else {
+        const cached = getCachedEmployeeTargets();
+        if (cached.length > 0) {
+          setEmployeeTargets(cached);
+        }
+      }
     } catch (err) {
       console.warn('Could not fetch employee targets:', err);
     } finally {
@@ -418,22 +451,53 @@ const Settings: React.FC = () => {
     }
     setSavingTarget(true);
     try {
-      const targetDocRef = doc(db, 'employeeTargets', targetForm.employeeId);
       const payload: Omit<EmployeeTarget, 'id'> = {
         employeeId: targetForm.employeeId,
         employeeName: targetForm.employeeName,
         period: targetForm.period,
         metric: targetForm.metric,
         targetAmount: amt,
-        updatedAt: serverTimestamp(),
+        updatedAt: new Date().toISOString(),
       };
-      await setDoc(targetDocRef, payload, { merge: true });
+
+      // 1. Primary write: doc(db, 'settings', 'employeeTargets')
+      // Guaranteed allowed under /settings/{settingId} security rules
+      const settingsTargetDocRef = doc(db, 'settings', 'employeeTargets');
+      await setDoc(
+        settingsTargetDocRef,
+        {
+          targets: {
+            [targetForm.employeeId]: payload
+          },
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      );
+
+      // 2. Also attempt mirror save to root collection (non-blocking if permissions haven't been deployed in cloud)
+      try {
+        const rootDocRef = doc(db, 'employeeTargets', targetForm.employeeId);
+        await setDoc(rootDocRef, { ...payload, updatedAt: serverTimestamp() }, { merge: true });
+      } catch (rootErr) {
+        console.warn('Root employeeTargets collection write skipped or not permitted:', rootErr);
+      }
+
+      // 3. Update local state and cache immediately
+      setEmployeeTargets(prev => {
+        const existingIndex = prev.findIndex(t => t.employeeId === targetForm.employeeId);
+        const updatedItem: EmployeeTarget = { id: targetForm.employeeId, ...payload };
+        const next = existingIndex >= 0
+          ? prev.map((t, idx) => (idx === existingIndex ? updatedItem : t))
+          : [...prev, updatedItem];
+        setCachedEmployeeTargets(next);
+        return next;
+      });
+
       success(`Target updated successfully for ${targetForm.employeeName}!`);
       setShowTargetModal(false);
-      fetchEmployeeTargets();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save employee target:', err);
-      error('Failed to save target. Please try again.');
+      error(err?.message || 'Failed to save target. Please try again.');
     } finally {
       setSavingTarget(false);
     }
@@ -442,9 +506,31 @@ const Settings: React.FC = () => {
   const handleDeleteEmployeeTarget = async (employeeId: string, employeeName: string) => {
     if (!window.confirm(`Remove performance target for ${employeeName}?`)) return;
     try {
-      await deleteDoc(doc(db, 'employeeTargets', employeeId));
+      // 1. Delete from settings/employeeTargets map
+      const settingsTargetDocRef = doc(db, 'settings', 'employeeTargets');
+      try {
+        await updateDoc(settingsTargetDocRef, {
+          [`targets.${employeeId}`]: deleteField(),
+          updatedAt: serverTimestamp()
+        });
+      } catch (e) {
+        console.warn('Could not updateDoc on settings/employeeTargets:', e);
+      }
+
+      // 2. Mirror delete on root collection (non-blocking)
+      try {
+        await deleteDoc(doc(db, 'employeeTargets', employeeId));
+      } catch (rootErr) {
+        // Ignored
+      }
+
+      // 3. Update local state and cache
+      setEmployeeTargets(prev => {
+        const next = prev.filter(t => t.employeeId !== employeeId);
+        setCachedEmployeeTargets(next);
+        return next;
+      });
       success(`Target removed for ${employeeName}`);
-      setEmployeeTargets(prev => prev.filter(t => t.employeeId !== employeeId));
     } catch (err) {
       console.error('Failed to delete target:', err);
       error('Failed to remove target.');

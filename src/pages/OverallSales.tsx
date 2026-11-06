@@ -110,6 +110,8 @@ import {
 } from 'lucide-react';
 import {
   getCachedStockAgingSettings,
+  getCachedEmployeeTargets,
+  setCachedEmployeeTargets,
   type StockAgingSettings,
   type EmployeeTarget
 } from '../utils/stockAging';
@@ -493,7 +495,7 @@ const OverallSales: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [showCostCode, setShowCostCode] = useState<boolean>(true);
   const [showAgingOnly, setShowAgingOnly] = useState<boolean>(false);
-  const [employeeTargets, setEmployeeTargets] = useState<EmployeeTarget[]>([]);
+  const [employeeTargets, setEmployeeTargets] = useState<EmployeeTarget[]>(() => getCachedEmployeeTargets());
   const [stockAgingSettings, setStockAgingSettings] = useState<StockAgingSettings>(getCachedStockAgingSettings());
 
   // Pagination & Sorting
@@ -819,19 +821,57 @@ const OverallSales: React.FC = () => {
         console.warn('Error loading shopDetails:', err);
       }
 
+      // Fetch employee targets from doc(db, 'settings', 'employeeTargets') or fallback
       try {
-        const targetsSnap = await getDocs(collection(db, 'employeeTargets'));
-        const targets = targetsSnap.docs.map(d => ({ id: d.id, ...d.data() } as EmployeeTarget));
-        setEmployeeTargets(targets);
+        let targetsList: EmployeeTarget[] = [];
+        try {
+          const sSnap = await getDoc(doc(db, 'settings', 'employeeTargets'));
+          if (sSnap.exists() && sSnap.data()?.targets) {
+            const targetsMap = sSnap.data().targets;
+            targetsList = Object.entries(targetsMap).map(([id, val]: [string, any]) => ({
+              id,
+              ...val
+            } as EmployeeTarget));
+          }
+        } catch (err) {
+          console.warn('Could not read settings/employeeTargets:', err);
+        }
 
-        const sSnap = await getDoc(doc(db, 'projectSettings', 'default'));
+        if (targetsList.length === 0) {
+          try {
+            const targetsSnap = await getDocs(collection(db, 'employeeTargets'));
+            targetsList = targetsSnap.docs.map(d => ({ id: d.id, ...d.data() } as EmployeeTarget));
+          } catch (rootErr) {
+            console.warn('Could not read root employeeTargets collection:', rootErr);
+          }
+        }
+
+        if (targetsList.length > 0) {
+          setEmployeeTargets(targetsList);
+          setCachedEmployeeTargets(targetsList);
+        }
+      } catch (err) {
+        console.warn('Error loading targets:', err);
+      }
+
+      // Fetch stock aging settings independently
+      try {
+        const sSnap = await getDoc(doc(db, 'settings', 'projectSettings'));
         if (sSnap.exists() && sSnap.data()?.stockAgingSettings) {
           const s = sSnap.data().stockAgingSettings;
           setStockAgingSettings(s);
           localStorage.setItem('dz_stock_aging_settings', JSON.stringify(s));
+        } else {
+          // fallback to projectSettings/default
+          const defSnap = await getDoc(doc(db, 'projectSettings', 'default'));
+          if (defSnap.exists() && defSnap.data()?.stockAgingSettings) {
+            const s = defSnap.data().stockAgingSettings;
+            setStockAgingSettings(s);
+            localStorage.setItem('dz_stock_aging_settings', JSON.stringify(s));
+          }
         }
       } catch (err) {
-        console.warn('Error loading targets or aging settings:', err);
+        console.warn('Error loading aging settings:', err);
       }
     };
 

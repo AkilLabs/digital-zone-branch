@@ -86,6 +86,12 @@ service cloud.firestore {
       allow write: if isOwnerOrAdmin();
     }
     
+    // Employee Targets collection (HQ performance targets)
+    match /employeeTargets/{targetId} {
+      allow read: if isSignedIn();
+      allow write: if isOwnerOrAdmin();
+    }
+    
     // Billing sequential counters (legacy root-level)
     match /counters/{counterId} {
       allow read, write: if isSignedIn();

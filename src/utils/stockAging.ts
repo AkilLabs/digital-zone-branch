@@ -15,6 +15,7 @@ export const DEFAULT_STOCK_AGING_SETTINGS: StockAgingSettings = {
 };
 
 const STORAGE_KEY = 'dz_stock_aging_settings';
+const TARGETS_STORAGE_KEY = 'dz_employee_targets';
 
 export const getCachedStockAgingSettings = (): StockAgingSettings => {
   try {
@@ -38,6 +39,25 @@ export const setCachedStockAgingSettings = (settings: StockAgingSettings): void 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   } catch (err) {
     console.warn('Could not cache stock aging settings:', err);
+  }
+};
+
+export const getCachedEmployeeTargets = (): EmployeeTarget[] => {
+  try {
+    const raw = localStorage.getItem(TARGETS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+export const setCachedEmployeeTargets = (targets: EmployeeTarget[]): void => {
+  try {
+    localStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(targets));
+  } catch (err) {
+    console.warn('Could not cache employee targets:', err);
   }
 };
 
