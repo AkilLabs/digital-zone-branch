@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
 import type { Product, ShopDetails } from '../types';
-import { Printer, X, QrCode, Tag } from 'lucide-react';
+import { Printer, X, Minus, Plus, QrCode, CheckCircle2 } from 'lucide-react';
 import logo from '../assets/logo.png';
 import { encodePrice } from '../utils/secretCode';
 
@@ -13,6 +13,68 @@ interface ProductLabelProps {
   isNewProduct?: boolean; // Flag to indicate if this is a newly added product
 }
 
+// A4 sheet layout: 4 columns × 12 rows of 48mm × 24mm stickers
+const LABELS_PER_SHEET = 48;
+const MAX_COPIES = 999;
+
+const escapeHtml = (value: unknown) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const clampCopies = (n: number) => Math.min(MAX_COPIES, Math.max(0, Math.floor(Number.isFinite(n) ? n : 0)));
+
+const Stepper: React.FC<{ value: number; onChange: (n: number) => void; size?: 'sm' | 'lg'; label: string }> = ({
+  value,
+  onChange,
+  size = 'sm',
+  label
+}) => {
+  const btn =
+    size === 'lg'
+      ? 'w-11 h-11 rounded-xl'
+      : 'w-8 h-8 rounded-lg';
+  const input =
+    size === 'lg'
+      ? 'w-20 h-11 text-lg rounded-xl'
+      : 'w-12 h-8 text-sm rounded-lg';
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <button
+        type="button"
+        aria-label={`Fewer copies of ${label}`}
+        onClick={() => onChange(value - 1)}
+        disabled={value <= 0}
+        className={`${btn} flex items-center justify-center border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+      >
+        <Minus className="w-4 h-4" />
+      </button>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={0}
+        max={MAX_COPIES}
+        value={value}
+        aria-label={`Copies of ${label}`}
+        onFocus={e => e.target.select()}
+        onChange={e => onChange(parseInt(e.target.value, 10) || 0)}
+        className={`${input} text-center font-semibold tabular-nums text-slate-900 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
+      />
+      <button
+        type="button"
+        aria-label={`More copies of ${label}`}
+        onClick={() => onChange(value + 1)}
+        disabled={value >= MAX_COPIES}
+        className={`${btn} flex items-center justify-center border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+    </div>
+  );
+};
+
 const ProductLabel: React.FC<ProductLabelProps> = ({
   product,
   products,
@@ -20,48 +82,43 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
   onClose,
   isNewProduct = false
 }) => {
+  // Normalise to a single list so single + bulk share one UI
+  const items = useMemo<Product[]>(
+    () => (products && products.length > 0 ? products : product ? [product] : []),
+    [product, products]
+  );
+  const isSingle = items.length === 1;
+
+  const [copies, setCopies] = useState<number[]>(() => items.map(p => Math.max(1, p.quantity || 1)));
+  const [previewIndex, setPreviewIndex] = useState(0);
   const [qrCodeDataUrls, setQrCodeDataUrls] = useState<{ [key: string]: string }>({});
   const [logoDataUrl, setLogoDataUrl] = useState<string>('');
 
-  // Determine if we're working with single or multiple products
-  const singleProduct = product || (products && products.length === 1 ? products[0] : null);
-  const isMultiple = Boolean(products && products.length > 1);
+  const shopName = shopDetails?.shopName || 'Digital Zone';
 
-  // Generate QR Codes and convert logo to base64
   useEffect(() => {
+    setCopies(items.map(p => Math.max(1, p.quantity || 1)));
+    setPreviewIndex(0);
+  }, [items]);
+
+  // Generate QR codes and convert logo to base64
+  useEffect(() => {
+    let cancelled = false;
+
     const generateQRCodes = async () => {
       try {
         const qrUrls: { [key: string]: string } = {};
-
-        if (products && products.length > 0) {
-          for (const prod of products) {
-            const qrData = String(prod.productCode || '');
-            const qrDataUrl = await QRCode.toDataURL(qrData, {
-              width: 200,
-              margin: 1,
-              errorCorrectionLevel: 'L',
-              color: {
-                dark: '#000000',
-                light: '#FFFFFF'
-              }
-            });
-            qrUrls[prod.productCode!] = qrDataUrl;
-          }
-        } else if (product) {
-          const qrData = String(product.productCode || '');
-          const qrDataUrl = await QRCode.toDataURL(qrData, {
+        for (const prod of items) {
+          const code = String(prod.productCode || '');
+          if (qrUrls[code]) continue;
+          qrUrls[code] = await QRCode.toDataURL(code, {
             width: 200,
             margin: 1,
             errorCorrectionLevel: 'L',
-            color: {
-              dark: '#000000',
-              light: '#FFFFFF'
-            }
+            color: { dark: '#000000', light: '#FFFFFF' }
           });
-          qrUrls[product.productCode!] = qrDataUrl;
         }
-
-        setQrCodeDataUrls(qrUrls);
+        if (!cancelled) setQrCodeDataUrls(qrUrls);
       } catch (error) {
         console.error('Error generating QR codes:', error);
       }
@@ -75,10 +132,9 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
         canvas.width = img.width;
         canvas.height = img.height;
         const ctx = canvas.getContext('2d');
-        if (ctx) {
+        if (ctx && !cancelled) {
           ctx.drawImage(img, 0, 0);
-          const dataUrl = canvas.toDataURL('image/png');
-          setLogoDataUrl(dataUrl);
+          setLogoDataUrl(canvas.toDataURL('image/png'));
         }
       };
       img.src = logo;
@@ -86,95 +142,79 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
 
     generateQRCodes();
     convertLogoToBase64();
-  }, [product, products]);
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
+
+  // Escape closes the dialog
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const totalLabels = copies.reduce((sum, n) => sum + n, 0);
+  const sheets = Math.ceil(totalLabels / LABELS_PER_SHEET);
+  const qrReady = items.every(p => qrCodeDataUrls[String(p.productCode || '')]);
+  const previewProduct = items[previewIndex] || items[0];
+
+  const setCopyAt = (index: number, value: number) =>
+    setCopies(prev => prev.map((n, i) => (i === index ? clampCopies(value) : n)));
+
+  const setAll = (mode: 'one' | 'stock') =>
+    setCopies(items.map(p => (mode === 'one' ? 1 : clampCopies(Math.max(1, p.quantity || 0)))));
+
+  const allOne = copies.every(n => n === 1);
+  const allStock = copies.every((n, i) => n === clampCopies(Math.max(1, items[i].quantity || 0)));
 
   const handlePrint = () => {
+    if (totalLabels === 0 || !qrReady) return;
+
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('Please allow pop-ups to print barcode labels');
+      alert('Pop-ups are blocked. Allow pop-ups for this site to print labels.');
       return;
     }
 
+    const logoSrc = logoDataUrl || logo;
     const labelList: string[] = [];
-    let totalLabels = 0;
-    let titleText = '';
 
-    if (products && products.length > 0) {
-      products.forEach((prod) => {
-        const qrDataUrl = qrCodeDataUrls[prod.productCode!];
-        for (let i = 0; i < prod.quantity; i++) {
-          labelList.push(`
-            <div class="label">
-              <div class="label-content">
-                <div class="label-header">
-                  <div class="header-left">
-                    <img src="${logoDataUrl || logo}" alt="Logo" class="label-logo" />
-                    <div class="shop-name">${shopDetails?.shopName || 'Digital Zone'}</div>
-                  </div>
-                  <div class="secret-cost">${encodePrice(prod.cost)}</div>
-                </div>
-                
-                <div class="label-body">
-                  <img src="${qrDataUrl}" alt="QR" class="body-qr-code" />
-                  <div class="product-name">
-                    ${prod.name}
-                  </div>
-                </div>
-                
-                <div class="label-footer">
-                  <span class="product-code">${prod.productCode}</span>
-                  <span class="product-mrp">MRP: ₹${prod.mrp.toFixed(2)}</span>
-                </div>
+    items.forEach((prod, index) => {
+      const qrDataUrl = qrCodeDataUrls[String(prod.productCode || '')];
+      const labelHtml = `
+        <div class="label">
+          <div class="label-content">
+            <div class="label-header">
+              <div class="header-left">
+                <img src="${logoSrc}" alt="" class="label-logo" />
+                <div class="shop-name">${escapeHtml(shopName)}</div>
               </div>
+              <div class="secret-cost">${escapeHtml(encodePrice(prod.cost))}</div>
             </div>
-          `);
-        }
-        totalLabels += prod.quantity;
-      });
-      titleText = `Product Labels - ${products.length} products (${totalLabels} labels)`;
-    } else if (product) {
-      const qrDataUrl = qrCodeDataUrls[product.productCode!];
-      for (let i = 0; i < product.quantity; i++) {
-        labelList.push(`
-          <div class="label">
-            <div class="label-content">
-              <div class="label-header">
-                <div class="header-left">
-                  <img src="${logoDataUrl || logo}" alt="Logo" class="label-logo" />
-                  <div class="shop-name">${shopDetails?.shopName || 'Digital Zone'}</div>
-                </div>
-                <div class="secret-cost">${encodePrice(product.cost)}</div>
-              </div>
-              
-              <div class="label-body">
-                <img src="${qrDataUrl}" alt="QR" class="body-qr-code" />
-                <div class="product-name">
-                  ${product.name}
-                </div>
-              </div>
-              
-              <div class="label-footer">
-                <span class="product-code">${product.productCode}</span>
-                <span class="product-mrp">MRP: ₹${product.mrp.toFixed(2)}</span>
-              </div>
+            <div class="label-body">
+              <img src="${qrDataUrl}" alt="" class="body-qr-code" />
+              <div class="product-name">${escapeHtml(prod.name)}</div>
+            </div>
+            <div class="label-footer">
+              <span class="product-code">${escapeHtml(prod.productCode)}</span>
+              <span class="product-mrp">MRP: ₹${Number(prod.mrp || 0).toFixed(2)}</span>
             </div>
           </div>
-        `);
-      }
-      titleText = `Product Labels - ${product.name} (${product.quantity} labels)`;
-      totalLabels = product.quantity;
+        </div>`;
+      for (let i = 0; i < copies[index]; i++) labelList.push(labelHtml);
+    });
+
+    let allPagesHTML = '';
+    for (let i = 0; i < labelList.length; i += LABELS_PER_SHEET) {
+      allPagesHTML += `<div class="labels-container">${labelList.slice(i, i + LABELS_PER_SHEET).join('')}</div>`;
     }
 
-    const labelsPerPage = 48;
-    let allPagesHTML = '';
-    for (let i = 0; i < labelList.length; i += labelsPerPage) {
-      const pageLabels = labelList.slice(i, i + labelsPerPage).join('');
-      allPagesHTML += `
-        <div class="labels-container">
-          ${pageLabels}
-        </div>
-      `;
-    }
+    const titleText = isSingle
+      ? `Labels - ${escapeHtml(items[0].name)} (${totalLabels})`
+      : `Labels - ${items.length} products (${totalLabels})`;
 
     const labelHTML = `
       <!DOCTYPE html>
@@ -182,24 +222,9 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
         <head>
           <title>${titleText}</title>
           <style>
-            * {
-              margin: 0;
-              padding: 0;
-              box-sizing: border-box;
-            }
-            
-            @page {
-              size: A4;
-              margin: 0.45cm;
-            }
-            
-            body {
-              font-family: 'Segoe UI', Arial, sans-serif;
-              background: white;
-              padding: 0;
-              margin: 0;
-            }
-            
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            @page { size: A4; margin: 0.45cm; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; background: white; }
             .labels-container {
               display: grid;
               grid-template-columns: repeat(4, 4.8cm);
@@ -211,9 +236,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               height: 28.8cm;
               page-break-after: always;
               break-after: page;
-              box-sizing: border-box;
             }
-            
             .label {
               width: 4.8cm;
               height: 2.4cm;
@@ -223,9 +246,7 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               page-break-inside: avoid;
               break-inside: avoid-page;
               overflow: hidden;
-              box-sizing: border-box;
             }
-            
             .label-content {
               width: 100%;
               height: 100%;
@@ -234,7 +255,6 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               flex-direction: column;
               justify-content: space-between;
             }
-            
             .label-header {
               display: flex;
               align-items: center;
@@ -243,27 +263,9 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               border-bottom: 0.2px solid #eee;
               height: 3.8mm;
             }
-            
-            .header-left {
-              display: flex;
-              align-items: center;
-              gap: 1mm;
-              overflow: hidden;
-            }
-            
-            .secret-cost {
-              font-size: 4.5pt;
-              font-family: monospace;
-              color: #777;
-              white-space: nowrap;
-            }
-            
-            .label-logo {
-              width: 3.2mm;
-              height: 3.2mm;
-              object-fit: contain;
-            }
-            
+            .header-left { display: flex; align-items: center; gap: 1mm; overflow: hidden; }
+            .secret-cost { font-size: 4.5pt; font-family: monospace; color: #777; white-space: nowrap; }
+            .label-logo { width: 3.2mm; height: 3.2mm; object-fit: contain; }
             .shop-name {
               font-size: 4.5pt;
               font-weight: 600;
@@ -273,23 +275,8 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               text-overflow: ellipsis;
               color: #444;
             }
-            
-            .label-body {
-              flex: 1;
-              display: flex;
-              align-items: center;
-              gap: 1.2mm;
-              overflow: hidden;
-              padding: 0.5mm 0;
-            }
-            
-            .body-qr-code {
-              width: 9.5mm;
-              height: 9.5mm;
-              object-fit: contain;
-              flex-shrink: 0;
-            }
-            
+            .label-body { flex: 1; display: flex; align-items: center; gap: 1.2mm; overflow: hidden; padding: 0.5mm 0; }
+            .body-qr-code { width: 9.5mm; height: 9.5mm; object-fit: contain; flex-shrink: 0; }
             .product-name {
               flex: 1;
               font-size: 6.5pt;
@@ -302,7 +289,6 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               -webkit-box-orient: vertical;
               color: #222;
             }
-            
             .label-footer {
               display: flex;
               justify-content: space-between;
@@ -311,43 +297,19 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
               border-top: 0.2px solid #eee;
               height: 3.5mm;
             }
-            
-            .product-code {
-              font-size: 5pt;
-              font-family: monospace;
-              font-weight: normal;
-              color: #666;
-            }
-            
-            .product-mrp {
-              font-size: 6pt;
-              font-weight: bold;
-              color: #000;
-            }
-            
+            .product-code { font-size: 5pt; font-family: monospace; color: #666; }
+            .product-mrp { font-size: 6pt; font-weight: bold; color: #000; }
             @media print {
-              body {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-              }
-              .label {
-                border: 0.1mm solid transparent;
-              }
-              .labels-container {
-                page-break-after: always;
-              }
+              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+              .label { border: 0.1mm solid transparent; }
             }
           </style>
         </head>
-        <body>
-          ${allPagesHTML}
-        </body>
-      </html>
-    `;
+        <body>${allPagesHTML}</body>
+      </html>`;
 
     printWindow.document.write(labelHTML);
     printWindow.document.close();
-
     printWindow.onload = () => {
       setTimeout(() => {
         printWindow.print();
@@ -356,179 +318,227 @@ const ProductLabel: React.FC<ProductLabelProps> = ({
     };
   };
 
-  const totalLabelCount = isMultiple && products
-    ? products.reduce((sum, p) => sum + (p.quantity || 1), 0)
-    : (singleProduct?.quantity || 1);
+  if (items.length === 0) return null;
+
+  const renderPreview = (prod: Product) => {
+    const qr = qrCodeDataUrls[String(prod.productCode || '')];
+    return (
+      <div
+        className="bg-white rounded-md shadow-sm ring-1 ring-slate-200 flex overflow-hidden select-none"
+        style={{ width: 240, height: 120 }}
+        aria-label="Label preview"
+      >
+        <div className="flex flex-col justify-between w-full h-full p-2">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-1 h-5">
+            <div className="flex items-center gap-1 overflow-hidden">
+              <img src={logoDataUrl || logo} alt="" className="object-contain w-auto max-w-[20px] h-[14px]" />
+              <span className="font-semibold text-[8px] uppercase truncate text-slate-600">{shopName}</span>
+            </div>
+            <span className="font-mono text-[7.5px] text-slate-500">{encodePrice(prod.cost)}</span>
+          </div>
+          <div className="flex-1 flex items-center gap-2 overflow-hidden py-1">
+            {qr ? (
+              <img src={qr} alt="" className="w-[48px] h-[48px] object-contain shrink-0" />
+            ) : (
+              <div className="w-[48px] h-[48px] bg-slate-100 rounded flex items-center justify-center text-slate-300 shrink-0 animate-pulse">
+                <QrCode className="w-5 h-5" />
+              </div>
+            )}
+            <div
+              className="font-semibold text-[10px] leading-tight text-slate-900 overflow-hidden"
+              style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}
+            >
+              {prod.name}
+            </div>
+          </div>
+          <div className="flex justify-between items-center border-t border-slate-100 pt-1 h-5 text-[8px]">
+            <span className="font-mono text-slate-500">{prod.productCode}</span>
+            <span className="font-bold text-slate-900">MRP: ₹{Number(prod.mrp || 0).toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const stock = (p: Product) => Math.max(0, p.quantity || 0);
 
   return (
     <div
-      className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150"
+      className="fixed inset-0 bg-slate-900/40 flex items-end sm:items-center justify-center z-[60] sm:p-4"
       onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="print-labels-title"
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200/90 overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden"
+        onClick={e => e.stopPropagation()}
       >
-        {/* Minimal Modern Header */}
-        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
-              <QrCode className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                {isNewProduct ? 'Product Added • Print Barcode' :
-                  isMultiple ? 'Batch Barcode Labels' :
-                    'Barcode Sticker'}
-              </h2>
-              <p className="text-xs text-slate-500">
-                Standard thermal sheet preview • 48mm × 24mm
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4">
+          <div className="min-w-0">
+            {isNewProduct && (
+              <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 mb-1">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Product saved
               </p>
-            </div>
+            )}
+            <h2 id="print-labels-title" className="text-lg font-semibold text-slate-900">
+              {isSingle ? 'Print labels' : `Print labels for ${items.length} products`}
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">Choose how many stickers to print for each product.</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            aria-label="Close"
+            className="p-2 -mr-2 -mt-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Modal Content */}
-        <div className="p-4 sm:p-5">
-          {isMultiple && products ? (
-            /* Multiple Products Manifest */
-            <div className="space-y-3 mb-5">
-              <div className="flex items-center justify-between text-xs text-slate-500 px-1">
-                <span>Selected {products.length} Products</span>
-                <span className="font-semibold text-blue-600 font-mono">{totalLabelCount} stickers total</span>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 pb-4">
+          {/* Preview */}
+          <div className="rounded-xl bg-slate-50 border border-slate-100 py-5 flex flex-col items-center">
+            {renderPreview(previewProduct)}
+            <p className="text-xs text-slate-400 mt-3">
+              {isSingle ? 'Actual size 48 × 24 mm' : 'Tap a product below to preview its label'}
+            </p>
+          </div>
+
+          {isSingle ? (
+            /* Single product: one big stepper + quick picks */
+            <div className="mt-5">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-900">Copies</p>
+                  <p className="text-xs text-slate-500">{stock(items[0])} in stock</p>
+                </div>
+                <Stepper size="lg" label={items[0].name} value={copies[0]} onChange={n => setCopyAt(0, n)} />
               </div>
-              <div className="max-h-64 overflow-y-auto space-y-1.5 bg-slate-50/80 rounded-xl p-2.5 border border-slate-200/70">
-                {products.map((prod, index) => (
-                  <div
-                    key={prod.id || index}
-                    className="bg-white p-2.5 rounded-lg border border-slate-200 flex justify-between items-center text-xs"
+              <div className="flex flex-wrap gap-2 mt-3">
+                {[1, 5, 10].map(n => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setCopyAt(0, n)}
+                    className={`h-9 px-4 rounded-lg text-sm font-medium border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      copies[0] === n
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
                   >
-                    <div className="min-w-0 pr-2">
-                      <div className="font-bold text-slate-900 truncate">{prod.name}</div>
-                      <div className="text-[11px] text-slate-500 font-mono mt-0.5">
-                        Code: {prod.productCode} • MRP: ₹{prod.mrp?.toFixed(2)}
-                      </div>
-                    </div>
-                    <span className="px-2 py-1 rounded-md bg-blue-50 text-blue-700 font-mono font-bold text-xs shrink-0">
-                      {prod.quantity} {prod.quantity > 1 ? 'copies' : 'copy'}
-                    </span>
-                  </div>
+                    {n}
+                  </button>
                 ))}
+                {stock(items[0]) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCopyAt(0, stock(items[0]))}
+                    className={`h-9 px-4 rounded-lg text-sm font-medium border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                      copies[0] === stock(items[0])
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Same as stock ({stock(items[0])})
+                  </button>
+                )}
               </div>
             </div>
-          ) : singleProduct ? (
-            /* Single Product Minimal Sticker Preview */
-            <div className="space-y-4 mb-5">
-              {/* Sticker Preview Container */}
-              <div className="bg-slate-50 rounded-2xl p-4 sm:p-5 border border-slate-200/80 flex flex-col items-center justify-center">
-                <div
-                  className="bg-white shadow-md rounded-md border border-slate-200 flex overflow-hidden select-none transition-transform hover:scale-[1.02]"
-                  style={{
-                    width: '264px',
-                    height: '132px',
-                  }}
-                >
-                  <div className="flex flex-col justify-between w-full h-full p-2">
-                    {/* Sticker Header: Logo + Shop Name + Secret Code */}
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-1 h-5">
-                      <div className="flex items-center gap-1 overflow-hidden">
-                        <img
-                          src={logoDataUrl || logo}
-                          alt="Logo"
-                          className="object-contain w-auto max-w-[22px] h-[16px]"
-                        />
-                        <span className="font-bold text-[8px] uppercase tracking-wider truncate text-slate-700">
-                          {shopDetails?.shopName || 'Digital Zone'}
-                        </span>
-                      </div>
-                      <span className="font-mono text-[7.5px] font-bold text-slate-500 tracking-wider">
-                        {encodePrice(singleProduct.cost)}
-                      </span>
-                    </div>
-
-                    {/* Sticker Body: QR Code + Product Name */}
-                    <div className="flex-1 flex items-center gap-2 overflow-hidden py-1">
-                      {qrCodeDataUrls[singleProduct.productCode!] ? (
-                        <img
-                          src={qrCodeDataUrls[singleProduct.productCode!]}
-                          alt="QR"
-                          className="w-[52px] h-[52px] object-contain shrink-0"
-                        />
-                      ) : (
-                        <div className="w-[52px] h-[52px] bg-slate-100 rounded flex items-center justify-center text-slate-400">
-                          <QrCode className="w-6 h-6" />
-                        </div>
-                      )}
-                      <div
-                        className="font-bold text-[10px] leading-tight text-slate-900 overflow-hidden"
-                        style={{
-                          display: '-webkit-box',
-                          WebkitLineClamp: 3,
-                          WebkitBoxOrient: 'vertical',
-                        }}
-                      >
-                        {singleProduct.name}
-                      </div>
-                    </div>
-
-                    {/* Sticker Footer: Product Code + MRP */}
-                    <div className="flex justify-between items-center border-t border-slate-100 pt-1 h-5 text-[8px]">
-                      <span className="font-mono font-medium text-slate-600">
-                        {singleProduct.productCode}
-                      </span>
-                      <span className="font-bold text-slate-900 font-mono">
-                        MRP: ₹{singleProduct.mrp?.toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-400 font-medium mt-3 flex items-center gap-1.5">
-                  <Tag className="w-3 h-3" />
-                  <span>Actual print output: 4.8 cm × 2.4 cm standard sticker</span>
+          ) : (
+            /* Multiple products: list with per-row steppers */
+            <div className="mt-5">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <p className="text-sm font-medium text-slate-900">Copies per product</p>
+                <div className="inline-flex p-0.5 bg-slate-100 rounded-lg text-xs font-medium" role="group" aria-label="Set copies for all">
+                  <button
+                    type="button"
+                    onClick={() => setAll('one')}
+                    aria-pressed={allOne}
+                    className={`px-3 py-1.5 rounded-md transition-colors ${allOne ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    1 each
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAll('stock')}
+                    aria-pressed={allStock && !allOne}
+                    className={`px-3 py-1.5 rounded-md transition-colors ${allStock && !allOne ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    Same as stock
+                  </button>
                 </div>
               </div>
 
-              {/* Minimal Product Meta Row */}
-              <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200/80 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-bold text-slate-900">{singleProduct.productCode}</span>
-                  <span className="text-slate-400">•</span>
-                  <span className="text-slate-600 font-medium">{singleProduct.brand}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-500">Sticker copies:</span>
-                  <span className="font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                    {singleProduct.quantity}
-                  </span>
-                </div>
-              </div>
+              <ul className="divide-y divide-slate-100 border border-slate-200 rounded-xl">
+                {items.map((prod, index) => {
+                  const active = index === previewIndex;
+                  const skipped = copies[index] === 0;
+                  return (
+                    <li
+                      key={prod.id || `${prod.productCode}-${index}`}
+                      onClick={() => setPreviewIndex(index)}
+                      className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
+                        active ? 'bg-blue-50/60' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <span
+                        className={`w-1 self-stretch rounded-full ${active ? 'bg-blue-500' : 'bg-transparent'}`}
+                        aria-hidden="true"
+                      />
+                      <div className={`min-w-0 flex-1 ${skipped ? 'opacity-50' : ''}`}>
+                        <p className="text-sm font-medium text-slate-900 truncate">{prod.name}</p>
+                        <p className="text-xs text-slate-500 truncate">
+                          <span className="font-mono">{prod.productCode}</span>
+                          <span className="mx-1.5 text-slate-300">|</span>
+                          {stock(prod)} in stock
+                        </p>
+                      </div>
+                      <div onClick={e => e.stopPropagation()}>
+                        <Stepper label={prod.name} value={copies[index]} onChange={n => setCopyAt(index, n)} />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="text-xs text-slate-400 mt-2">Set a product to 0 to skip it.</p>
             </div>
-          ) : null}
+          )}
+        </div>
 
-          {/* Action Buttons: Modern Blue CTA */}
-          <div className="flex items-center gap-2.5 pt-1">
+        {/* Footer */}
+        <div className="border-t border-slate-100 px-5 py-4 bg-white">
+          <div className="flex items-center justify-between text-sm mb-3">
+            <span className="text-slate-500">
+              {sheets > 0 ? `Fits on ${sheets} A4 sheet${sheets > 1 ? 's' : ''}` : 'Nothing to print'}
+            </span>
+            <span className="font-semibold text-slate-900 tabular-nums">
+              {totalLabels} label{totalLabels === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+              className="h-11 px-5 rounded-xl text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
-              {isNewProduct ? 'Skip / Later' : 'Cancel'}
+              {isNewProduct ? 'Skip for now' : 'Cancel'}
             </button>
-
             <button
               type="button"
               onClick={handlePrint}
-              className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold shadow-xs hover:shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+              disabled={totalLabels === 0 || !qrReady}
+              className="flex-1 h-11 px-4 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500"
             >
               <Printer className="w-4 h-4" />
-              <span>Print {totalLabelCount} Barcode Sticker{totalLabelCount > 1 ? 's' : ''}</span>
+              {!qrReady
+                ? 'Preparing labels…'
+                : totalLabels === 0
+                  ? 'Add copies to print'
+                  : `Print ${totalLabels} label${totalLabels === 1 ? '' : 's'}`}
             </button>
           </div>
         </div>

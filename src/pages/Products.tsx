@@ -89,18 +89,11 @@ const Products: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
 
-  // Print single label modal
-  const [printQuantity, setPrintQuantity] = useState(1);
-  const [showPrintModal, setShowPrintModal] = useState(false);
-  const [productToPrint, setProductToPrint] = useState<Product | null>(null);
-
-  // Selection states for printing
+  // Selection states for printing labels
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
 
-  // Print all / multiple labels modal
-  const [showPrintAllModal, setShowPrintAllModal] = useState(false);
-  const [printQuantities, setPrintQuantities] = useState<{ [key: string]: number }>({});
+  // Multiple products sent to the label dialog
   const [productsToPrint, setProductsToPrint] = useState<Product[] | null>(null);
 
   // Delete confirmation modal states
@@ -175,10 +168,8 @@ const Products: React.FC = () => {
       } else if (e.key === 'Escape') {
         if (selectedProductForDetails) {
           setSelectedProductForDetails(null);
-        } else if (showPrintModal) {
-          setShowPrintModal(false);
-        } else if (showPrintAllModal) {
-          setShowPrintAllModal(false);
+        } else if (selectedProductForLabel || productsToPrint) {
+          // The label dialog handles its own Escape
         } else if (showEditModal) {
           setShowEditModal(false);
         } else if (showDeleteModal) {
@@ -189,6 +180,9 @@ const Products: React.FC = () => {
           setShowExportMenu(false);
         } else if (showAddMenu) {
           setShowAddMenu(false);
+        } else if (isSelectionMode) {
+          setIsSelectionMode(false);
+          setSelectedProductIds([]);
         }
       }
     };
@@ -197,8 +191,9 @@ const Products: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
     selectedProductForDetails,
-    showPrintModal,
-    showPrintAllModal,
+    selectedProductForLabel,
+    productsToPrint,
+    isSelectionMode,
     showEditModal,
     showDeleteModal,
     showCategoryDropdown,
@@ -585,35 +580,20 @@ const Products: React.FC = () => {
   };
 
   // Label print handlers
+  // Single product: open the label dialog straight away, defaulting copies to current stock
   const handlePrintLabel = (product: Product) => {
-    setProductToPrint(product);
-    setPrintQuantity(Math.max(1, product.quantity || 1));
-    setShowPrintModal(true);
+    setSelectedProductForLabel({ ...product, quantity: Math.max(1, product.quantity || 1) });
   };
 
-  const confirmPrintLabel = () => {
-    if (productToPrint) {
-      setSelectedProductForLabel({ ...productToPrint, quantity: printQuantity });
-      setShowPrintModal(false);
-    }
-  };
-
-  const handlePrintAllLabels = () => {
-    const initialQuantities: { [key: string]: number } = {};
-    filteredProducts.forEach(product => {
-      initialQuantities[product.id!] = 1;
-    });
-    setPrintQuantities(initialQuantities);
-    setShowPrintAllModal(true);
-  };
-
+  // Ticked products: open the label dialog with 1 copy each (editable in the dialog)
   const handlePrintSelectedLabels = () => {
-    const initialQuantities: { [key: string]: number } = {};
-    selectedProductIds.forEach(id => {
-      initialQuantities[id] = 1;
-    });
-    setPrintQuantities(initialQuantities);
-    setShowPrintAllModal(true);
+    const selected = filteredProducts
+      .filter(product => selectedProductIds.includes(product.id!))
+      .map(product => ({ ...product, quantity: 1 }));
+    if (selected.length === 0) return;
+    setProductsToPrint(selected);
+    setIsSelectionMode(false);
+    setSelectedProductIds([]);
   };
 
   const toggleSelectionMode = () => {
@@ -640,32 +620,8 @@ const Products: React.FC = () => {
     }
   };
 
-  const updatePrintQuantity = (productId: string, quantity: number) => {
-    setPrintQuantities(prev => ({
-      ...prev,
-      [productId]: Math.max(1, quantity)
-    }));
-  };
-
-  const confirmPrintAllLabels = () => {
-    const selectedProducts = selectedProductIds.length > 0
-      ? filteredProducts.filter(product => selectedProductIds.includes(product.id!))
-      : filteredProducts;
-
-    const productsWithQuantities = selectedProducts.map(product => ({
-      ...product,
-      quantity: printQuantities[product.id!] || 1
-    }));
-
-    if (productsWithQuantities.length > 0) {
-      setProductsToPrint(productsWithQuantities);
-    }
-
-    setShowPrintAllModal(false);
-    setIsSelectionMode(false);
-    setSelectedProductIds([]);
-    setPrintQuantities({});
-  };
+  const allFilteredSelected =
+    filteredProducts.length > 0 && filteredProducts.every(p => selectedProductIds.includes(p.id!));
 
   // Exports
   const exportToCSV = () => {
@@ -769,7 +725,7 @@ const Products: React.FC = () => {
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
-      <div className="max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4 pb-24 sm:pb-8">
+      <div className={`max-w-full mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4 ${isSelectionMode ? 'pb-44 md:pb-28' : 'pb-24 sm:pb-8'}`}>
 
         {/* COMPACT HEADER (Clean Project Style matching Purchases.tsx) */}
         <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -780,9 +736,6 @@ const Products: React.FC = () => {
             </h1>
             <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
               {filteredProducts.length} product{filteredProducts.length !== 1 ? 's' : ''} listed
-              {isSelectionMode && selectedProductIds.length > 0 && (
-                <span className="text-purple-600 font-semibold"> • {selectedProductIds.length} selected</span>
-              )}
               {currentStore?.name && (
                 <span className="text-gray-400 hidden md:inline"> • Location: <strong className="text-gray-700 font-medium">{currentStore.name}</strong></span>
               )}
@@ -821,40 +774,20 @@ const Products: React.FC = () => {
               <span className="hidden sm:inline">Refresh</span>
             </button>
 
-            {/* Selection Mode Toggle */}
+            {/* Print labels: enters pick mode, the floating bar at the bottom takes it from there */}
             <button
               type="button"
               onClick={toggleSelectionMode}
-              className={`py-2 px-3 sm:px-4 rounded-lg font-medium flex items-center gap-1.5 text-xs sm:text-sm transition-colors border shadow-sm ${
-                isSelectionMode
-                  ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700'
+              aria-pressed={isSelectionMode}
+              title={isSelectionMode ? 'Stop picking products' : 'Pick products and print their barcode labels'}
+              className={`py-2 px-3 sm:px-4 rounded-lg font-medium flex items-center gap-1.5 text-xs sm:text-sm transition-colors border shadow-sm ${isSelectionMode
+                  ? 'bg-gray-900 text-white border-gray-900 hover:bg-gray-800'
                   : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-              }`}
+                }`}
             >
-              <QrCode className="w-4 h-4" />
-              <span>{isSelectionMode ? `Cancel (${selectedProductIds.length})` : 'Select'}</span>
+              {isSelectionMode ? <X className="w-4 h-4" /> : <Printer className="w-4 h-4" />}
+              <span>{isSelectionMode ? 'Done' : 'Print labels'}</span>
             </button>
-
-            {/* Print Labels Button */}
-            {isSelectionMode && selectedProductIds.length > 0 ? (
-              <button
-                type="button"
-                onClick={handlePrintSelectedLabels}
-                className="bg-purple-600 text-white py-2 px-3 sm:px-4 rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center gap-1.5 text-xs sm:text-sm shadow-sm"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print ({selectedProductIds.length})</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handlePrintAllLabels}
-                className="bg-purple-600 text-white py-2 px-3 sm:px-4 rounded-lg hover:bg-purple-700 transition-colors font-medium flex items-center gap-1.5 text-xs sm:text-sm shadow-sm"
-              >
-                <Printer className="w-4 h-4" />
-                <span className="hidden sm:inline">Print All</span>
-              </button>
-            )}
 
             {/* Export Menu */}
             <div className="relative" ref={exportDropdownRef}>
@@ -1173,35 +1106,11 @@ const Products: React.FC = () => {
             </div>
           )}
 
-          {/* Selection Action Bar (when isSelectionMode) */}
+          {/* Pick-mode hint */}
           {isSelectionMode && (
-            <div className="mt-2.5 pt-2.5 border-t border-purple-200 bg-purple-50 -mx-2 sm:-mx-3 -mb-2 sm:-mb-3 p-2.5 rounded-b-lg flex items-center justify-between text-xs">
-              <span className="font-bold text-purple-900">
-                {selectedProductIds.length} product(s) selected
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={selectCurrentPage}
-                  className="px-2.5 py-1 bg-white border border-purple-300 text-purple-700 rounded font-semibold hover:bg-purple-100"
-                >
-                  {paginatedProducts.every(p => selectedProductIds.includes(p.id!)) ? 'Deselect Page' : 'Select Page'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProductIds(filteredProducts.map(p => p.id!).filter(Boolean))}
-                  className="px-2.5 py-1 bg-white border border-purple-300 text-purple-700 rounded font-semibold hover:bg-purple-100"
-                >
-                  Select All ({filteredProducts.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProductIds([])}
-                  className="text-gray-600 hover:underline px-1"
-                >
-                  Clear Selection
-                </button>
-              </div>
+            <div className="mt-2.5 pt-2.5 border-t border-blue-100 bg-blue-50 -mx-2 sm:-mx-3 -mb-2 sm:-mb-3 px-3 py-2.5 rounded-b-lg flex items-center gap-2 text-xs sm:text-sm text-blue-900">
+              <Printer className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>Tap the products you want labels for, then press <strong className="font-semibold">Print</strong> at the bottom.</span>
             </div>
           )}
         </div>
@@ -1245,21 +1154,20 @@ const Products: React.FC = () => {
                 return (
                   <div
                     key={product.id}
-                    onClick={() => !isSelectionMode && setSelectedProductForDetails(product)}
-                    className={`bg-white rounded-lg shadow-sm border p-4 transition-shadow ${
-                      isSelected ? 'border-purple-300 bg-purple-50/40 ring-1 ring-purple-300' : 'border-gray-200 hover:shadow-md'
-                    } ${!isSelectionMode ? 'cursor-pointer' : ''}`}
+                    onClick={() => (isSelectionMode ? toggleProductSelection(product.id!) : setSelectedProductForDetails(product))}
+                    className={`bg-white rounded-lg shadow-sm border p-4 transition-shadow cursor-pointer ${
+                      isSelected ? 'border-blue-400 bg-blue-50/50 ring-1 ring-blue-400' : 'border-gray-200 hover:shadow-md'
+                    }`}
                   >
                     <div className="flex items-start gap-3">
                       {isSelectionMode && (
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            toggleProductSelection(product.id!);
-                          }}
-                          className="mt-1 w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                          aria-label={`Select ${product.name}`}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => toggleProductSelection(product.id!)}
+                          className="mt-0.5 w-5 h-5 accent-blue-600 rounded border-gray-300 cursor-pointer"
                         />
                       )}
 
@@ -1388,9 +1296,10 @@ const Products: React.FC = () => {
                         <th className="px-4 py-3 text-center w-10">
                           <input
                             type="checkbox"
+                            aria-label="Select all on this page"
                             checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedProductIds.includes(p.id!))}
                             onChange={selectCurrentPage}
-                            className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                            className="w-4 h-4 accent-blue-600 rounded border-gray-300 cursor-pointer"
                           />
                         </th>
                       )}
@@ -1413,10 +1322,10 @@ const Products: React.FC = () => {
                       return (
                         <tr
                           key={product.id}
-                          onClick={() => !isSelectionMode && setSelectedProductForDetails(product)}
-                          className={`hover:bg-gray-50 transition-colors ${
-                            isSelected ? 'bg-purple-50/70' : ''
-                          } ${!isSelectionMode ? 'cursor-pointer' : ''}`}
+                          onClick={() => (isSelectionMode ? toggleProductSelection(product.id!) : setSelectedProductForDetails(product))}
+                          className={`transition-colors cursor-pointer ${
+                            isSelected ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-gray-50'
+                          }`}
                         >
                           {/* Selection Checkbox */}
                           {isSelectionMode && (
@@ -1424,8 +1333,9 @@ const Products: React.FC = () => {
                               <input
                                 type="checkbox"
                                 checked={isSelected}
+                                aria-label={`Select ${product.name}`}
                                 onChange={() => toggleProductSelection(product.id!)}
-                                className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                                className="w-4 h-4 accent-blue-600 rounded border-gray-300 cursor-pointer"
                               />
                             </td>
                           )}
@@ -1836,173 +1746,6 @@ const Products: React.FC = () => {
         </div>
       )}
 
-      {/* SINGLE PRINT LABEL MODAL */}
-      {showPrintModal && productToPrint && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-          onClick={() => setShowPrintModal(false)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md animate-in zoom-in-95"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <Printer className="h-5 w-5 text-purple-600" />
-                  Print Product Labels
-                </h3>
-                <p className="text-xs text-gray-500 mt-0.5">Configure print quantity</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPrintModal(false)}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="bg-purple-50 p-3.5 rounded-xl border border-purple-200 mb-4 text-xs">
-              <div className="font-bold text-gray-900 text-sm mb-1">{productToPrint.name}</div>
-              <div className="flex justify-between text-purple-800">
-                <span>Code: <strong className="font-mono">{productToPrint.productCode}</strong></span>
-                <span>Stock: <strong>{productToPrint.quantity} units</strong></span>
-              </div>
-            </div>
-
-            <div className="space-y-3 mb-5">
-              <label className="text-xs font-bold text-gray-700 block">Number of copies to print:</label>
-              <input
-                type="number"
-                min="1"
-                max="1000"
-                value={printQuantity}
-                onChange={(e) => setPrintQuantity(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                className="w-full px-3 py-2 text-center font-bold text-base border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-              />
-              <div className="grid grid-cols-4 gap-1.5">
-                {[1, 5, 10, productToPrint.quantity || 1].map((v, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setPrintQuantity(v)}
-                    className="py-1.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-xs font-semibold text-gray-700"
-                  >
-                    {i === 3 ? 'Match Stock' : v}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowPrintModal(false)}
-                className="flex-1 py-2.5 rounded-lg bg-gray-100 text-gray-700 font-semibold text-xs hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmPrintLabel}
-                className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm flex items-center justify-center gap-1.5"
-              >
-                <Printer className="h-4 w-4" />
-                Print {printQuantity}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* BULK PRINT LABELS MODAL */}
-      {showPrintAllModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-          onClick={() => setShowPrintAllModal(false)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xl max-h-[85vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                  <Printer className="h-5 w-5 text-purple-600" />
-                  Bulk Print Labels
-                </h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Configure copies for {selectedProductIds.length > 0 ? selectedProductIds.length : filteredProducts.length} product(s)
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPrintAllModal(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-2 mb-4 pr-1 text-xs">
-              {(selectedProductIds.length > 0
-                ? filteredProducts.filter(p => selectedProductIds.includes(p.id!))
-                : filteredProducts
-              ).map(product => (
-                <div key={product.id} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg border border-gray-200">
-                  <div className="min-w-0 pr-2">
-                    <div className="font-bold text-gray-900 truncate">{product.name}</div>
-                    <div className="text-gray-500 font-mono text-[11px]">Code: {product.productCode} • Stock: {product.quantity}</div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => updatePrintQuantity(product.id!, (printQuantities[product.id!] || 1) - 1)}
-                      className="w-7 h-7 bg-gray-200 hover:bg-gray-300 rounded font-bold"
-                    >
-                      -
-                    </button>
-                    <input
-                      type="number"
-                      min="1"
-                      value={printQuantities[product.id!] || 1}
-                      onChange={(e) => updatePrintQuantity(product.id!, parseInt(e.target.value, 10) || 1)}
-                      className="w-12 text-center py-1 border border-gray-300 rounded font-bold text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => updatePrintQuantity(product.id!, (printQuantities[product.id!] || 1) + 1)}
-                      className="w-7 h-7 bg-gray-200 hover:bg-gray-300 rounded font-bold"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-2 pt-3 border-t border-gray-200">
-              <button
-                type="button"
-                onClick={() => setShowPrintAllModal(false)}
-                className="flex-1 py-2.5 rounded-lg bg-gray-100 text-gray-700 font-semibold text-xs hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmPrintAllLabels}
-                className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white shadow-sm flex items-center justify-center gap-1.5"
-              >
-                <Printer className="h-4 w-4" />
-                Print All Labels
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* EDIT PRODUCT MODAL */}
       {showEditModal && productToEdit && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -2243,6 +1986,64 @@ const Products: React.FC = () => {
                 {deleteLoading === productToDelete.id ? 'Deleting...' : 'Delete'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* PRINT LABELS – FLOATING SELECTION BAR */}
+      {isSelectionMode && (
+        <div className="fixed inset-x-0 bottom-20 md:bottom-6 z-40 flex justify-center px-3 pointer-events-none">
+          <div
+            role="region"
+            aria-label="Print labels selection"
+            className="pointer-events-auto w-full max-w-xl bg-gray-900 text-white rounded-2xl shadow-2xl pl-4 pr-2 py-2 flex items-center gap-2 sm:gap-3"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold tabular-nums" aria-live="polite">
+                {selectedProductIds.length === 0
+                  ? 'No products picked'
+                  : `${selectedProductIds.length} product${selectedProductIds.length === 1 ? '' : 's'} picked`}
+              </p>
+              <div className="flex items-center gap-3 text-xs text-gray-300">
+                <button
+                  type="button"
+                  onClick={() =>
+                    allFilteredSelected
+                      ? setSelectedProductIds([])
+                      : setSelectedProductIds(filteredProducts.map(p => p.id!).filter(Boolean))
+                  }
+                  className="hover:text-white underline-offset-2 hover:underline focus-visible:outline-none focus-visible:underline"
+                >
+                  {allFilteredSelected ? 'Clear all' : `Pick all ${filteredProducts.length}`}
+                </button>
+                {selectedProductIds.length > 0 && !allFilteredSelected && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProductIds([])}
+                    className="hover:text-white underline-offset-2 hover:underline focus-visible:outline-none focus-visible:underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleSelectionMode}
+              className="h-10 px-3 rounded-xl text-sm font-medium text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintSelectedLabels}
+              disabled={selectedProductIds.length === 0}
+              className="h-10 px-4 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-900"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print{selectedProductIds.length > 0 ? ` (${selectedProductIds.length})` : ''}</span>
+            </button>
           </div>
         </div>
       )}
